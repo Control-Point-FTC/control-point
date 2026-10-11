@@ -310,8 +310,12 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
     else if (s === 'done' || s === 'complete' || s === 'completed') refused.push('status');
   }
   if (has('assignees') || has('assignee')) {
-    const named = [...(Array.isArray(raw.assignees) ? raw.assignees : []), ...(typeof raw.assignee === 'string' ? [raw.assignee] : [])]
-      .map((x: unknown) => String(x || '').trim()).filter(Boolean);
+    // A list, or one name as a string ("Grace"). Only an explicit empty list
+    // unassigns everyone; any other shape leaves the people as they are.
+    const list = Array.isArray(raw.assignees) ? raw.assignees : typeof raw.assignees === 'string' ? [raw.assignees] : [];
+    const named = [...list, ...(typeof raw.assignee === 'string' ? [raw.assignee] : [])]
+      .map((x: unknown) => typeof x === 'string' ? x.trim() : '').filter(Boolean);
+    const clearAll = Array.isArray(raw.assignees) && raw.assignees.length === 0 && typeof raw.assignee !== 'string';
     const people: string[] = [];
     for (const n of named) {
       // Roster not loaded yet: keep the name; the server resolves it.
@@ -319,7 +323,7 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
       if (m) { if (!people.includes(m)) people.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
     }
     // A list that matched nobody would unassign everyone: leave them as they are.
-    if (people.length || !named.length) changes.assignees = people.slice(0, 20);
+    if (people.length || clearAll) changes.assignees = people.slice(0, 20);
   }
   if (has('roles')) {
     const roles: string[] = [];

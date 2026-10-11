@@ -132,6 +132,14 @@ describe("Bruno apply: editing existing tasks", () => {
     expect(who).toEqual([arnav, grace].sort((a, b) => a - b));
   });
 
+  it("several edits to one task all land (a date in one, a time in the next)", async () => {
+    await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{ title: "Split edit" }] }] }, admin);
+    const [task] = await rows("SELECT * FROM tasks WHERE title = 'Split edit'");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: task.id, due_date: "2099-11-01" }, { id: task.id, due_time: "17:00" }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await rows("SELECT due_date, due_time FROM tasks WHERE id = ?", task.id))[0]).toMatchObject({ due_date: "2099-11-01", due_time: "17:00" });
+  });
+
   it("needs task access", async () => {
     const plain = await t.session(await seedMember(t.db, team, "Pat", "pat@ba.test"));
     const [mine] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");

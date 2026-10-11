@@ -30,6 +30,10 @@ describe('Bruno task updates', () => {
     expect(normalizeTaskUpdate({ id: 3, status: 'done', assignees: ['Zed'] }, roster)).toEqual({ id: 3, changes: {}, unmatched: ['Zed'], unmatchedRoles: [], refused: ['status'] });
     expect(normalizeTaskUpdate({ id: 0, title: 'x' }, roster)).toBeNull();
     expect(normalizeTaskUpdate({ id: 5 }, roster)).toBeNull();
+    // One name as a string assigns that person; only an explicit [] unassigns everyone.
+    expect(normalizeTaskUpdate({ id: 5, assignees: 'grace' }, roster)?.changes.assignees).toEqual(['Grace Hopper']);
+    expect(normalizeTaskUpdate({ id: 5, assignees: [] }, roster)?.changes.assignees).toEqual([]);
+    expect(normalizeTaskUpdate({ id: 5, assignees: 7 }, roster)).toBeNull();
     // Long text is kept whole (cutting it would erase saved words).
     const long = 'x'.repeat(2000);
     expect(normalizeTaskUpdate({ id: 5, description: long }, roster)?.changes.description).toBe(long);

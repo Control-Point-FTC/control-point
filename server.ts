@@ -12709,8 +12709,16 @@ Rules:
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const names = roster.map((m: any) => String(m.name));
           const teamRoles = await teamRolesWithMembers(auth.teamId);
-          const updates = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) }))))
+          const parsed = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) }))))
             .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0 && updateTargets.has(u.id));
+          // Several edits to one task are one edit (later fields win), so a
+          // date in one item and a time in the next both land.
+          const byTask = new Map<number, (typeof parsed)[number]>();
+          for (const u of parsed) {
+            const prev = byTask.get(u.id);
+            byTask.set(u.id, prev ? { ...prev, changes: { ...prev.changes, ...u.changes } } : u);
+          }
+          const updates = [...byTask.values()];
           if (!updates.length) continue;
           for (const u of updates) {
             const task = updateTargets.get(u.id);
