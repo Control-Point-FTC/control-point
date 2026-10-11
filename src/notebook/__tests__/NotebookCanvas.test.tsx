@@ -264,6 +264,7 @@ describe('desktop shared drawing surface', () => {
         press('pointermove', 200); press('pointerup', 200);
         expect(surface.setPointerCapture).not.toHaveBeenCalled();
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: (before as any).x, y: (before as any).y });
+        openRecord.mockClear();
         fireEvent.click(link);
         expect(openRecord).toHaveBeenCalledWith('/tasks?task=5');
     });
