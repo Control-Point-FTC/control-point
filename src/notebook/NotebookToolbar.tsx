@@ -20,6 +20,7 @@ import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
 import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
 import './ribbon/ribbon.css';
+import { setShellActionsSlot } from '../modern/chrome/shellActionsSlot';
 
 const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
 const EMOJI = ['😀','😁','😂','🤣','😊','😍','🤔','😮','😢','😡','👍','👎','👏','🙌','💪','✌️','🤝','👀','🧠','💡','📌','📝','📊','📅','✅','❌','⭐','🔥','🎉','🚀','🤖','🔧','⚙️','🔩','💻','📐','📏','🔬','🧪','⚡','🔋','🏆','🎯','💯','❓','❗','💤','🎓','📚','✏️','📎','🔗','💬','👥','🕒','📍'];
@@ -57,7 +58,7 @@ function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed, trailing }:
 
 /** Top bar actions beside the tabs. Share needs an open page. */
 function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: string) => void }) {
-  const workspace = useNotebookWorkspace();
+  const mobile = useNotebookMobile();
   const share = async () => {
     if (!pageId || !onNotice) return;
     try {
@@ -67,7 +68,8 @@ function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: st
     } catch { onNotice('Copying isn’t available here. Copy the address from the browser bar instead.'); }
   };
   return <>
-    {workspace && <RibbonButton label="Sticky Notes" icon="Sticky" showLabel active={workspace.stickyNotesOpen} onClick={workspace.toggleStickyNotes} />}
+    {/* The app's clock and weather, sticky notes, Search and Bruno render here (the app top bar is hidden in the notebook). */}
+    {!mobile && <span ref={setShellActionsSlot} className="nb-shell-actions" />}
     {pageId && onNotice && <RibbonButton label="Share" icon="Share" showLabel onClick={() => { void share(); }} />}
   </>;
 }

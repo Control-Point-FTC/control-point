@@ -4,6 +4,8 @@
 // inside this shell.
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ClockWeather } from './chrome/ClockWeather';
+import { useShellActionsSlot } from './chrome/shellActionsSlot';
+import { createPortal } from 'react-dom';
 import { toggleStickyNotes, setStickyNotesOpen, useStickyNotesOpen } from '../notebook/stickyNotesState';
 const StickyNotes = lazy(() => import('../notebook/StickyNotes').then(m => ({ default: m.StickyNotes })));
 import { useLocation } from 'react-router-dom';
@@ -101,6 +103,7 @@ export function ModernShell(props: ModernShellProps) {
   }, [notebookRoute]);
   const [cmdOpen, setCmdOpen] = useState(false);
   const stickyOpen = useStickyNotesOpen();
+  const actionsSlot = useShellActionsSlot();
   // Loaded on first open, then kept mounted so unsaved drafts keep saving.
   const [stickyUsed, setStickyUsed] = useState(false);
   useEffect(() => { if (stickyOpen) setStickyUsed(true); }, [stickyOpen]);
@@ -231,6 +234,11 @@ export function ModernShell(props: ModernShellProps) {
             stickyNotesOpen={stickyOpen}
           />
           <TipsBar path={location.pathname} /></>}
+          {/* The notebook hides the top bar: its own top row gets the same controls. */}
+          {notebookRoute && !isMobile && actionsSlot && createPortal(
+            <TopBarActions isMobile={false} onOpenSearch={() => setCmdOpen(true)} onOpenBruno={props.onOpenBruno} workspaceId={props.activeTeam?.id} stickyNotesOpen={stickyOpen} />,
+            actionsSlot,
+          )}
           <main
             id="main"
             className={cn(
@@ -685,7 +693,20 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSe
         {!isMobile && <span className="text-text-muted/50" aria-hidden="true">/</span>}
         <h1 className="truncate font-semibold text-text-base">{title}</h1>
       </nav>
-      <div className="ml-auto flex items-center gap-1">
+      <TopBarActions className="ml-auto" isMobile={isMobile} onOpenSearch={onOpenSearch} onOpenBruno={onOpenBruno} onOpenSettings={onOpenSettings} workspaceId={workspaceId} stickyNotesOpen={stickyNotesOpen} />
+    </header>
+  );
+}
+
+/** The top bar's right side: clock and weather, sticky notes, Search, Bruno
+ *  (and Settings on phones). Also rendered into screens that hide the top bar
+ *  (the notebook's own top row), so they keep the same controls. */
+function TopBarActions({ className, isMobile, onOpenSearch, onOpenBruno, onOpenSettings, workspaceId, stickyNotesOpen }: {
+  className?: string; isMobile: boolean; onOpenSearch: () => void; onOpenBruno: () => void; onOpenSettings?: () => void;
+  workspaceId?: number | null; stickyNotesOpen?: boolean;
+}) {
+  return (
+      <div className={cn('flex items-center gap-1', className)}>
         {/* Keyed by workspace: a switch drops the old town's reading and loads the new one. */}
         <ClockWeather key={workspaceId ?? 'none'} />
         {!isMobile && (
@@ -730,7 +751,6 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSe
           </button>
         )}
       </div>
-    </header>
   );
 }
 
