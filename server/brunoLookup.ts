@@ -342,6 +342,57 @@ export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
     parts.push(`[Web check requested]\nSearch the web now for: ${web.map((w) => `"${w}"`).join("; ")}.`);
     parts.push("Answer from current pages, preferring the maker or store itself (goBILDA, REV Robotics, AndyMark, ServoCity, the FIRST site). Give prices with the store's name and say they are as of today; say stock can change. If a page contradicts what you said earlier, correct it plainly. If you couldn't find it, say so instead of guessing.");
   }
-  parts.push("Now answer my last question. Don't ask for another lookup.");
+  parts.push("Now answer my last question. Don't ask for another lookup, and don't say \"Checking…\" again: the check is done. If the results show nothing (for example, no events have been played yet this season), say exactly that in a sentence.");
   return parts.join("\n\n");
+}
+
+/** A follow-up answer that said nothing new: empty, or only another
+ *  "Checking …" line (V5 audit M2 — the reply used to end there). */
+export function saidNothing(answer: string): boolean {
+  const lines = String(answer || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // A progress line: a progress phrase ("Checking …", "Searching …",
+  // "Looking it up…", "Let me check…") as one short sentence that states no
+  // result — a team number or a date in it is fine ("Checking recent results
+  // for team 1234."). "Searching shows 4 NJ events so far.", "Checking the
+  // schedule, the event is on Dec 12." and "Checking… The servo is sold out."
+  // are answers. The question being checked ("Checking whether any NJ events
+  // have been played…") isn't a result: a clause opened by whether/if/to
+  // see/how many/what/which/when/where/who is dropped (up to the next comma,
+  // semicolon, colon or clause dash) before looking for result words. An em
+  // dash always breaks; an en dash or hyphen only with spaces round it, so a
+  // date range ("Dec 12–14") or "8-week" stays inside the question.
+  const QUESTION_CLAUSE = /\b(whether|if|to see|how (many|much)|what|which|when|where|who)\b(?:(?!\s[-–]\s)[^,;:—])*/gi;
+  const ANSWER_WORDS = /\b(is|are|was|were|isn't|aren't|has|have|had|shows?|showed|won|lost|found|costs?|sold|scheduled|starts?|ends?|played|placed|ranked|no|none|nothing)\b|\$\d/i;
+  const progress = (l: string) =>
+    l.length <= 200
+    && /^(checking|searching|looking (it|that|this) up|looking up|looking (for|into)|let me (check|look))\b/i.test(l)
+    && l.split(/(?<=[.!?…])\s+(?=\S)/).length === 1
+    && !ANSWER_WORDS.test(l.replace(/^(checking|searching|looking (it|that|this) up|looking up|looking (for|into)|let me (check|look))\b/i, "").replace(QUESTION_CLAUSE, ""));
+  return lines.every(progress);
+}
+
+/** What the lookup actually returned, read from runLookups' headers. */
+export function lookupOutcome(rows: string): "found" | "failed" | "none" {
+  if (/ — (\d+ found|\d+ shown)/.test(rows)) return "found";
+  if (/ — SEARCH FAILED/.test(rows)) return "failed";
+  return "none";
+}
+
+const EVENTISH = /\b(event|events|results?|match(es)?|qualifier|league|tournament|competition|championship|scores?|rankings?|standings)\b/i;
+
+/** What Bruno says when its answer stopped at "Checking…": true to what the
+ *  check found, never claiming nothing exists when it did. */
+export function nothingFoundNote(queries: LookupQuery[], outcome: { rows?: string; webSources?: number } = {}): string {
+  const data = queries.some((q) => q.kind !== "web") ? lookupOutcome(outcome.rows || "") : null;
+  const web = queries.filter((q) => q.kind === "web");
+  if (data === "found") return "I looked that up but didn't finish the answer. Ask again and I'll go through what I found.";
+  if (web.length && (outcome.webSources || 0) > 0) return "I checked the web but didn't finish the answer. The pages I used are listed below.";
+  if (data === "failed") return "That search didn't work just now. Try asking again.";
+  if (web.length) {
+    const events = web.some((q) => EVENTISH.test(String(q.query || "")));
+    return events
+      ? "I couldn't find anything current on that. FIRST's event site (https://ftc-events.firstinspires.org) and FTC Scout (https://ftcscout.org) list every event as it's played, so if nothing shows there yet, the events haven't happened."
+      : "I couldn't find anything current on that. Try asking with more detail, like the exact product, team or event.";
+  }
+  return "I couldn't find anything for that in the team's data. Try other words, a name or a date range.";
 }
