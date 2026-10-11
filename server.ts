@@ -12376,15 +12376,26 @@ Rules:
       /** The first reply only said "Checking …" and asked for no lookup: ask
        *  once more (answer, or request the lookup it needs). Still nothing →
        *  a web check of the question. */
-      const askAgain = async (firstText: string, signal: AbortSignal) => {
+      const askAgain = async (firstText: string, signal: AbortSignal, grounded: boolean) => {
         const question = messages[messages.length - 1].text;
         const retryMessages = [...messages, { role: "model", text: firstText }, { role: "user", text: PROGRESS_ONLY_PROMPT }];
+        const chars = retryMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
         let retryUsage: any = null;
-        const retry = await aiChat({ extraSystem: systemExtra, messages: retryMessages, maxTokens, stream: false, onUsage: (u) => { retryUsage = u; }, signal })
-          .catch((e: any) => { console.error("Bruno retry after Checking… failed:", e?.message); return null; });
-        if (retry) {
-          const chars = retryMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+        let retry: any = null;
+        try {
+          retry = await aiChat({
+            extraSystem: systemExtra, messages: retryMessages, maxTokens, stream: false,
+            onUsage: (u) => { retryUsage = u; }, signal,
+            // Keep the first call's live search: the retry prompt alone wouldn't
+            // ask for it, and a current-prices/results answer must stay checked.
+            webSearch: grounded || req.body?.webSearch === true,
+          });
           logAiUsage(auth.memberId, auth.teamId, retryUsage, chars, String(retry.text || "").length, "ok", retry.provider);
+        } catch (e: any) {
+          if (signal.aborted) return null;
+          console.error("Bruno retry after Checking… failed:", e?.message);
+          // Failed calls still count on the owner's usage dashboard.
+          logAiUsage(auth.memberId, auth.teamId, null, chars, 0, isAnthropicQuotaError(e) || isQuotaError(e) ? "quota" : "error", e?.aiProvider || "unknown");
         }
         return resolveRetry(firstText, retry?.text, question);
       };
@@ -12426,7 +12437,7 @@ Rules:
           // Only "Checking …" and no lookup asked for: ask again (see askAgain).
           let implicit = false;
           if (!hold.blocked && progressOnly(fullText) && !streamAbort.signal.aborted) {
-            const again = await askAgain(fullText, streamAbort.signal);
+            const again = await askAgain(fullText, streamAbort.signal, !!aiReply.grounded);
             if (streamAbort.signal.aborted) { res.end(); return; }
             if (again?.kind === "answer") { send(`
 
@@ -12540,7 +12551,7 @@ ${again.text}`; }
       const webSourcesNS = [...(aiReply.sources || [])];
       // Only "Checking …" and no lookup asked for: ask again (see askAgain).
       if (progressOnly(String(result || ""))) {
-        const again = await askAgain(String(result || ""), nonStreamAbort.signal);
+        const again = await askAgain(String(result || ""), nonStreamAbort.signal, !!aiReply.grounded);
         if (nonStreamAbort.signal.aborted) return;
         if (again?.kind === "answer") result = `${String(result || "").trimEnd()}
 
