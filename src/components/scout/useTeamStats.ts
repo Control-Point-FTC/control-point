@@ -13,7 +13,7 @@ export function useTeamStats() {
   const m = params.get('mode');
   const mode: TeamStatsMode = m === 'analyze' || m === 'scout' ? m : 'compete';
   // A link may name the season (scouting entries live in one).
-  const [season, setSeason] = useState(() => { const s = Number(params.get('season')); return Number.isInteger(s) && s >= 2019 && s <= 2100 ? s : currentFtcSeason(); });
+  const [season, setSeason] = useState(() => { const s = Number(params.get('season')); return Number.isInteger(s) && s >= 2015 && s <= 2100 ? s : currentFtcSeason(); });
   const [myTeam, setMyTeam] = useState<number | null>(null);
   const [focusTeam, setFocusTeam] = useState<{ number: number; name: string } | null>(null);
   // Our team number (for Analyze). On a direct ?mode=analyze visit before the

@@ -438,12 +438,25 @@ describe('Modern Inventory', () => {
 });
 
 describe('Modern Inventory: a link to one part', () => {
-  it('searches for the linked part so it is on screen, and highlights it', async () => {
+  const openLinked = (inventory: any[], item: number) => {
     Element.prototype.scrollIntoView = vi.fn();
-    const props = { inventory: PARTS, setInventory: vi.fn(), teams: TEAMS, refresh: { inventory: vi.fn() }, hasScope: () => false, currentUser: { id: 7, team_id: 1 } };
-    render(<InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}><MemoryRouter initialEntries={['/inventory?item=3']}><InventoryPage {...props} /></MemoryRouter></InterfaceModeProvider>);
+    const props = { inventory, setInventory: vi.fn(), teams: TEAMS, refresh: { inventory: vi.fn() }, hasScope: () => false, currentUser: { id: 7, team_id: 1 } };
+    render(<InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}><MemoryRouter initialEntries={[`/inventory?item=${item}`]}><InventoryPage {...props} /></MemoryRouter></InterfaceModeProvider>);
+  };
+
+  it('shows just the linked part (wherever it is in a long list), highlights it, and can show all again', async () => {
+    const many = [...Array.from({ length: 80 }, (_, i) => ({ id: 100 + i, team_id: 1, name: `Zip tie pack ${i}`, sku: `Z-${i}`, quantity: 1, category: 'Misc', cost: 1 })), ...PARTS];
+    openLinked(many, 3);
     await waitFor(() => expect(document.querySelector('[data-record-id="3"]')?.classList.contains('cp-record-focus')).toBe(true));
-    expect(screen.queryByText('Core Hex Motor')).toBeNull(); // the search narrowed the list to the linked part
-    expect(screen.getByDisplayValue('Zip ties')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Showing the linked part, Zip ties.');
+    expect(screen.queryByText('Core Hex Motor')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all parts' }));
+    expect(await screen.findByText('Zip tie pack 0')).toBeInTheDocument();
+  });
+
+  it('says so when the linked part is gone, even from an empty inventory', async () => {
+    const toast = vi.spyOn(await import('../../components/ui-kit'), 'toast');
+    openLinked([], 3);
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/That part isn’t in this list/)), { timeout: 4000 });
   });
 });
