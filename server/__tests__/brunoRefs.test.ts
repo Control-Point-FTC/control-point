@@ -92,3 +92,28 @@ describe("what counts as given from lookups", () => {
     expect(given).toEqual(["task:12"]);
   });
 });
+
+describe("only rows Bruno actually receives count", () => {
+  it("drops records whose rows are cut off by the lookup length cap", async () => {
+    const { runLookups } = await import("../brunoLookup");
+    const given: string[] = [];
+    const rows = Array.from({ length: 40 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1} ${"x".repeat(500)}`, status: "todo" }));
+    const db = (async (sql: string) => sql.includes("FROM tasks") ? rows : []) as any;
+    const text = await runLookups(db, 1, "UTC", [{ kind: "tasks" }, { kind: "tasks", status: "todo" }, { kind: "tasks", status: "open" }] as any, undefined, undefined, (ids) => given.push(...ids));
+    expect(text).toContain("more rows not shown");
+    expect(given.length).toBeGreaterThan(0);
+    expect(given.length).toBeLessThan(120);
+    for (const id of given) expect(text).toContain(`task #${id.split(":")[1]} `); // every counted record's row is in the text
+    // Every complete row counts; at most one row is cut mid-line at the limit, and it doesn't.
+    const listed = text.match(/task #\d+ /g)!.length;
+    expect(listed - given.length).toBeGreaterThanOrEqual(0);
+    expect(listed - given.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("names with backslashes", () => {
+  it("keep backslashes that aren't Markdown escapes", () => {
+    expect(refCandidates("[Node\backend](ref:page:5)")).toEqual([{ label: "Node\backend", type: "page", id: 5 }]);
+    expect(refCandidates("[a\*b](ref:page:6)")).toEqual([{ label: "a*b", type: "page", id: 6 }]);
+  });
+});

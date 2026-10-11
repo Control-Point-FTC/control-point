@@ -17,7 +17,8 @@ import { isRefType, type RefResult, type RefType } from "./refs.js";
 export type BrunoRef = { type: RefType; id: number; label: string; status: "ok" | "deleted" };
 // The label may contain escaped brackets: [Intake \[v2\]](ref:page:31).
 const LINK_RE = /\[((?:\\.|[^\]\\\n]){1,200})\]\(ref:([a-z_]{1,20}):(\d{1,12})\)/g;
-const unescape = (s: string) => s.replace(/\\(.)/g, "$1");
+// Only Markdown's escapes (a backslash before ASCII punctuation); "Node\backend" keeps its backslash.
+const unescape = (s: string) => s.replace(/\\([!-/:-@[-`{-~])/g, "$1");
 const MAX_REFS = 40;
 
 export function refCandidates(text: string): { label: string; type: RefType; id: number }[] {

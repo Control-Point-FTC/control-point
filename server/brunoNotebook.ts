@@ -90,7 +90,7 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
 /** One notebook lookup as lines for the model. Unavailable pages read the
  *  same whether they are protected, deleted or never existed. */
 /** `ids`: the records actually listed ("page:12", "section:3"), for checking Bruno's references. */
-export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: string[] }> {
+export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: (string | null)[] }> {
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
     const lines: string[] = [], ids: string[] = [];
@@ -126,7 +126,7 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
   try {
     const page = await store.page(bruno(ctx), pageId);
     const { text, truncated } = renderNotebookText(page.content, page.canvas);
-    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated, ids: [`page:${page.id}`] };
+    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated, ids: [`page:${page.id}`, null] };
   } catch (e) {
     if (e instanceof NotebookError && (e.status === 404 || e.status === 403)) return { lines: [`(page ${pageId} is not available to Bruno)`], more: false };
     throw e;
