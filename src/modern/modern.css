@@ -200,3 +200,6 @@ html[data-ui="modern"].cp-pulse-corners .m-canvas {
   html[data-ui="modern"] li, html[data-ui="modern"] tr { opacity: 1 !important; transform: none !important; }
   @page { margin: 14mm; }
 }
+
+/* A record opened from a link (useRecordFocus): a brief highlight. */
+.cp-record-focus { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 8px; transition: outline-color .6s; }

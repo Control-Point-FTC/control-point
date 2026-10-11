@@ -2,6 +2,7 @@
 // per-row action menu; a member sheet for details; the drafted member editor
 // sheet; and the remove confirmation.
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Copy, KeyRound, Mail, MoreHorizontal, Pencil, Phone, Search, ShieldCheck, UserMinus, Users, Video,
@@ -59,6 +60,15 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [viewId, setViewId] = useState<number | null>(null);
+  // A link to one teammate (?member=ID) opens their details.
+  const [params, setParams] = useSearchParams();
+  const linkedMember = params.get('member');
+  useEffect(() => {
+    if (!linkedMember || !members.length) return;
+    const found = members.find((m: any) => String(m.id) === linkedMember);
+    if (found) setViewId(found.id); else notify('That teammate isn’t in this workspace anymore.');
+    setParams(p => { const n = new URLSearchParams(p); n.delete('member'); return n; }, { replace: true });
+  }, [linkedMember, members, setParams]);
   const narrow = useIsNarrow();
 
   const visible = useMemo(() => {

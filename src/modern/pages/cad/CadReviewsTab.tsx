@@ -2,7 +2,9 @@
 // screenshots, a detail sheet with the workflow stepper, permitted status
 // moves (useCadReviews.actionsFor), admin delete and the comment thread, and
 // a drafted "Submit design" sheet.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { notify } from '../../../components/dialog';
 import { Check, ClipboardCheck, ExternalLink, Eye, Hammer, ImagePlus, MessageSquare, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -35,6 +37,15 @@ export function CadReviewsTab({ currentUser, isAdmin }: { currentUser?: any; isA
   // Deleting reviews is for admins (same rule as the server).
   const sel = useSelection(isAdmin ? ctl.visible : NO_ROWS, rowId);
   const [openId, setOpenId] = useState<number | null>(null);
+  // A link to one review (?id=) opens it, whatever the status filter was.
+  const [params, setParams] = useSearchParams();
+  const linkedReview = params.get('id');
+  useEffect(() => {
+    if (!linkedReview || !ctl.loaded) return;
+    const found = ctl.reviews.find((r: any) => String(r.id) === linkedReview);
+    if (found) { ctl.setFilter('all'); setOpenId(found.id); } else notify('That design review isn’t here anymore.');
+    setParams(p => { const n = new URLSearchParams(p); n.delete('id'); return n; }, { replace: true });
+  }, [linkedReview, ctl.loaded]); // eslint-disable-line react-hooks/exhaustive-deps -- once per link
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: ctl.reviews.length };
     for (const r of ctl.reviews) c[r.status] = (c[r.status] ?? 0) + 1;

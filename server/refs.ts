@@ -79,10 +79,10 @@ async function resolveHere(deps: RefDeps, who: Member, type: RefType, id: number
       return r && r.kind !== "notebook" ? { status: "ok", type, id, label: String(r.filename || "File"), href: `/api/files/${id}` } : none;
     }
     case "scout": {
-      const r = await row("SELECT id, match_label, scouted_team, event_code, COALESCE(deleted, 0) AS deleted FROM scouting_entries WHERE id = ? AND team_id = ?");
+      const r = await row("SELECT id, season, match_label, scouted_team, event_code, COALESCE(deleted, 0) AS deleted FROM scouting_entries WHERE id = ? AND team_id = ?");
       if (!r) return none;
       const label = [r.match_label, r.scouted_team && `team ${r.scouted_team}`, r.event_code].filter(Boolean).join(" · ") || "Scouting entry";
-      return Number(r.deleted) ? { status: "deleted", type, id, label } : { status: "ok", type, id, label, href: `/stats?mode=scout&entry=${id}` };
+      return Number(r.deleted) ? { status: "deleted", type, id, label } : { status: "ok", type, id, label, href: `/stats?mode=scout&season=${Number(r.season)}&scouted=${Number(r.scouted_team)}` };
     }
     default: {
       const cad = CAD[type];

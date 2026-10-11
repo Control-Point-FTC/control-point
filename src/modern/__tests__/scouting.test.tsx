@@ -106,3 +106,14 @@ describe('Scout tab (manual scouting, H-4)', () => {
     expect(dialog.notify).toHaveBeenCalledWith('Enter the team number you scouted', 'error');
   });
 });
+
+describe('Scout tab: a link to a scouting entry', () => {
+  it("starts on the linked team's entries", async () => {
+    const entry = (team: number, uuid: string) => ({ uuid, season: 2025, scoutedTeam: team, eventCode: 'USCAFFL', matchLabel: 'Q12', templateId: 'default', data: {}, notes: '', updatedAt: 1 });
+    api.apiFetch.mockImplementation(() => json({ entries: [entry(12345, '11111111-1111-4111-8111-111111111111'), entry(999, '22222222-2222-4222-8222-222222222222')] }));
+    render(<ScoutingWorkspace season={2025} teamId={1} currentMemberId={7} initialFocusTeam={12345} />);
+    expect(await screen.findByText('Entries for #12345')).toBeInTheDocument();
+    const list = screen.getByRole('region', { name: 'Scouting entries' });
+    expect(within(list).queryByText('#999')).toBeNull();
+  });
+});

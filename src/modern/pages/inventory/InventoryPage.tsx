@@ -6,7 +6,9 @@
 // its order link (V3.5 phase 5: saved link, else the supplier's page for its
 // SKU), and printing swaps in a stock-check sheet. Only members with the
 // inventory scope can change anything.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useRecordFocus } from '../../hooks/useRecordFocus';
 import { Boxes, Edit2, ExternalLink, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
 import { partSupplier, purchaseLink, supplierLabel, SUPPLIERS } from '../../../utils/suppliers';
 import { datedName, downloadCsv } from '../../../utils/csv';
@@ -51,12 +53,24 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
   const [layout, setLayout] = useState<'grid' | 'table'>('grid');
   // Long inventories: the table renders only rows near the screen; the card
   // grid shows 60 and adds more as you scroll. A new search starts over.
-  const vr = useVirtualRows(layout === 'table' ? ctl.filteredParts.length : 0, 49);
+  // A link to one part (?item=ID) shows just that part, so it's on screen
+  // however long the list is; "Show all parts" returns to the full list.
+  const [params] = useSearchParams();
+  const [onlyItem, setOnlyItem] = useState<string | null>(() => params.get('item'));
+  const linkedItem = params.get('item');
+  useEffect(() => { if (linkedItem) setOnlyItem(linkedItem); }, [linkedItem]);
+  const onlyPart = onlyItem ? inventory.find((p: any) => String(p.id) === onlyItem) : undefined;
+  const shown = onlyPart ? [onlyPart] : ctl.filteredParts;
+  // Ready once the parts are here; an empty inventory still answers after a moment.
+  const [waited, setWaited] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setWaited(true), 1500); return () => clearTimeout(t); }, []);
+  useRecordFocus('item', inventory.length > 0 || waited, 'That part');
+  const vr = useVirtualRows(layout === 'table' ? shown.length : 0, 49);
   const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${ctl.filterSupplier}|${layout}`);
   const printing = usePrinting();
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
-  const sel = useSelection(ctl.canManage ? ctl.filteredParts : NONE, partId);
+  const sel = useSelection(ctl.canManage ? shown : NONE, partId);
   return (
     <Page>
       <PageHeader
@@ -136,10 +150,16 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
       {printing && <PrintSheet parts={ctl.filteredParts} filter={[ctl.filterSupplier && supplierName(ctl.filterSupplier), ctl.filterCategory, ctl.searchTerm && `“${ctl.searchTerm}”`].filter(Boolean).join(' · ')} />}
       <div className="print:hidden">
 
+      {onlyPart && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm" role="status">
+          <span>Showing the linked part, <strong>{onlyPart.name}</strong>.</span>
+          <Button size="sm" variant="ghost" onClick={() => setOnlyItem(null)}>Show all parts</Button>
+        </div>
+      )}
       {!inventory.length ? (
         <EmptyState icon={Package} title="No parts yet" description={ctl.canManage ? 'Add a part, paste a REV link, or import an order invoice.' : 'Parts appear here once someone with inventory access adds them.'}
           action={ctl.canManage && <Button onClick={ctl.openAdd}><Plus /> Add part</Button>} />
-      ) : !ctl.filteredParts.length ? <EmptyState title="No parts found" description="Try another search or category." /> : layout === 'table' ? (
+      ) : !shown.length ? <EmptyState title="No parts found" description="Try another search or category." /> : layout === 'table' ? (
         <div className="overflow-x-auto rounded-xl border border-border">
           <Table>
             <TableHeader>
@@ -147,8 +167,8 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             </TableHeader>
             <TableBody ref={vr.ref as any}>
               <Spacer height={vr.paddingTop} colSpan={8} />
-              {vr.rows(ctl.filteredParts).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
-                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
+              {vr.rows(shown).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
+                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-record-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
                   {ctl.canManage && <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>}
                   <TableCell className="font-medium"><PartName part={p} /></TableCell>
                   <TableCell className="font-mono text-xs text-accent">{p.sku}</TableCell>
@@ -165,8 +185,8 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         </div>
       ) : (<>
         <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {inc.slice('grid', ctl.filteredParts).map((p: any) => (
-            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(p.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+          {inc.slice('grid', shown).map((p: any) => (
+            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} data-record-id={p.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(p.id) && 'border-accent/60 ring-1 ring-accent/40')}>
               <div className="flex items-start gap-3">
                 {ctl.canManage && <RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} className="mt-0.5" />}
                 <div className="min-w-0 flex-1">
@@ -189,7 +209,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             </StaggerItem>
           ))}
         </Stagger>
-        <LoadMore hidden={inc.hidden('grid', ctl.filteredParts.length)} onMore={() => inc.more('grid')} />
+        <LoadMore hidden={inc.hidden('grid', shown.length)} onMore={() => inc.more('grid')} />
       </>)}
       </div>
 
