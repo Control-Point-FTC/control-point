@@ -71,7 +71,7 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
-import { FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
+import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, onlyFenceMissing, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -12173,12 +12173,16 @@ Rules:
       const finishCutBlock = async (text: string, signal: AbortSignal): Promise<string> => {
         const cut = unfinishedActionBlock(text);
         if (!cut) return "";
+        // Only the closing fence was lost: close it (regenerating would repeat items).
+        if (onlyFenceMissing(text, cut)) return CLOSE_FENCE;
         let second = "";
         let finishUsage: any = null;
         try {
           const r = await aiChat({
             extraSystem: systemExtra,
-            messages: [...messages, { role: "model", text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
+            // The cut reply goes back whole (16,000 chars at most), so the
+            // second call can repeat every item it had proposed.
+            messages: [...messages, { role: "model", maxChars: 16000, text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
             maxTokens: FINISH_BLOCK_TOKENS,
             stream: false,
             onUsage: (u) => { finishUsage = u; },
@@ -12189,6 +12193,8 @@ Rules:
         } catch (e: any) {
           if (signal.aborted) return "";
           console.error("Bruno finish-block pass failed:", e?.message);
+          // Failed calls still count on the owner's usage dashboard.
+          logAiUsage(auth.memberId, auth.teamId, null, text.length, 0, isAnthropicQuotaError(e) || isQuotaError(e) ? "quota" : "error", e?.aiProvider || "unknown");
         }
         return finishCutReply(cut, second).appended;
       };

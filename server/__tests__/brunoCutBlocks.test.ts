@@ -3,7 +3,7 @@
  * reply hit the length cap inside its ```event block, so no card appeared.
  */
 import { describe, it, expect } from "vitest";
-import { completeBlock, finishCutReply, TOO_LONG_NOTE, unfinishedActionBlock } from "../brunoCutBlocks";
+import { CLOSE_FENCE, completeBlock, finishCutReply, onlyFenceMissing, TOO_LONG_NOTE, unfinishedActionBlock } from "../brunoCutBlocks";
 import { extractActionProposals, stripEventBlocks } from "../../src/services/aiService";
 
 const ev = (d: number) => `{"title":"Build Session","date":"2026-10-${String(d).padStart(2, "0")}","time":"18:00"}`;
@@ -41,6 +41,22 @@ describe("a proposal cut off by the reply cap", () => {
       expect(extractActionProposals(live)).toEqual([]);
       expect(stripEventBlocks(live).replace(/\n{3,}/g, "\n\n")).toBe(`${intro.trim()}\n\n${TOO_LONG_NOTE}`);
     }
+  });
+
+  it("when only the closing fence was lost, closing it is enough (no repeated items)", () => {
+    const fenceLost = `${intro}${fullBlock.replace(/\n```$/, "")}`;
+    const cut = unfinishedActionBlock(fenceLost)!;
+    expect(onlyFenceMissing(fenceLost, cut)).toBe(true);
+    expect(extractActionProposals(fenceLost + CLOSE_FENCE)).toEqual([{ kind: "event", items: [13, 15, 20, 22].map((d) => JSON.parse(ev(d))) }]);
+    expect(onlyFenceMissing(cutReply, unfinishedActionBlock(cutReply)!)).toBe(false);
+  });
+
+  it("an empty replacement counts as a failure, so the too-long note is shown", () => {
+    for (const empty of ["```event\n[]\n```", "```event\nnull\n```", "```event\n[1, 2]\n```"]) {
+      expect(finishCutReply({ kind: "event" }, empty).ok).toBe(false);
+    }
+    // A usable block later in the text is still found.
+    expect(finishCutReply({ kind: "event" }, `\`\`\`event\n[]\n\`\`\`\n${fullBlock}`).ok).toBe(true);
   });
 
   it("only accepts a block of the same kind that parses", () => {

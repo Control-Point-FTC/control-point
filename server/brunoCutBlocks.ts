@@ -34,18 +34,35 @@ export function finishBlockPrompt(kind: string): string {
     `Output only the block: no other text, and don't repeat anything said before it.`;
 }
 
-/** The first complete, parseable ```kind block in a text, or null. */
-export function completeBlock(text: string, kind: string): string | null {
-  const re = new RegExp("```" + kind.replace(/[-]/g, "\\-") + "[^\\S\\r\\n]*\\r?\\n([\\s\\S]*?)\\r?\\n```");
-  const m = re.exec(String(text || ""));
-  if (!m) return null;
+/** JSON a card can use: at least one item (an object, or an array with an object). */
+export function usableJson(body: string): boolean {
+  let v: unknown;
   try {
-    JSON.parse(m[1]);
+    v = JSON.parse(body);
   } catch {
-    return null;
+    return false;
   }
-  return m[0];
+  if (Array.isArray(v)) return v.some((x) => x && typeof x === "object");
+  return !!v && typeof v === "object";
 }
+
+/** The first complete ```kind block in a text whose JSON a card can use, or null. */
+export function completeBlock(text: string, kind: string): string | null {
+  const re = new RegExp("```" + kind.replace(/[-]/g, "\\-") + "[^\\S\\r\\n]*\\r?\\n([\\s\\S]*?)\\r?\\n```", "g");
+  for (const m of String(text || "").matchAll(re)) if (usableJson(m[1])) return m[0];
+  return null;
+}
+
+/** The cut block's own body is already complete JSON (only the closing fence
+ *  was lost): closing it is enough, and regenerating would duplicate items. */
+export function onlyFenceMissing(text: string, cut: { start: number }): boolean {
+  const open = String(text || "").slice(cut.start);
+  const body = open.slice(open.indexOf("\n") + 1).trimEnd();
+  return usableJson(body);
+}
+
+/** What closes a block whose JSON is already complete. */
+export const CLOSE_FENCE = "\n```\n";
 
 /** Said instead when the block can't be finished. */
 export const TOO_LONG_NOTE = "(That was too much to add in one go, so nothing was proposed. Ask me for it in two parts, e.g. the first four weeks, then the rest.)";
