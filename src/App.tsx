@@ -19,7 +19,7 @@ const TasksPage = React.lazy(() => import('./modern/pages/tasks/TasksPage').then
 const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
 const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
 const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
-import { rememberRefLink, takeRefLink } from './utils/refLinkReturn';
+import { forgetRefLink, rememberRefLink, takeRefLink } from './utils/refLinkReturn';
 const RefOpen = React.lazy(() => import('./modern/pages/RefOpen').then((m) => ({ default: m.RefOpen })));
 const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
 const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
@@ -349,6 +349,12 @@ function PageLoadingFallback() {
     </div>
   );
 }
+
+/** Pages any signed-in person may open, whatever their sidebar shows:
+ *  profile/settings/roles (/roles redirects to Settings → Roles, which gates
+ *  itself), inbox (Modern; Legacy redirects it), and stable record links
+ *  (/t/...), whose page checks access to the record itself. */
+export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't'] as const;
 
 export default function App() {
   const { t } = useTranslation();
@@ -1851,10 +1857,7 @@ export default function App() {
       ids.add(t.id);
       for (const c of (t as any).children || []) ids.add(c.id);
     }
-    ids.add('profile');
-    ids.add('settings');
-    ids.add('roles');
-    ids.add('inbox'); // Modern page; Legacy redirects it to the dashboard
+    for (const id of ALWAYS_REACHABLE_PAGES) ids.add(id);
     return ids;
   }, [visibleTabs]);
   useEffect(() => {
@@ -2244,6 +2247,7 @@ export default function App() {
     const deepLink = location.pathname.match(/^\/checkin\/([A-Za-z0-9]+)/);
     if (deepLink && typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('pendingCheckinToken', deepLink[1]);
+      forgetRefLink(); // only the latest link opened before sign-in is followed
     }
     rememberRefLink(location.pathname);
     // A brand-new OAuth user just finished sign-in — collect their last signup
