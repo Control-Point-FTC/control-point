@@ -93,6 +93,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [sync, setSync] = useState<NotebookSync | null>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const syncRef = useRef<NotebookSync | null>(null);
+  // Pages that vanished because this tab moved them to trash: no "no longer
+  // available" warnings for those, just one "Moved to trash" notice.
+  const trashedHere = useRef(new Set<number>());
   const { navigator } = useContext(UNSAFE_NavigationContext);
   useEffect(() => {
     const originalPush = navigator.push, originalReplace = navigator.replace;
@@ -133,7 +136,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value,navigationEpoch.current).then(()=>{if(currentRequest())setTreeStorageError('');}).catch(e=>{if(currentRequest())setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
-        void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
+        void current.discardRecovery(); syncRef.current = null; setSync(null);
+        if (!trashedHere.current.has(current.pageId)) setError('This page is no longer available.');
       }
     } catch (e) {
       if(!currentRequest())return;loadFailedRef.current=true;
@@ -324,6 +328,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     }
     if (!selected) { if (activeSection == null && !(chosenBook !== null && tree.notebooks.some(n => n.id === chosenBook))) openDefault(); return; }
     if (verifiedMissing.current === selected) return;
+    // Trashed from here a moment ago: the "Moved to trash" notice already said so.
+    if (trashedHere.current.has(selected)) { openDefault(); return; }
     verifiedMissing.current = selected;
     const asked = selected;
     // The tree may simply be older than a page created a moment ago: ask the server.
@@ -378,7 +384,15 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     }
     await mutate(async () => {
       const base = `/api/notebook/${plural[kind]}`;
-      if (action === 'delete') { await apiJson(`${base}/${item!.id}`, { method: 'DELETE' }); if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); } }
+      if (action === 'delete') {
+        // The open page goes with it when it's this page, or inside this section or page.
+        if (kind === 'page') trashedHere.current.add(item!.id);
+        if (selected) trashedHere.current.add(selected);
+        await apiJson(`${base}/${item!.id}`, { method: 'DELETE' });
+        setError('');
+        setLandingNotice('Moved to trash. You can restore it from Trash.');
+        if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); }
+      }
       if (action === 'rename') {
         if (kind === 'page') await savePageTitle(item!.id, name.trim());
         else await apiJson(`${base}/${item!.id}`, { method: 'PATCH', body: JSON.stringify({ title: name, color }) });

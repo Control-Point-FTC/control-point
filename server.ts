@@ -4914,17 +4914,20 @@ async function startServer() {
     let switched: any = null;
     let teamless = false;
     if (auth.teamId === teamId) {
-      const other = memberships.find((m) => m.team_id !== teamId);
+      // Land in the workspace used most recently (not just the first one listed).
+      const others = (await dbAll(
+        "SELECT * FROM members WHERE email = ? AND team_id IS NOT NULL AND team_id != ? AND COALESCE(is_active, 1) = 1", email, teamId
+      )) as any[];
+      const other = others.length ? ((await pickMemberRow(others)) as any) : null;
       if (other) {
-        const otherRow = (await dbGet(
-          "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, other.team_id
-        )) as any;
+        const otherRow = other;
         if (otherRow) {
           const sessionId = await rebindSession(req, otherRow.id);
           switched = {
             sessionId,
-            user: otherRow,
-            team: await teamForClient(await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id), other.email),
+            // Never the raw row: no password hash or OAuth ids to the client (V5 audit L8).
+            user: sanitizeMember(otherRow),
+            team: await teamForClient(await dbGet("SELECT * FROM teams WHERE id = ?", otherRow.team_id), email),
           };
         } else {
           teamless = true;

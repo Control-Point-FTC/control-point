@@ -50,6 +50,24 @@ describe("delete a workspace", () => {
     expect(((await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM members WHERE id = ? AND is_active = 1", args: [adminKeep] })).rows[0] as any).n).toBe(1);
   });
 
+  it("lands you in the workspace you used most recently, without leaking the account row", async () => {
+    const first = await seedTeam(t.db, "First listed");
+    const recent = await seedTeam(t.db, "Used recently");
+    const doomed = await seedTeam(t.db, "Doomed 2");
+    await t.db.execute({ sql: "INSERT INTO members (team_id, name, role, email, account_type, is_setup, password) VALUES (?, 'Ivy', 'Admin', 'ivy@ws.test', 'admin', 1, '$2b$10$secret')", args: [first] });
+    const recentRow = await seedMember(t.db, recent, "Ivy", "ivy@ws.test", "admin");
+    const doomedRow = await seedMember(t.db, doomed, "Ivy", "ivy@ws.test", "admin");
+    // A session in "Used recently" is the newest activity besides this one.
+    await t.session(recentRow);
+    await new Promise((r) => setTimeout(r, 20));
+    const s = await t.session(doomedRow);
+    const r = await t.api(`/api/teams/${doomed}`, { method: "DELETE", session: s });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.switched?.team?.id).toBe(recent);
+    expect(JSON.stringify(r.body)).not.toContain("$2b$10$");
+    expect(r.body.switched?.user?.password).toBeUndefined();
+  });
+
   it("only someone who manages that workspace can delete it", async () => {
     const team = await seedTeam(t.db, "Guarded");
     await seedMember(t.db, team, "Boss", "boss@ws.test", "admin");
