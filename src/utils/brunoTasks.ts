@@ -20,6 +20,8 @@ export interface BrunoTaskIn {
   /** Roster names (any case, first names ok). "assignee" (one name) is accepted too. */
   assignees?: string[] | null;
   assignee?: string | null;
+  /** Role names: everyone holding the role is assigned ("Builders"). */
+  roles?: string[] | null;
   /** "daily" | "weekly" | "biweekly" | "monthly", or a {freq, interval} rule. */
   repeat?: unknown;
 }
@@ -33,6 +35,20 @@ export interface BrunoTask {
   recurrence: Recurrence | null;
   /** Exact roster spellings. */
   assignees: string[];
+  /** Role names (the team's spelling when the roles are known). */
+  roles: string[];
+}
+
+/** A team role and who holds it (member names), for assigning by role. */
+export interface TeamRole { name: string; members: string[] }
+
+/** The one team role a name means: its exact spelling, else a single
+ *  any-case match. Null when none, or when several roles fit. */
+export function matchRole(name: string, roles: TeamRole[]): string | null {
+  const exact = roles.filter((r) => r.name === name);
+  if (exact.length) return exact.length === 1 ? exact[0].name : null;
+  const loose = roles.filter((r) => r.name.toLowerCase() === name.toLowerCase());
+  return loose.length === 1 ? loose[0].name : null;
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -118,9 +134,11 @@ export interface NormalizeOptions {
    *  browser does this before showing the confirm card; the server only
    *  saves what was confirmed). */
   fromText?: boolean;
+  /** The team's roles; when given, unknown role names are reported instead of kept. */
+  roles?: TeamRole[];
 }
 
-export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[], opts: NormalizeOptions = { fromText: true }): BrunoTask & { unmatched: string[] } {
+export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[], opts: NormalizeOptions = { fromText: true }): BrunoTask & { unmatched: string[]; unmatchedRoles: string[] } {
   const rawTitle = String(t.title || '').trim();
   const rawDesc = String(t.description || '').trim();
   const recovered: ReturnType<typeof parseQuickAdd>[] = [];
@@ -175,7 +193,15 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     if (m) { if (!assignees.includes(m)) assignees.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
   }
   for (const q of recovered) for (const n of q.assignees) if (!assignees.includes(n)) assignees.push(n);
-  return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), unmatched };
+  // Assign by role: matched to the team's roles when they're known. A name
+  // that fits more than one role is reported, never guessed.
+  const roles: string[] = [];
+  const unmatchedRoles: string[] = [];
+  for (const raw of (Array.isArray(t.roles) ? t.roles : []).map((x) => String(x || '').trim().slice(0, 60)).filter(Boolean).slice(0, 10)) {
+    const known = opts.roles ? matchRole(raw, opts.roles) : raw;
+    if (known) { if (!roles.includes(known)) roles.push(known); } else if (!unmatchedRoles.includes(raw)) unmatchedRoles.push(raw);
+  }
+  return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), roles, unmatched, unmatchedRoles };
 }
 
 const TIME_RANGE_RE = /\s*\b(?:from\s+|at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to|until)\s*(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)/i;

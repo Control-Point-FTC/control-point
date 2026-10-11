@@ -1,6 +1,6 @@
 // Multi-select for task assignees: shadcn Popover + Command with avatars.
 import { useState } from 'react';
-import { Check, ChevronsUpDown, X } from 'lucide-react';
+import { Check, ChevronsUpDown, Minus, Users, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { assetUrl } from '../../../services/api';
 import {
@@ -30,6 +30,18 @@ export function AvatarStack({ members, max = 3 }: { members: any[]; max?: number
   );
 }
 
+/** Roles that have members, with who holds each (from members[].roles). */
+export function rolesWithMembers(members: any[]): { id: number; name: string; color?: string | null; memberIds: number[] }[] {
+  const byId = new Map<number, { id: number; name: string; color?: string | null; memberIds: number[] }>();
+  for (const m of members) for (const r of Array.isArray(m?.roles) ? m.roles : []) {
+    if (!Number.isFinite(r?.id) || !r?.name) continue;
+    const entry = byId.get(r.id) ?? { id: r.id, name: String(r.name), color: r.color ?? null, memberIds: [] };
+    if (!entry.memberIds.includes(m.id)) entry.memberIds.push(m.id);
+    byId.set(r.id, entry);
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function AssigneePicker({ members, selected, onChange, id }: {
   members: any[];
   selected: number[];
@@ -39,6 +51,12 @@ export function AssigneePicker({ members, selected, onChange, id }: {
   const [open, setOpen] = useState(false);
   const chosen = members.filter((m) => selected.includes(m.id));
   const toggle = (mid: number) => onChange(selected.includes(mid) ? selected.filter((x) => x !== mid) : [...selected, mid]);
+  // Assign by role: everyone who holds it (again, when all are already in, takes them out).
+  const roles = rolesWithMembers(members);
+  const toggleRole = (ids: number[]) => {
+    const all = ids.every((x) => selected.includes(x));
+    onChange(all ? selected.filter((x) => !ids.includes(x)) : [...selected, ...ids.filter((x) => !selected.includes(x))]);
+  };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -68,10 +86,26 @@ export function AssigneePicker({ members, selected, onChange, id }: {
       </PopoverTrigger>
       <PopoverContent className="w-[--radix-popover-trigger-width] min-w-64 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Search people…" />
-          <CommandList className="max-h-64">
+          <CommandInput placeholder="Search people or roles…" />
+          <CommandList className="max-h-72">
             <CommandEmpty>No one found.</CommandEmpty>
-            <CommandGroup>
+            {roles.length > 0 && (
+              <CommandGroup heading="By role">
+                {roles.map((r) => {
+                  const inCount = r.memberIds.filter((x) => selected.includes(x)).length;
+                  const state = inCount === 0 ? 'none' : inCount === r.memberIds.length ? 'all' : 'some';
+                  return (
+                    <CommandItem key={`role-${r.id}`} value={`role ${r.name}`} onSelect={() => toggleRole(r.memberIds)} aria-label={`Everyone with the ${r.name} role (${r.memberIds.length})`}>
+                      <span className="flex size-6 items-center justify-center rounded-full" style={{ background: r.color ? `${r.color}33` : undefined }}><Users className="size-3.5" style={{ color: r.color || undefined }} /></span>
+                      <span className="flex-1 truncate">{r.name}</span>
+                      <span className="text-xs text-muted-foreground">{r.memberIds.length}</span>
+                      {state === 'all' ? <Check className="size-4 text-accent" /> : state === 'some' ? <Minus className="size-4 text-muted-foreground" /> : <Check className="size-4 opacity-0" />}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            )}
+            <CommandGroup heading={roles.length ? 'People' : undefined}>
               {members.map((m) => {
                 const on = selected.includes(m.id);
                 return (

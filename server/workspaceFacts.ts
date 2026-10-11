@@ -151,6 +151,8 @@ export interface FactsInput {
   nowTime?: string;
   now: Date;
   activeMembers: { name: string }[];
+  /** The team's roles and how many active members hold each (assigning by role). */
+  roles?: { name: string; count: number }[];
   openTaskTotal: number;
   overdueTaskTotal: number;
   unassignedOpenTotal: number;
@@ -179,6 +181,9 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   L.push(`- Today: ${longDate(f.today)} (${f.timeZone})`);
   const names = f.activeMembers.slice(0, 25).map((m) => q(m.name, 40)).join(", ");
   L.push(`- Active members (per the roster): ${f.activeMembers.length}${f.activeMembers.length ? ` — ${names}${f.activeMembers.length > 25 ? ", …" : ""}` : ""}`);
+  if (f.roles?.length) {
+    L.push(`- Team roles (per the roster; tasks can be assigned to a role by name): ${f.roles.slice(0, 30).map((r) => `${q(r.name, 40)} (${r.count})`).join(", ")}${f.roles.length > 30 ? ", …" : ""}`);
+  }
   L.push(`- Open tasks (per the task board): ${f.openTaskTotal} total — ${f.overdueTaskTotal} overdue, ${f.dueThisWeekTotal} due in the next 7 days, ${f.unassignedOpenTotal} unassigned. Completed in the last 7 days: ${f.doneLast7}.`);
 
   const { series, rest } = findWeeklySeries(f.upcoming);
@@ -242,6 +247,10 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
   const weekAgoIso = new Date(now.getTime() - 7 * 86400000).toISOString();
 
   const activeMembers = await db.dbAll("SELECT name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 ORDER BY name", teamId);
+  const roles = await db.dbAll(
+    "SELECT r.name, COUNT(m.id) AS n FROM roles r LEFT JOIN member_roles mr ON mr.role_id = r.id LEFT JOIN members m ON m.id = mr.member_id AND m.team_id = r.team_id AND COALESCE(m.is_active, 1) = 1 WHERE r.team_id = ? GROUP BY r.id ORDER BY r.position, r.name",
+    teamId,
+  ).catch(() => [] as any[]);
   const counts = await db.dbGet(
     `SELECT
        SUM(CASE WHEN status != 'done' THEN 1 ELSE 0 END) AS open_n,
@@ -301,6 +310,7 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     nowTime: timeIn(timeZone, now),
     now,
     activeMembers: activeMembers.map((m: any) => ({ name: String(m.name || "") })),
+    roles: roles.map((r: any) => ({ name: String(r.name || ""), count: Number(r.n || 0) })),
     openTaskTotal: Number(counts?.open_n || 0),
     overdueTaskTotal: Number(counts?.overdue_n || 0),
     unassignedOpenTotal: Number(unassigned?.n || 0),

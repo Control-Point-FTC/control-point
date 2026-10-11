@@ -80,6 +80,12 @@ describe("facts text", () => {
     messagesLast7: null, openTasks: [], upcoming: [], upcomingTotal: 0, budget: null,
   };
 
+  it("lists the team's roles so Bruno can assign by role without guessing", () => {
+    const text = formatWorkspaceFacts({ ...base, roles: [{ name: "Builders", count: 3 }, { name: "Mentors", count: 0 }] });
+    expect(text).toContain('- Team roles (per the roster; tasks can be assigned to a role by name): "Builders" (3), "Mentors" (0)');
+    expect(formatWorkspaceFacts(base)).not.toContain("Team roles");
+  });
+
   it("an event that already ended today isn't 'next'", () => {
     const text = formatWorkspaceFacts({
       ...base, nowTime: "18:30",
