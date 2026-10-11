@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import type { NotebookPageItem } from './types';
 import { notebookPageLink, normalizeNotebookLink } from './pageLinks';
@@ -20,6 +20,7 @@ import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
 import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
 import './ribbon/ribbon.css';
+import { claimShellActionsSlot, releaseShellActionsSlot } from '../modern/chrome/shellActionsSlot';
 
 const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
 const EMOJI = ['😀','😁','😂','🤣','😊','😍','🤔','😮','😢','😡','👍','👎','👏','🙌','💪','✌️','🤝','👀','🧠','💡','📌','📝','📊','📅','✅','❌','⭐','🔥','🎉','🚀','🤖','🔧','⚙️','🔩','💻','📐','📏','🔬','🧪','⚡','🔋','🏆','🎯','💯','❓','❗','💤','🎓','📚','✏️','📎','🔗','💬','👥','🕒','📍'];
@@ -57,7 +58,16 @@ function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed, trailing }:
 
 /** Top bar actions beside the tabs. Share needs an open page. */
 function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: string) => void }) {
-  const workspace = useNotebookWorkspace();
+  const mobile = useNotebookMobile();
+  // Claim the shared controls while this toolbar is the visible one (split
+  // view hides the inactive pane's toolbar); release them only if held here.
+  const slotEl = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = slotEl.current;
+    if (!el) return;
+    if (el.closest('[hidden]')) releaseShellActionsSlot(el); else claimShellActionsSlot(el);
+  });
+  useEffect(() => { const el = slotEl.current; return () => { if (el) releaseShellActionsSlot(el); }; }, [mobile]);
   const share = async () => {
     if (!pageId || !onNotice) return;
     try {
@@ -67,7 +77,8 @@ function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: st
     } catch { onNotice('Copying isn’t available here. Copy the address from the browser bar instead.'); }
   };
   return <>
-    {workspace && <RibbonButton label="Sticky Notes" icon="Sticky" showLabel active={workspace.stickyNotesOpen} onClick={workspace.toggleStickyNotes} />}
+    {/* The app's clock and weather, sticky notes, Search and Bruno render here (the app top bar is hidden in the notebook). */}
+    {!mobile && <span ref={slotEl} className="nb-shell-actions" />}
     {pageId && onNotice && <RibbonButton label="Share" icon="Share" showLabel onClick={() => { void share(); }} />}
   </>;
 }

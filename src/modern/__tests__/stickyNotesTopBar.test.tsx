@@ -43,3 +43,26 @@ describe('Sticky Notes in the top bar', () => {
     expect(screen.queryByRole('button', { name: 'Sticky notes' })).toBeNull();
   });
 });
+
+describe('in the notebook (no app top bar)', () => {
+  it('puts the same controls in the notebook’s own top row', async () => {
+    const { claimShellActionsSlot, releaseShellActionsSlot } = await import('../chrome/shellActionsSlot');
+    const slot = document.createElement('span'); slot.className = 'nb-shell-actions'; document.body.appendChild(slot);
+    act(() => claimShellActionsSlot(slot));
+    const noop = () => {};
+    render(
+      <MemoryRouter>
+        <ModernShell
+          visibleTabs={[{ id: 'notebook', path: 'notebook', labelKey: 'nav.notebook', icon: LayoutDashboard }] as any}
+          activeTab="notebook" pageTitle="Notebook" onNavigate={noop} content={<p>notebook</p>}
+          immersive isMobile={false} user={{ id: 1, name: 'Ada' }} teams={[]} activeTeam={{ id: 1 }} activeTeamName="Robo"
+          isAdmin onSwitchTeam={noop} unreadMentions={0} notifications={[]} onOpenSettings={noop} onLogout={noop} onOpenBruno={noop}
+          botName="Bruno" onOpenFeedback={noop} onSetupGuide={noop} onOpenWhatsNew={noop} onStatusPick={noop} predictSeen actions={[]}
+        />
+      </MemoryRouter>,
+    );
+    for (const name of ['Sticky notes', 'Search', 'Ask Bruno']) expect(slot.querySelector(`button[aria-label="${name}"]`)).not.toBeNull();
+    expect(document.querySelector('header button[aria-label="Search"]')).toBeNull(); // no second top bar
+    act(() => releaseShellActionsSlot(slot)); slot.remove();
+  });
+});

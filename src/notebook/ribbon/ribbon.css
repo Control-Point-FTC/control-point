@@ -97,3 +97,16 @@
 .nb-table-grid button { width: 16px; height: 16px; padding: 0; border: 1px solid var(--color-line); border-radius: 2px; background: transparent; }
 .nb-table-grid button[data-on] { background: color-mix(in srgb, var(--color-accent) 35%, transparent); border-color: var(--color-accent); }
 .nb-table-grid-size { margin: 0; font-size: 12px; color: var(--color-text-muted); text-align: center; }
+/* The app top bar's controls (clock and weather, sticky notes, Search, Bruno) in the notebook's top row. */
+.nb-shell-actions { display: inline-flex; align-items: center; margin-inline-end: 6px; }
+.nb-shell-actions:empty { display: none; }
+/* Narrower desktop windows: the row wraps rather than running off-screen,
+   Search turns into an icon, and the tabs tighten up. */
+.nb-command-tabs { flex-wrap: wrap; row-gap: 4px; }
+@media (max-width: 1200px) {
+  .nb-shell-actions button[aria-label="Search"] > span, .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
+}
+@media (min-width: 768px) and (max-width: 1000px) {
+  .nb-command-tabs::before { display: none; }
+  .nb-shell .nb-command-tabs button[role=tab] { padding: 6px 8px; }
+}
