@@ -173,7 +173,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
             </div>
 
             {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-3 min-h-0">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-4 py-3 space-y-3 min-h-0">
               {messages.length === 0 && (
                 <div className="space-y-3">
                   <div className="rounded-xl bg-text-base/[0.04] border border-text-base/[0.07] p-3">
@@ -216,7 +216,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
               {messages.map((m, i) =>
                 m.role === 'user' ? (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
+                    <div className="max-w-[85%] min-w-0 [overflow-wrap:anywhere] rounded-2xl rounded-br-md bg-accent text-accent-ink text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
                       {m.images?.length ? (
                         <div className="flex gap-1.5 mb-2">
                           {m.images.map((img, j) => (
@@ -234,7 +234,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   </div>
                 ) : (
                   <div key={i} className="flex justify-start">
-                    <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-3.5 py-2.5 text-[13px] text-text-base/85 leading-relaxed prose-sm">
+                    <div className="max-w-[92%] min-w-0 [overflow-wrap:anywhere] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-3.5 py-2.5 text-[13px] text-text-base/85 leading-relaxed prose-sm">
                       {modern && thinkMeta[i] && (
                         <BrunoThinking
                           steps={thinkMeta[i].steps}
