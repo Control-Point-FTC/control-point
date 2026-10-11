@@ -110,6 +110,13 @@ describe("Bruno apply: editing existing tasks", () => {
     expect(r.status).toBe(400);
     expect((await rows("SELECT title FROM tasks WHERE id = ?", theirs))[0].title).toBe("Theirs");
     expect((await rows("SELECT title FROM tasks WHERE id = ?", mine.id))[0].title).toBe("Demo prep");
+    // A new task next to an edit of a deleted one: nothing is written, so a retry can't duplicate it.
+    const mixed = await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "task", items: [{ title: "Only once" }] },
+      { kind: "task-update", items: [{ id: 987654, title: "Gone" }] },
+    ] }, admin);
+    expect(mixed.status).toBe(400);
+    expect(await rows("SELECT id FROM tasks WHERE title = 'Only once'")).toHaveLength(0);
     const done = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, status: "done" }] }] }, admin);
     expect(done.status).toBe(400);
     expect((await rows("SELECT status FROM tasks WHERE id = ?", mine.id))[0].status).toBe("todo");

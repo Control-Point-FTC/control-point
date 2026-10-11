@@ -251,7 +251,7 @@ const CLEARS = (v: unknown) => v === null || v === '' || (typeof v === 'string' 
 /** A ```task-update item -> the changes that will be saved, or null when it
  *  names no task or changes nothing. Pure: the card shows exactly this and
  *  the server saves exactly this. */
-export function normalizeTaskUpdate(raw: any, roster: string[]): TaskUpdate | null {
+export function normalizeTaskUpdate(raw: any, roster: string[] | null): TaskUpdate | null {
   if (!raw || typeof raw !== 'object') return null;
   const id = typeof raw.id === 'number' ? raw.id : parseInt(String(raw.id ?? '').replace(/^#/, ''), 10);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -259,8 +259,9 @@ export function normalizeTaskUpdate(raw: any, roster: string[]): TaskUpdate | nu
   const changes: TaskUpdateChanges = {};
   const unmatched: string[] = [];
   const refused: string[] = [];
-  if (has('title')) { const t = String(raw.title ?? '').trim().slice(0, 120); if (t) changes.title = t; }
-  if (has('description')) changes.description = String(raw.description ?? '').trim().slice(0, 500);
+  // Text is kept whole: cutting it would erase saved words (the task API has no limit).
+  if (has('title')) { const t = String(raw.title ?? '').trim(); if (t) changes.title = t; }
+  if (has('description')) changes.description = String(raw.description ?? '').trim();
   if (has('due_date')) {
     if (CLEARS(raw.due_date)) changes.due_date = null;
     else if (typeof raw.due_date === 'string' && ISO.test(raw.due_date)) changes.due_date = raw.due_date;
@@ -284,7 +285,8 @@ export function normalizeTaskUpdate(raw: any, roster: string[]): TaskUpdate | nu
       .map((x: unknown) => String(x || '').trim()).filter(Boolean);
     const people: string[] = [];
     for (const n of named) {
-      const m = rosterMatch(n, roster);
+      // Roster not loaded yet: keep the name; the server resolves it.
+      const m = roster ? rosterMatch(n, roster) : n;
       if (m) { if (!people.includes(m)) people.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
     }
     // A list that matched nobody would unassign everyone: leave them as they are.

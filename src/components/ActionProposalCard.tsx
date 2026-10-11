@@ -28,7 +28,7 @@ function taskUpdateSummary(it: any): string {
   const c = u.changes;
   const parts = [
     c.title !== undefined ? `rename to “${c.title.slice(0, 60)}”` : '',
-    c.description !== undefined ? (c.description ? 'new description' : 'clear the description') : '',
+    c.description !== undefined ? (c.description ? `description becomes “${c.description.length > 400 ? `${c.description.slice(0, 400)}…` : c.description}”` : 'clear the description') : '',
     c.due_date !== undefined ? (c.due_date ? `due ${c.due_date}${c.due_time ? ` at ${c.due_time}` : ''}` : 'no due date') : c.due_time !== undefined ? (c.due_time ? `at ${c.due_time}` : 'no due time') : '',
     c.priority !== undefined ? (c.priority ? `${c.priority} priority` : 'no priority') : '',
     c.status ? (c.status === 'todo' ? 'back to To do' : 'In progress') : '',

@@ -27,7 +27,7 @@ export const getProposalContext = () => ctx;
 export function setProposalContext(c: ProposalContext | null) {
   generation++;
   loading = null;
-  taskIndex = null; taskIndexAt = 0; taskIndexLoading = null;
+  taskIndex = null; taskRequest++;
   install(c);
 }
 
@@ -72,44 +72,49 @@ export function resolveEventItem(it: any) {
   return ctx ? recoverEventTime({ ...it, title: String(it?.title || ''), notes: it?.notes ?? '', time: it?.time ?? '', end: it?.end ?? '' }) : it;
 }
 
-/** A task edit as it will be saved (names resolved against the roster). */
+/** A task edit as it will be saved. Before the roster loads, names are kept
+ *  as written and the server resolves them (an edit never loses its people). */
 export function resolveTaskUpdate(it: any) {
-  return normalizeTaskUpdate(it, ctx?.roster || []);
+  return normalizeTaskUpdate(it, ctx ? ctx.roster : null);
 }
 
 /** The team's tasks as they are now, so an update card names the real task
- *  (not the model's label) and says when it no longer exists. */
+ *  (not the model's label) and says when it no longer exists. Fetched fresh
+ *  whenever an update card mounts, and again whenever tasks change. */
 export type CurrentTask = { id: number; title: string; status: string };
 let taskIndex: Map<number, CurrentTask> | null = null;
-let taskIndexAt = 0;
-let taskIndexLoading: Promise<void> | null = null;
+let taskRequest = 0;
+let openUpdateCards = 0;
 export const getTaskIndex = () => taskIndex;
 export function setTaskIndex(tasks: CurrentTask[] | null) {
+  taskRequest++; // a fetch already in flight must not overwrite this
   taskIndex = tasks ? new Map(tasks.map((t) => [t.id, t])) : null;
-  taskIndexAt = tasks ? Date.now() : 0;
   listeners.forEach((l) => l());
 }
-export function loadTaskIndex(): Promise<void> {
-  if (taskIndexLoading) return taskIndexLoading;
-  if (taskIndex && Date.now() - taskIndexAt < MAX_AGE_MS) return Promise.resolve();
-  const gen = generation;
-  const run: Promise<void> = (async () => {
-    try {
-      const res = await apiFetch('/api/tasks');
-      const body = res.ok ? await res.json() : null;
-      if (gen === generation && Array.isArray(body)) {
-        setTaskIndex(body.map((t: any) => ({ id: Number(t.id), title: String(t.title ?? ''), status: String(t.status ?? '') })));
-      }
-    } catch { /* offline: the card falls back to the task's number */ }
-    if (taskIndexLoading === run) taskIndexLoading = null;
-  })();
-  taskIndexLoading = run;
-  return run;
+export async function loadTaskIndex(): Promise<void> {
+  const mine = ++taskRequest;
+  try {
+    const res = await apiFetch('/api/tasks');
+    const body = res.ok ? await res.json() : null;
+    if (mine !== taskRequest || !Array.isArray(body)) return;
+    taskIndex = new Map(body.map((t: any) => [Number(t.id), { id: Number(t.id), title: String(t.title ?? ''), status: String(t.status ?? '') }]));
+    listeners.forEach((l) => l());
+  } catch { /* offline: the card falls back to the task's number */ }
+}
+/** Tasks changed (live update, Bruno apply): open cards refetch, others forget. */
+export function invalidateTaskIndex() {
+  if (openUpdateCards > 0) void loadTaskIndex();
+  else { taskRequest++; taskIndex = null; }
 }
 /** Re-render an update card once the team's tasks load. */
 export function useTaskIndex(enabled: boolean): Map<number, CurrentTask> | null {
   const idx = useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, getTaskIndex, getTaskIndex);
-  useEffect(() => { if (enabled) void loadTaskIndex(); }, [enabled]);
+  useEffect(() => {
+    if (!enabled) return;
+    openUpdateCards++;
+    void loadTaskIndex();
+    return () => { openUpdateCards--; };
+  }, [enabled]);
   return idx;
 }
 

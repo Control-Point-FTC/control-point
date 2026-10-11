@@ -12569,6 +12569,20 @@ Rules:
         const need = PERM_FOR_KIND[a?.kind];
         if (need && !(await hasPerm(auth, need.perm))) return res.status(403).json({ error: need.error });
       }
+      // Every task an edit names must still be this team's BEFORE any action
+      // is written: a deleted one can't leave the card half applied (and a
+      // retry then duplicating its new items).
+      const updateTargets = new Map<number, any>();
+      for (const a of actions) {
+        if (a?.kind !== "task-update" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const raw of a.items) {
+          const id = normalizeTaskUpdate(raw, null)?.id;
+          if (!id || updateTargets.has(id)) continue;
+          const task: any = await dbGet("SELECT * FROM tasks WHERE id = ? AND team_id = ?", id, auth.teamId);
+          if (!task) return res.status(400).json({ error: `Task #${id} no longer exists — nothing was saved` });
+          updateTargets.set(id, task);
+        }
+      }
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
       const created: Record<string, number[]> = {};
@@ -12667,22 +12681,15 @@ Rules:
           }
           applied.task = (applied.task || 0) + tasks.length;
         } else if (kind === "task-update") {
-          // Edits to existing tasks, saved like PATCH /api/tasks/:id. Every
-          // task is checked BEFORE anything is written, so a deleted one
-          // never leaves half the card applied.
+          // Edits to existing tasks, saved like PATCH /api/tasks/:id. Their
+          // targets were checked before any action was written (above).
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const names = roster.map((m: any) => String(m.name));
           const updates = items.map((raw: any) => normalizeTaskUpdate(raw, names))
-            .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0);
+            .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0 && updateTargets.has(u.id));
           if (!updates.length) continue;
-          const current = new Map<number, any>();
           for (const u of updates) {
-            const task: any = await dbGet("SELECT * FROM tasks WHERE id = ? AND team_id = ?", u.id, auth.teamId);
-            if (!task) return res.status(400).json({ error: `Task #${u.id} no longer exists — nothing was changed` });
-            current.set(u.id, task);
-          }
-          for (const u of updates) {
-            const task = current.get(u.id);
+            const task = updateTargets.get(u.id);
             const c = u.changes;
             const sets: string[] = [];
             const vals: any[] = [];

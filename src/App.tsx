@@ -39,7 +39,7 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
     </div>
   );
 }
-import { setProposalContext } from './services/proposalContext';
+import { invalidateTaskIndex, setProposalContext } from './services/proposalContext';
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
 import { prepareNotebookExit, clearNotebookData } from './notebook/notebookRuntime';
 import { SetupChecklist, fetchOnboardingState, saveOnboardingState, defaultOnboardingState, shouldShowWelcome, shouldShowChecklist, firstIncompleteWizardStep, resolveTourSteps, type OnboardingState } from './components/onboarding';
@@ -1012,6 +1012,8 @@ export default function App() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        // Open Bruno task-edit cards name tasks as they are now.
+        if (typeof msg?.type === 'string' && /^task(s)?_/.test(msg.type)) invalidateTaskIndex();
         // Voice engine first: handleSocketMessage returns true for any
         // voice:* type so the branches below never see them.
         if (voiceApiRef.current?.handleSocketMessage(msg)) return;

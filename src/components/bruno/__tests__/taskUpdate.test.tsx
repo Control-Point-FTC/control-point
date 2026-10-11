@@ -30,6 +30,11 @@ describe('Bruno task updates', () => {
     expect(normalizeTaskUpdate({ id: 3, status: 'done', assignees: ['Zed'] }, roster)).toEqual({ id: 3, changes: {}, unmatched: ['Zed'], refused: ['status'] });
     expect(normalizeTaskUpdate({ id: 0, title: 'x' }, roster)).toBeNull();
     expect(normalizeTaskUpdate({ id: 5 }, roster)).toBeNull();
+    // Long text is kept whole (cutting it would erase saved words).
+    const long = 'x'.repeat(2000);
+    expect(normalizeTaskUpdate({ id: 5, description: long }, roster)?.changes.description).toBe(long);
+    // Before the roster loads, names are kept for the server to resolve.
+    expect(normalizeTaskUpdate({ id: 5, assignees: ['arnav'] }, null)?.changes.assignees).toEqual(['arnav']);
   });
 
   it('Confirm sends exactly the resolved changes', () => {
@@ -42,10 +47,10 @@ describe('Bruno task updates', () => {
   it('the card names the real task, says Update, and flags a deleted one', () => {
     setProposalContext({ today: '2026-10-11', roster });
     setTaskIndex([{ id: 12, title: 'Build the intake', status: 'todo' }]);
-    const proposals = [{ kind: 'task-update', items: [{ id: 12, priority: 'high' }, { id: 99, title: 'Gone' }] }] as any;
+    const proposals = [{ kind: 'task-update', items: [{ id: 12, priority: 'high', description: 'For the demo' }, { id: 99, title: 'Gone' }] }] as any;
     render(<MemoryRouter><ActionProposalCard proposals={proposals} status="pending" onConfirm={() => {}} onDismiss={() => {}} /></MemoryRouter>);
     expect(screen.getByText('Update 2 items?')).toBeTruthy();
-    expect(screen.getByText('Build the intake — high priority')).toBeTruthy();
+    expect(screen.getByText('Build the intake — description becomes “For the demo” · high priority')).toBeTruthy();
     expect(screen.getByText('Task #99 — not found (it may have been deleted)')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Update all 2' })).toBeTruthy();
   });
