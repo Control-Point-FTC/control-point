@@ -115,6 +115,8 @@ beforeAll(async () => {
   ids.victimB = await mkMember(ids.teamB, "Victim", "victim@test.local", "student", hash);
   for (const e of ["admin-a@test.local", "member-a@test.local", "oauth@test.local", "victim@test.local", "removable@test.local"]) {
     await db.execute({ sql: "INSERT OR IGNORE INTO verified_emails (email) VALUES (?)", args: [e] });
+    // Existing verified accounts' passwords are proven (as migration 123 backfills).
+    await db.execute({ sql: "INSERT OR IGNORE INTO proven_passwords (email, hash) VALUES (?, ?)", args: [e, hash] });
   }
   for (const [sess, mid] of [[SESS.adminA, ids.adminA], [SESS.memberA, ids.memberA], [SESS.adminB, ids.adminB], [SESS.removable, ids.removable]] as const) {
     await db.execute({
