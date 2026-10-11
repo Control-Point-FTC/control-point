@@ -1095,7 +1095,10 @@ export default function App() {
           }
         } else if (msg.type === 'task_updated') {
           if (msg.task && msg.task.id) {
-            setTasks((prev: any[]) => prev.map((t: any) => (t.id === msg.task.id ? { ...t, ...msg.task } : t)));
+            // Upsert: a task can become visible to you (a board task made public).
+            setTasks((prev: any[]) => (prev.some((t: any) => t.id === msg.task.id)
+              ? prev.map((t: any) => (t.id === msg.task.id ? { ...t, ...msg.task } : t))
+              : [...prev, msg.task]));
           }
         } else if (msg.type === 'task_deleted') {
           setTasks((prev: any[]) => prev.filter((t: any) => t.id !== msg.id));
