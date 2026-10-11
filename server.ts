@@ -6211,11 +6211,18 @@ async function startServer() {
    * have open. Every lookup is scoped to the caller's active workspace, so an
    * id from another workspace (or a forged one) simply finds nothing.
    */
-  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown): Promise<string> {
+  /** What this member lets Bruno use (Settings → Bruno). Both default on. */
+  async function brunoAccess(memberId: number): Promise<{ notebook: boolean; sticky: boolean }> {
+    const row = (await dbGet("SELECT COALESCE(bruno_notebook, 1) AS notebook, COALESCE(bruno_sticky, 1) AS sticky FROM members WHERE id = ?", memberId)) as any;
+    return { notebook: Number(row?.notebook ?? 1) === 1, sticky: Number(row?.sticky ?? 1) === 1 };
+  }
+  const BRUNO_NOTEBOOK_OFF = "Bruno's notebook access is turned off in Settings → Bruno.";
+
+  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, notebookAllowed = true): Promise<string> {
     const req = parseScreenRequest(raw);
     if (!req || auth.teamId == null) return "";
     const found: ScreenLookups = {};
-    if (req.notebookPageId) {
+    if (req.notebookPageId && notebookAllowed) {
       found.notebook = await notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId: auth.teamId }, req.notebookPageId, req.notebookBlockIds ?? []);
     }
     if (req.taskId) {
@@ -6449,7 +6456,7 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level, bruno_nudges, interface_mode } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level, bruno_nudges, bruno_notebook, bruno_sticky, interface_mode } = req.body || {};
     if (interface_mode !== undefined && interface_mode !== null && !INTERFACE_MODES.includes(interface_mode)) {
       return res.status(400).json({ error: "Invalid interface mode" });
     }
@@ -6458,6 +6465,8 @@ async function startServer() {
     const updates: any = { name: cleanName, role: (role || '').trim() };
     if (bruno_teach_mode !== undefined) updates.bruno_teach_mode = bruno_teach_mode ? 1 : 0;
     if (bruno_nudges !== undefined) updates.bruno_nudges = bruno_nudges ? 1 : 0;
+    if (bruno_notebook !== undefined) updates.bruno_notebook = bruno_notebook ? 1 : 0;
+    if (bruno_sticky !== undefined) updates.bruno_sticky = bruno_sticky ? 1 : 0;
     if (bruno_output_level !== undefined) {
       let lvl = String(bruno_output_level);
       if (lvl === 'max') lvl = 'high'; // 'max' was removed — map to 'high'
@@ -12029,11 +12038,14 @@ Rules:
         return "";
       });
       // What the user is looking at (page + open record). Best-effort.
-      const screenCtx = await screenContextFor(auth, req.body?.screen).catch((err: unknown) => {
+      const access = await brunoAccess(auth.memberId);
+      const screenCtx = await screenContextFor(auth, req.body?.screen, access.notebook).catch((err: unknown) => {
         console.error("[bruno] screen context failed:", err);
         return "";
       });
-      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx].filter(Boolean).join("\n\n");
+      // The member turned Bruno's notebook access off: no reads, no proposals.
+      const accessCtx = access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or ```notebook blocks; if they ask about the notebook, say it's off and where to turn it on.";
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx, accessCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls
@@ -12115,7 +12127,8 @@ Rules:
         const web = queries.some((q) => q.kind === "web");
         const dataQueries = queries.filter((q) => q.kind !== "web");
         const notebookCtx = { memberId: auth.memberId, teamId: auth.teamId };
-        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)) : "";
+        const notebookOn = (await brunoAccess(auth.memberId)).notebook;
+        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, (q) => notebookOn ? notebookLookup(brunoNotebookStore, notebookCtx, q as any) : Promise.resolve({ lines: [BRUNO_NOTEBOOK_OFF], more: false })) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12454,6 +12467,7 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
+    if (!(await brunoAccess(auth.memberId)).notebook) return res.status(403).json({ error: BRUNO_NOTEBOOK_OFF });
     try {
       await ensureRolesSeeded(auth.teamId);
       res.json(await fn({ memberId: auth.memberId, teamId: auth.teamId }, req.body ?? {}));
