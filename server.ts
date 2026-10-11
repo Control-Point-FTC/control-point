@@ -83,6 +83,7 @@ import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
 import { StickyNotes } from "./server/stickyNotes.js";
+import { BRUNO_NOTEBOOK_OFF, BRUNO_STICKY_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, gatedStickyLookup, type BrunoAccess } from "./server/brunoAccess.js";
 import { NotebookError } from "./server/notebook.js";
 // Bruno's notebook reads (lookups, screen context) use Bruno-scoped access:
 // protected sections/pages are never visible, whoever is asking.
@@ -6214,20 +6215,16 @@ async function startServer() {
    * id from another workspace (or a forged one) simply finds nothing.
    */
   /** What this member lets Bruno use (Settings → Bruno). Both default on. */
-  async function brunoAccess(memberId: number): Promise<{ notebook: boolean; sticky: boolean }> {
-    const row = (await dbGet("SELECT COALESCE(bruno_notebook, 1) AS notebook, COALESCE(bruno_sticky, 1) AS sticky FROM members WHERE id = ?", memberId)) as any;
-    return { notebook: Number(row?.notebook ?? 1) === 1, sticky: Number(row?.sticky ?? 1) === 1 };
-  }
-  const BRUNO_NOTEBOOK_OFF = "Bruno's notebook access is turned off in Settings → Bruno.";
-  const BRUNO_STICKY_OFF = "Bruno's sticky notes access is turned off in Settings → Bruno.";
+  const brunoAccess = (memberId: number) => readBrunoAccess(dbGet as any, memberId);
   const brunoStickyNotes = new StickyNotes();
 
-  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, notebookAllowed = true): Promise<string> {
+  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }): Promise<string> {
     const req = parseScreenRequest(raw);
     if (!req || auth.teamId == null) return "";
     const found: ScreenLookups = {};
-    if (req.notebookPageId && notebookAllowed) {
-      found.notebook = await notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId: auth.teamId }, req.notebookPageId, req.notebookBlockIds ?? []);
+    const teamId = auth.teamId;
+    if (req.notebookPageId) {
+      found.notebook = await gatedNotebookBrief(access, () => notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId }, req.notebookPageId!, req.notebookBlockIds ?? []));
     }
     if (req.taskId) {
       const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?", req.taskId, auth.teamId)) as any;
@@ -12043,7 +12040,7 @@ Rules:
       });
       // What the user is looking at (page + open record). Best-effort.
       const access = await brunoAccess(auth.memberId);
-      const screenCtx = await screenContextFor(auth, req.body?.screen, access.notebook).catch((err: unknown) => {
+      const screenCtx = await screenContextFor(auth, req.body?.screen, access).catch((err: unknown) => {
         console.error("[bruno] screen context failed:", err);
         return "";
       });
@@ -12137,8 +12134,8 @@ Rules:
         const allowed = await brunoAccess(auth.memberId);
         const teamId = auth.teamId;
         const rows = dataQueries.length ? await runLookups(dbAll as any, teamId, lookupTz, dataQueries,
-          (q) => allowed.notebook ? notebookLookup(brunoNotebookStore, notebookCtx, q as any) : Promise.resolve({ lines: [BRUNO_NOTEBOOK_OFF], more: false }),
-          (q) => allowed.sticky ? stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query) : Promise.resolve({ lines: [BRUNO_STICKY_OFF], more: false })) : "";
+          gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
+          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query))) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
