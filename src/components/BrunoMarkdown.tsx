@@ -72,7 +72,8 @@ function GfmTable({ children }: { children?: ReactNode }) {
 /** The site a web link goes to, shown beside it ("www." dropped). */
 export function linkDomain(href: string): string | null {
   try {
-    const url = new URL(href);
+    // "//host/path" (protocol-relative) is a web link too.
+    const url = new URL(href.startsWith('//') ? `https:${href}` : href);
     return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname.replace(/^www\./, '') : null;
   } catch { return null; }
 }

@@ -23,6 +23,8 @@ describe('external links in Bruno replies', () => {
     expect(linkDomain('https://www.gobilda.com/x')).toBe('gobilda.com');
     expect(linkDomain('mailto:a@b.c')).toBeNull();
     expect(linkDomain('not a url')).toBeNull();
+    expect(linkDomain('//www.revrobotics.com/products')).toBe('revrobotics.com');
+    expect(linkDomain('/tasks')).toBeNull(); // an app path, not another site
   });
 });
 
@@ -32,5 +34,14 @@ describe('formatted link text', () => {
     expect(screen.getByRole('link', { name: 'revrobotics.com' }).textContent).toBe('revrobotics.com');
     expect(screen.getByRole('link', { name: 'gobilda.com/parts' }).textContent).toBe('gobilda.com/parts');
     expect(screen.getByRole('link', { name: /Yellow Jacket/ }).textContent).toBe('Yellow Jacket(gobilda.com)');
+  });
+});
+
+describe('protocol-relative links', () => {
+  it('show their site too', () => {
+    show('[REV](//www.revrobotics.com/products)');
+    const link = screen.getByRole('link', { name: /^REV/ });
+    expect(link.textContent).toBe('REV(revrobotics.com)');
+    expect(link.getAttribute('title')).toBe('//www.revrobotics.com/products (opens in a new tab)');
   });
 });
