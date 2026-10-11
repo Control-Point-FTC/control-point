@@ -10145,7 +10145,8 @@ Rules:
 
   app.post("/api/outreach", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const { title, description, date, hours, location, attendees, funds_raised } = req.body;
       const missingOutreach = requiredTextError(req.body || {}, REQUIRED.outreach);
@@ -10167,7 +10168,8 @@ Rules:
 
   app.patch("/api/outreach/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -10187,7 +10189,8 @@ Rules:
 
   app.delete("/api/outreach/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -12587,6 +12590,7 @@ Rules:
         "delete-event": { perm: "manage_calendar", error: "Only members with calendar access can delete events" },
         "communication": { perm: "manage_communications", error: "Only members with communication access can log messages" },
         "task": { perm: "manage_tasks", error: "Only members with task access can add tasks" },
+        "outreach": { perm: "manage_outreach", error: "Only members with outreach access can log outreach" },
         "task-update": { perm: "manage_tasks", error: "Only members with task access can edit tasks" },
         "budget": { perm: "manage_budget", error: "Only members with budget access can add budget entries" },
       };
