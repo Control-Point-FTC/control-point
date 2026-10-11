@@ -105,7 +105,7 @@ describe("facts text", () => {
   it("series occurrences keep their ids and dates", () => {
     const wk = (id: number, date: string) => ({ id, title: "Practice", date, start_time: "14:00", end_time: "16:00" });
     const text = formatWorkspaceFacts({ ...base, upcoming: [wk(1, "2026-10-11"), wk(2, "2026-10-18"), wk(3, "2026-10-25")], upcomingTotal: 3 });
-    expect(text).toContain("#1 Sun, Oct 11; #2 Sun, Oct 18; #3 Sun, Oct 25");
+    expect(text).toContain("event #1 Sun, Oct 11; event #2 Sun, Oct 18; event #3 Sun, Oct 25");
   });
   it("states totals, not list lengths, and quotes member-written text", () => {
     const text = formatWorkspaceFacts({

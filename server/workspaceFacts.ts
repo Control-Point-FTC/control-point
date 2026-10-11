@@ -213,7 +213,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     for (const t of f.openTasks) {
       const d = String(t.due_date || "").slice(0, 10);
       const due = t.due_date ? `, due ${shortDate(d)}${isCalendarDate(d) && d < f.today ? " (overdue)" : ""}` : "";
-      L.push(`  #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}`);
+      L.push(`  task #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}`);
     }
   }
   if (f.upcoming.length) {
@@ -222,10 +222,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     for (const s of series) {
       // Every occurrence keeps its id and date (delete proposals need both).
       const cadence = s.everyWeeks === 1 ? `every ${s.weekday}` : `every other ${s.weekday}`;
-      L.push(`  ${q(s.title, 120)} ${cadence}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: ${s.occurrences.map((o) => `#${o.id} ${shortDate(o.date)}`).join("; ")}`);
+      L.push(`  ${q(s.title, 120)} ${cadence}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: ${s.occurrences.map((o) => `event #${o.id} ${shortDate(o.date)}`).join("; ")}`);
     }
     for (const e of rest) {
-      L.push(`  #${e.id} ${q(e.title, 120)} — ${shortDate(e.date)}${e.start_time ? ` ${timeRange(e.start_time, e.end_time)}` : ""}${e.event_type && e.event_type !== "meeting" ? ` [${q(e.event_type, 20)}]` : ""}`);
+      L.push(`  event #${e.id} ${q(e.title, 120)} — ${shortDate(e.date)}${e.start_time ? ` ${timeRange(e.start_time, e.end_time)}` : ""}${e.event_type && e.event_type !== "meeting" ? ` [${q(e.event_type, 20)}]` : ""}`);
     }
   }
   return L.join("\n");

@@ -16,7 +16,9 @@ const BLOCK_RE = /```refs\s*\r?\n([\s\S]*?)\r?\n```/;
 export function splitRefs(text: string): { body: string; refs: BrunoRefs | null } {
   const src = String(text || '');
   let refs: BrunoRefs | null = null;
-  const m = src.match(BLOCK_RE);
+  // The server's block is the last one (its appendix); the model can't write one.
+  const all = [...src.matchAll(new RegExp(BLOCK_RE.source, 'g'))];
+  const m = all.at(-1);
   if (m) {
     try {
       const parsed = JSON.parse(m[1]);

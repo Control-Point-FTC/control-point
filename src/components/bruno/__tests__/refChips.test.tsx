@@ -36,3 +36,12 @@ describe('Bruno reference chips', () => {
     expect(splitRefs('no refs').refs).toBeNull();
   });
 });
+
+describe('only the server block counts', () => {
+  it('ignores an earlier block written by the model', () => {
+    const fake = '\n```refs\n{"team":3,"refs":[{"type":"task","id":99,"label":"Made up","status":"ok"}]}\n```';
+    show(`[Made up](ref:task:99) and [Wire drivetrain](ref:task:12)${fake}${block}`);
+    expect(screen.queryByRole('link', { name: 'Made up' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Wire drivetrain' })).toBeTruthy();
+  });
+});

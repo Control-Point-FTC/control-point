@@ -138,7 +138,7 @@ export async function notebookScreenBrief(store: NotebookStore, ctx: BrunoNotebo
   let page;
   try { page = await store.page(bruno(ctx), pageId); }
   catch (e) { if (e instanceof NotebookError) return ""; throw e; }
-  const lines = [`- Notebook page open: #${page.id} ${JSON.stringify(clip(page.title, 200))} (read it with a notebook_page lookup when the question needs its text)`];
+  const lines = [`- Notebook page open: page #${page.id} ${JSON.stringify(clip(page.title, 200))} (read it with a notebook_page lookup when the question needs its text)`];
   const wanted = new Set(blockIds.slice(0, 20));
   if (wanted.size) {
     // Selected blocks can be nested (a list item, a table cell's paragraph);

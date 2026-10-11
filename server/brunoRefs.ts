@@ -2,9 +2,10 @@
 // inline; when the reply is finished the server checks every one and appends
 // the survivors as a ```refs block, which the chat renders as link chips.
 // A reference survives only when all three hold:
-//   1. its id was in what Bruno was given this turn (the workspace summary,
-//      the open screen, lookup results), written as "#<id>": Bruno never
-//      invents ids;
+//   1. that record, type and id, was in what Bruno was given this turn (the
+//      workspace summary, the open screen, lookup results), written as
+//      "task #12", "event #5", "page #31", "section #4": Bruno never invents
+//      ids, and a task's id can't be passed off as an event's;
 //   2. it resolves for this member (resolveRef: ok, or deleted for something
 //      they could see), so a chip never points at hidden content;
 //   3. Bruno's name for it matches the record's real name, which catches a
@@ -25,14 +26,20 @@ export function refCandidates(text: string): { label: string; type: RefType; id:
   return out;
 }
 
-/** The id was shown to Bruno this turn as "#<id>" (not as part of a longer number). */
-export function idInContext(context: string, id: number) {
-  return new RegExp(`#${id}(?!\\d)`).test(context);
+/** How each type's ids are written in Bruno's context. Types never shown
+ *  with an id can't be referenced. */
+const CONTEXT_NOUN: Partial<Record<RefType, string>> = { task: "task", event: "event", page: "page", section: "section" };
+/** That record (type and id) was shown to Bruno this turn, e.g. "task #12" (not #123). */
+export function shownInContext(context: string, type: RefType, id: number) {
+  const noun = CONTEXT_NOUN[type];
+  return !!noun && new RegExp(`\\b${noun} #${id}(?!\\d)`, "i").test(context);
 }
 
+const flat = (s: string) => s.toLowerCase().normalize("NFKD").replace(/\s+/g, " ").trim();
 const words = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(w => w.length > 1);
 /** Bruno's name for the record matches its real one (containment, or most words shared). */
 export function labelsMatch(said: string, actual: string) {
+  if (flat(said) && flat(said) === flat(actual)) return true; // exact, even one-letter names
   const a = words(said), b = words(actual);
   if (!a.length || !b.length) return false;
   const as = a.join(" "), bs = b.join(" ");
@@ -45,11 +52,46 @@ export async function validateRefs(text: string, context: string, resolve: (type
   const seen = new Map<string, BrunoRef>();
   for (const c of refCandidates(text)) {
     const key = `${c.type}:${c.id}`;
-    if (seen.has(key) || !idInContext(context, c.id)) continue;
+    if (seen.has(key) || !shownInContext(context, c.type, c.id)) continue;
     const r = await resolve(c.type, c.id);
     if ((r.status === "ok" || r.status === "deleted") && labelsMatch(c.label, r.label)) seen.set(key, { type: c.type, id: c.id, label: r.label, status: r.status });
   }
   return [...seen.values()];
+}
+
+/** Only the server writes a refs block: drop any the model wrote itself. */
+export const stripModelRefs = (text: string) => String(text || "").replace(/```refs[\s\S]*?(```|$)/g, "");
+
+/**
+ * The same for a stream: removes every ```refs … ``` section from the model's
+ * text as it arrives, holding back a tail that could be the start (or end) of
+ * one, so the chat never shows a model-made block, even for a moment.
+ */
+export function createRefsFilter() {
+  const OPEN = "```refs", CLOSE = "```";
+  let buf = "", inBlock = false;
+  return {
+    push(chunk: string): string {
+      buf += chunk;
+      let out = "";
+      for (;;) {
+        if (!inBlock) {
+          const at = buf.indexOf(OPEN);
+          if (at >= 0) { out += buf.slice(0, at); buf = buf.slice(at + OPEN.length); inBlock = true; continue; }
+          let keep = 0;
+          for (let k = Math.min(OPEN.length - 1, buf.length); k > 0; k--) if (OPEN.startsWith(buf.slice(buf.length - k))) { keep = k; break; }
+          out += buf.slice(0, buf.length - keep); buf = buf.slice(buf.length - keep);
+          return out;
+        }
+        const end = buf.indexOf(CLOSE);
+        if (end >= 0) { buf = buf.slice(end + CLOSE.length); inBlock = false; continue; }
+        buf = buf.slice(Math.max(0, buf.length - (CLOSE.length - 1)));
+        return out;
+      }
+    },
+    /** What's left at the end (an unfinished block is dropped). */
+    end(): string { const out = inBlock ? "" : buf; buf = ""; inBlock = false; return out; },
+  };
 }
 
 /** The block appended to the reply (and saved with it); nothing when empty. */

@@ -216,7 +216,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     more = c.more;
     for (const r of c.rows) {
       const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
-      lines.push(`#${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
@@ -228,7 +228,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const c = capped(await db(sql, ...args), 60);
     more = c.more;
     for (const r of c.rows) {
-      lines.push(`#${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);

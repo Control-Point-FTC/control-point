@@ -80,7 +80,7 @@ import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
-import { refsBlock, validateRefs } from "./server/brunoRefs.js";
+import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { BRUNO_NOTEBOOK_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, type BrunoAccess } from "./server/brunoAccess.js";
@@ -12199,6 +12199,9 @@ Rules:
         try {
           let usage: any = null;
           const hold = createLookupHold();
+          // Only the server writes a ```refs block: any the model writes is dropped as it streams.
+          const modelOut = createRefsFilter();
+          const send = (text: string) => { const out = modelOut.push(text); if (out) res.write(out); };
           // Hybrid provider: Gemini (free) handles everything; Anthropic is
           // fallback on quota. The router decides deterministically — no
           // model call is spent choosing the provider.
@@ -12209,12 +12212,12 @@ Rules:
             stream: true,
             webSearch: req.body?.webSearch === true,
             images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
-            onChunk: (chunk) => { const out = hold.push(chunk); if (out) res.write(out); },
+            onChunk: (chunk) => { const out = hold.push(chunk); if (out) send(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
           });
           const tail = hold.end();
-          if (tail) res.write(tail);
+          if (tail) send(tail);
           let fullText = aiReply.text;
           const webSources = [...(aiReply.sources || [])];
           // The first call's own counts, logged before any lookup pass (which logs itself).
@@ -12232,9 +12235,9 @@ Rules:
               onChunk: (chunk) => {
                 const out = hold2.push(chunk);
                 if (!out) return;
-                if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+                if (!gapWritten) { gapWritten = true; if (gap) send(gap); }
                 secondShown += out;
-                res.write(out);
+                send(out);
               },
               signal: streamAbort.signal,
               grounded: aiReply.grounded,
@@ -12242,9 +12245,9 @@ Rules:
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
             if (tail2) {
-              if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+              if (!gapWritten) { gapWritten = true; if (gap) send(gap); }
               secondShown += tail2;
-              res.write(tail2);
+              send(tail2);
             }
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
@@ -12252,7 +12255,7 @@ Rules:
               webSources.unshift(...(looked.sources || []));
             } else {
               const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
-              res.write(sorry);
+              send(sorry);
               const shown = extractLookupBlocks(fullText).text;
               fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
             }
@@ -12268,7 +12271,11 @@ Rules:
           if (streamAbort.signal.aborted) { res.end(); return; }
           // The note streams with the scouting appendix below (written once).
           // Web pages the answer drew on, listed under it (phase 4d).
+          fullText = stripModelRefs(fullText);
           const appendix = sourcesFooter(webSources) + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          // Whatever the filter still holds goes out before the server's own blocks.
+          const held = modelOut.end();
+          if (held) res.write(held);
           if (appendix) res.write(appendix);
           const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
@@ -12315,6 +12322,7 @@ Rules:
       result = memNS.text;
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
+      result = stripModelRefs(String(result || ""));
       const finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
       if (chat) {
         const modelText = String(finalResult || "");
