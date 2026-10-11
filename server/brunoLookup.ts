@@ -371,9 +371,18 @@ export function saidNothing(answer: string): boolean {
   return lines.every(progress);
 }
 
-/** Named fenced blocks the app reads and removes (```scout-event, ```remember,
- *  ```refs, action proposals …), including one left unfinished. */
-const MACHINE_BLOCK_RE = /```[a-z][\w-]*[^\n]*\n[\s\S]*?(```|$)/gi;
+/** The fenced block kinds the app reads and hides from the member (lookups,
+ *  references, memories, scouting, and the action proposals the chat strips).
+ *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
+const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook"];
+/** One of those blocks, including one left unfinished. */
+const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
+
+/** A reply that stops inside a code fence hides everything after it: the
+ *  closing fence to write before adding anything the member must see. */
+export function closeOpenFence(text: string): string {
+  return ((String(text || "").match(/```/g) || []).length % 2 === 1) ? "\n```" : "";
+}
 
 /** What the member actually sees of a reply: the text without any machine block. */
 export function visibleText(text: string): string {

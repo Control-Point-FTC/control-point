@@ -70,7 +70,7 @@ import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartM
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { byteRange } from "./server/byteRange.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing, unfinishedCheckNote } from "./server/brunoLookup.js";
+import { closeOpenFence, createLookupHold, extractLookupBlocks, followUpPrompt, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing, unfinishedCheckNote } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
@@ -12546,17 +12546,22 @@ Rules:
           const productLinks = await webAppendix(webSources, undefined, undefined, streamAbort.signal);
           // Stopped while the product pages were checked: nothing more is written or saved.
           if (streamAbort.signal.aborted) { res.end(); return; }
-          let appendix = productLinks + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          const appendix = productLinks + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
           // Last word: never save a reply that is still only "Checking …".
+          // An unfinished block before it is closed first, or the chat would
+          // hide the note along with the block.
+          let lastWord = "";
           if (!appendix.trim() && progressOnly(stripActionBlocks(fullText))) {
             console.warn("[bruno] reply still ended at a progress line", { blocks: machineBlockKinds(aiReply.text), lookupHeld: hold.blocked, retried: implicit, provider: aiReply.provider, grounded: !!aiReply.grounded });
-            appendix = `\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
+            lastWord = `\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
           }
           // Whatever the filter still holds goes out before the server's own blocks.
           const held = modelOut.end();
           if (held) res.write(held);
           if (appendix) res.write(appendix);
-          const finalText = stripActionBlocks(fullText) + appendix;
+          if (lastWord) res.write(closeOpenFence(fullText) + lastWord);
+          const savedText = stripActionBlocks(fullText);
+          const finalText = savedText + appendix + (lastWord ? closeOpenFence(savedText) + lastWord : "");
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
@@ -12618,12 +12623,14 @@ Rules:
       const productLinksNS = await webAppendix(webSourcesNS, undefined, undefined, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
       let appendixNS = productLinksNS + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
-      // Last word: never save a reply that is still only "Checking …".
-      if (!appendixNS.trim() && progressOnly(stripActionBlocks(String(result || "")))) {
+      const shownNS = stripActionBlocks(String(result || ""));
+      // Last word: never save a reply that is still only "Checking …" (an
+      // unfinished block before it is closed first, so the note shows).
+      if (!appendixNS.trim() && progressOnly(shownNS)) {
         console.warn("[bruno] reply still ended at a progress line", { blocks: machineBlockKinds(aiReply.text), provider: aiReply.provider, grounded: !!aiReply.grounded });
-        appendixNS = `\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
+        appendixNS = `${closeOpenFence(shownNS)}\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
       }
-      const finalResult = stripActionBlocks(String(result || "")) + appendixNS;
+      const finalResult = shownNS + appendixNS;
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {

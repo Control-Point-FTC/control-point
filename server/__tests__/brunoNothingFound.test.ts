@@ -4,7 +4,7 @@
  * answer. A check that comes back with nothing now says so.
  */
 import { describe, it, expect } from "vitest";
-import { extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, saidNothing, unfinishedCheckNote, visibleText } from "../brunoLookup";
+import { closeOpenFence, extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, saidNothing, unfinishedCheckNote, visibleText } from "../brunoLookup";
 
 describe("a check that found nothing", () => {
   it("recognises a follow-up that only said Checking… again", () => {
@@ -142,5 +142,31 @@ describe("a Checking… reply with hidden blocks beside it (seen on production a
   it("the last-word note is plain, and points event questions to FIRST and FTC Scout", () => {
     expect(unfinishedCheckNote("What were the recent FTC event results in New Jersey?")).toMatch(/couldn't finish checking[\s\S]*ftc-events\.firstinspires\.org[\s\S]*ftcscout\.org/);
     expect(unfinishedCheckNote("Is the Axon MAX in stock?")).toBe("I couldn't finish checking that just now. Try asking again in a moment.");
+  });
+});
+
+describe("only blocks the app hides count as hidden", () => {
+  it("an ordinary code example is part of the answer", () => {
+    const java = "Checking for null:\n```java\nif (motor == null) return;\n```";
+    expect(visibleText(java)).toContain("```java");
+    expect(progressOnly(java)).toBe(false);
+    expect(progressOnly("Checking the JSON:\n```json\n{\"a\":1}\n```")).toBe(false);
+  });
+  it("hidden kinds don't swallow look-alike names", () => {
+    expect(visibleText("Checking…\n```events-table\nx\n```")).toContain("```events-table");
+    expect(visibleText("Checking…\n```event\n{}\n```")).toBe("Checking…");
+  });
+});
+
+describe("closing an unfinished block before the last word", () => {
+  it("adds a closing fence only when one is open", () => {
+    expect(closeOpenFence('Checking…\n```scout-event\n{"code":"US')).toBe("\n```");
+    expect(closeOpenFence('Checking…\n```scout-event\n{"code":"USNJ"}\n```')).toBe("");
+    expect(closeOpenFence("Checking…")).toBe("");
+  });
+  it("so the note after it is visible", () => {
+    const cut = 'Checking recent FTC event results in New Jersey...\n```scout-event\n{"code":"US';
+    const saved = `${cut}${closeOpenFence(cut)}\n\n${unfinishedCheckNote("What were the recent FTC event results in New Jersey?")}`;
+    expect(visibleText(saved)).toMatch(/^Checking recent FTC event results in New Jersey\.\.\.\s+I couldn't finish checking that/);
   });
 });
