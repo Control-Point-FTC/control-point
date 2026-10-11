@@ -42,6 +42,15 @@ export interface BrunoTask {
 /** A team role and who holds it (member names), for assigning by role. */
 export interface TeamRole { name: string; members: string[] }
 
+/** The one team role a name means: its exact spelling, else a single
+ *  any-case match. Null when none, or when several roles fit. */
+export function matchRole(name: string, roles: TeamRole[]): string | null {
+  const exact = roles.filter((r) => r.name === name);
+  if (exact.length) return exact.length === 1 ? exact[0].name : null;
+  const loose = roles.filter((r) => r.name.toLowerCase() === name.toLowerCase());
+  return loose.length === 1 ? loose[0].name : null;
+}
+
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'urgent'];
@@ -184,11 +193,12 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     if (m) { if (!assignees.includes(m)) assignees.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
   }
   for (const q of recovered) for (const n of q.assignees) if (!assignees.includes(n)) assignees.push(n);
-  // Assign by role: matched to the team's roles (any case) when they're known.
+  // Assign by role: matched to the team's roles when they're known. A name
+  // that fits more than one role is reported, never guessed.
   const roles: string[] = [];
   const unmatchedRoles: string[] = [];
   for (const raw of (Array.isArray(t.roles) ? t.roles : []).map((x) => String(x || '').trim().slice(0, 60)).filter(Boolean).slice(0, 10)) {
-    const known = opts.roles ? opts.roles.find((r) => r.name.toLowerCase() === raw.toLowerCase())?.name : raw;
+    const known = opts.roles ? matchRole(raw, opts.roles) : raw;
     if (known) { if (!roles.includes(known)) roles.push(known); } else if (!unmatchedRoles.includes(raw)) unmatchedRoles.push(raw);
   }
   return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), roles, unmatched, unmatchedRoles };

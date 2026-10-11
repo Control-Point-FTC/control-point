@@ -9,8 +9,8 @@ function taskSummary(it: any): string {
   const parts = [
     t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : t.due_time ? `due today at ${t.due_time}` : '',
     t.priority ? `${t.priority} priority` : '',
-    t.assignees.length || t.roles.length ? `→ ${[...t.assignees, ...t.roles.map((r) => { const who = t.roleMembers[r] ?? []; return `everyone in ${r}${who.length ? ` (${who.join(', ')})` : ''}`; })].join(', ')}` : '',
-    t.unmatchedRoles.length ? `no role named ${t.unmatchedRoles.join(', ')}` : '',
+    t.assignees.length || t.roles.length ? `→ ${[...t.assignees, ...t.roles.map((r) => { const who = t.roleMembers[r] ?? []; return `everyone in ${r}${who.length ? ` (${who.join(', ')})` : ' (no one has this role yet)'}`; })].join(', ')}` : '',
+    t.unmatchedRoles.length ? `no single role named ${t.unmatchedRoles.join(', ')}` : '',
     t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
     t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
   ].filter(Boolean);

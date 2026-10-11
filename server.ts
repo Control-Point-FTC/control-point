@@ -12506,16 +12506,17 @@ Rules:
   // saved: the team's today and its roster names.
   /** Each team role and its active members (assigning tasks by role). */
   async function teamRolesWithMembers(teamId: number | null) {
-    if (!teamId) return [] as { name: string; members: { id: number; name: string }[] }[];
+    if (!teamId) return [] as { id: number; name: string; members: { id: number; name: string }[] }[];
+    // Every role, even one nobody holds yet; two roles that share a name stay two.
     const rows = (await dbAll(
-      "SELECT r.name AS role, m.id, m.name FROM roles r JOIN member_roles mr ON mr.role_id = r.id JOIN members m ON m.id = mr.member_id WHERE r.team_id = ? AND m.team_id = ? AND COALESCE(m.is_active, 1) = 1 ORDER BY r.position, r.name, m.name",
-      teamId, teamId,
+      "SELECT r.id AS role_id, r.name AS role, m.id, m.name FROM roles r LEFT JOIN member_roles mr ON mr.role_id = r.id LEFT JOIN members m ON m.id = mr.member_id AND m.team_id = r.team_id AND COALESCE(m.is_active, 1) = 1 WHERE r.team_id = ? ORDER BY r.position, r.name, m.name",
+      teamId,
     )) as any[];
-    const byRole = new Map<string, { name: string; members: { id: number; name: string }[] }>();
+    const byRole = new Map<number, { id: number; name: string; members: { id: number; name: string }[] }>();
     for (const row of rows) {
-      const entry = byRole.get(String(row.role)) ?? { name: String(row.role), members: [] };
-      entry.members.push({ id: Number(row.id), name: String(row.name) });
-      byRole.set(entry.name, entry);
+      const entry = byRole.get(Number(row.role_id)) ?? { id: Number(row.role_id), name: String(row.role), members: [] };
+      if (row.id != null) entry.members.push({ id: Number(row.id), name: String(row.name) });
+      byRole.set(entry.id, entry);
     }
     return [...byRole.values()];
   }

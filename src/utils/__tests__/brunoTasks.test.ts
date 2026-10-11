@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeBrunoTask, rosterMatch, recoverEventTime } from '../brunoTasks';
+import { matchRole, normalizeBrunoTask, rosterMatch, recoverEventTime } from '../brunoTasks';
+
+describe('matching a role name', () => {
+  const roles = [{ name: 'Builders', members: ['A'] }, { name: 'builders', members: ['B'] }, { name: 'Coders', members: [] }, { name: 'Twin', members: [] }, { name: 'Twin', members: [] }];
+  it('takes the exact spelling, a single any-case match, and never guesses', () => {
+    expect(matchRole('builders', roles)).toBe('builders');
+    expect(matchRole('Builders', roles)).toBe('Builders');
+    expect(matchRole('BUILDERS', roles)).toBeNull();
+    expect(matchRole('coders', roles)).toBe('Coders');
+    expect(matchRole('Twin', roles)).toBeNull();
+    expect(matchRole('Pit crew', roles)).toBeNull();
+  });
+});
 
 const roster = ['Arnav Patel', 'Ada Lovelace', 'Grace Hopper'];
 const today = '2026-10-08'; // a Thursday
