@@ -707,6 +707,39 @@ export class NotebookStore {
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
   }); }
+  /** Merge a section into another in one transaction: its top-level pages
+   *  (with their subpages) that this member can see move to the end of the
+   *  target. The source goes to trash only when nothing is left in it, hidden
+   *  pages included, so a page added meanwhile or one this member can't see
+   *  is never trashed along with it. */
+  mergeSection(ctx: NotebookContext, fromId: number, intoId: number) { return this.batch(ctx, async () => {
+    const { pages, canDelete } = await this.session(ctx, async s => {
+      s.require("organize_notebook");
+      const from = await s.item("section", fromId), into = await s.item("section", intoId);
+      if (from.id === into.id) throw new NotebookError("Choose another section to merge into");
+      const rows = await s.all("SELECT id FROM notebook_pages WHERE team_id=? AND section_id=? AND parent_id IS NULL AND deleted_at IS NULL ORDER BY position,id", ctx.teamId, from.id);
+      const visible: number[] = [];
+      // A page moves only when move() would accept its whole subtree (a hidden
+      // or trashed admin-only subpage blocks it); blocked pages stay put
+      // instead of rolling back the rest of the merge.
+      for (const r of rows) {
+        try { const row = await s.item("page", Number(r.id)); await s.checkChildren("page", row); visible.push(row.id); }
+        catch (e) { if (!(e instanceof NotebookError)) throw e; }
+      }
+      return { pages: visible, canDelete: s.can("delete_notebook") };
+    });
+    for (const pageId of pages) await this.move(ctx, "page", pageId, { sectionId: intoId, parentId: null }, "end");
+    // Why the source stays, if it does. The same check remove() makes runs
+    // first (read-only), so a refusal never rolls back the moves above.
+    const kept = await this.session(ctx, async s => {
+      if (!canDelete) return "no_delete_permission" as const;
+      if (await s.one("SELECT 1 AS x FROM notebook_pages WHERE team_id=? AND section_id=? AND deleted_at IS NULL LIMIT 1", ctx.teamId, fromId)) return "has_pages" as const;
+      try { await s.checkChildren("section", await s.item("section", fromId)); } catch (e) { if (e instanceof NotebookError) return "protected_trash" as const; throw e; }
+      return null;
+    });
+    if (!kept) await this.remove(ctx, "section", fromId);
+    return { moved: pages.length, trashed: !kept, ...(kept ? { kept } : {}) };
+  }); }
   /** Runs `fn` in one transaction: every store call inside it commits or
    *  rolls back together (one confirmed Bruno card). */
   batch<T>(ctx: NotebookContext, fn: () => Promise<T>): Promise<T> { return this.session(ctx, () => fn()); }
@@ -842,6 +875,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get('/api/notebook/pages/:id/mention-members', handle((ctx, req) => store.mentionMembers(ctx, id(req.params.id))));
   app.put("/api/notebook/pages/:id", handle((ctx, req) => store.save(ctx, id(req.params.id), req.body ?? {})));
   app.post("/api/notebook/pages/:id/duplicate", handle((ctx, req) => store.duplicate(ctx, id(req.params.id))));
+  app.post("/api/notebook/sections/:id/merge", handle((ctx, req) => store.mergeSection(ctx, id(req.params.id), id(req.body?.into))));
   app.post("/api/notebook/move", handle((ctx, req) => {
     const kind = req.body?.kind;
     if (kind !== "notebook" && kind !== "section" && kind !== "page") throw new NotebookError("Invalid item kind");
