@@ -71,6 +71,8 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
+import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
+import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, onlyFenceMissing, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -1675,8 +1677,9 @@ async function createSessionIfCredential(memberId: number, email: string, passwo
     `INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity)
      SELECT ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND LOWER(email) = LOWER(?) AND COALESCE(is_active, 1) = 1)
-       AND EXISTS (SELECT 1 FROM members WHERE LOWER(email) = LOWER(?) AND password = ?)`,
-    sessionKey(sessionId), memberId, now, expiresAt, now, memberId, email, email, passwordHash
+       AND EXISTS (SELECT 1 FROM members WHERE LOWER(email) = LOWER(?) AND password = ?)
+       AND EXISTS (SELECT 1 FROM proven_passwords WHERE email = LOWER(?) AND hash = ?)`,
+    sessionKey(sessionId), memberId, now, expiresAt, now, memberId, email, email, passwordHash, email, passwordHash
   )) as any;
   return Number(info?.changes) > 0 ? sessionId : null;
 }
@@ -3000,8 +3003,9 @@ async function startServer() {
       }
       return res.status(401).json({ error: BAD_LOGIN });
     }
-    // Email ownership check: unverified addresses get a code, not a session.
-    if (!(await isEmailVerified(email))) {
+    // Email ownership check: an unverified address — or a password its owner
+    // never proved (V5 H1) — gets a code, not a session.
+    if (!(await isEmailVerified(email)) || !(await isProvenHash(email, matchedHash, { dbRun, dbGet }))) {
       const emailSent = await sendSignupCode(email);
       return res.json({ needsVerification: true, email, emailSent });
     }
@@ -3090,9 +3094,10 @@ async function startServer() {
           "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
           teamId, cleanName, 'Admin', cleanEmail, hashedPassword, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
         )) as any;
-        // Unverified emails get a code, not a session — the team row already
-        // exists, so verifying later lands them right back here.
-        if (!(await isEmailVerified(cleanEmail))) {
+        // Unverified emails — or a password the owner never proved — get a
+        // code, not a session; the team row already exists, so verifying
+        // later lands them right back here.
+        if (!(await isEmailVerified(cleanEmail)) || !(await isProvenHash(cleanEmail, hashedPassword, { dbRun, dbGet }))) {
           const emailSent = await sendSignupCode(cleanEmail);
           return res.json({ needsVerification: true, email: cleanEmail, emailSent });
         }
@@ -3158,8 +3163,9 @@ async function startServer() {
         // Unverified emails get a code, not a session — the membership row
         // already exists, so verifying later lands them right back here.
         // Until then they are hidden from the roster (V3-M3) and teammates
-        // hear "joined" only once the address is verified.
-        if (!(await isEmailVerified(cleanEmail))) {
+        // hear "joined" only once the address is verified. A password the
+        // owner never proved gets a code too (V5 H1).
+        if (!(await isEmailVerified(cleanEmail)) || !(await isProvenHash(cleanEmail, hashedPassword, { dbRun, dbGet }))) {
           const emailSent = await sendSignupCode(cleanEmail);
           return res.json({ needsVerification: true, email: cleanEmail, emailSent });
         }
@@ -3196,6 +3202,8 @@ async function startServer() {
           : "That code doesn't match — try again";
       return res.status(400).json({ error: msg, reason: check.reason });
     }
+    // The code reached the owner: the passwords on the account are theirs.
+    await provePasswords(email, { dbRun, dbGet });
     await markEmailVerified(email);
     await ensureOnboardingRow(email);
     const rows = await activeMemberRows(email);
@@ -3218,7 +3226,8 @@ async function startServer() {
   app.post("/api/auth/resend-code", async (req, res) => {
     const email = (((req.body || {}).email) || "").trim();
     if (!email) return res.status(400).json({ error: "Email is required" });
-    if (await isEmailVerified(email)) return res.json({ alreadyVerified: true });
+    // A verified address still gets a code while a password on it awaits proof (V5 H1).
+    if (await isEmailVerified(email) && !(await hasUnprovenPassword(email, { dbRun, dbGet }))) return res.json({ alreadyVerified: true });
     try {
       const result = await issueVerificationCode(email);
       if (result.sent === false) {
@@ -3280,6 +3289,8 @@ async function startServer() {
     const members = (await dbAll("SELECT id FROM members WHERE LOWER(email) = ?", email)) as any[];
     if (!members.length) return res.status(400).json({ error: "No account found for that email" });
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
+    // Proven first (the code proved the email), so nothing can drop it in between.
+    await proveHash(email, hashedPassword, { dbRun, dbGet });
     // The password is account-wide: set it on every membership row for this email.
     await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE LOWER(email) = ?", hashedPassword, email);
     await markEmailVerified(email);
@@ -3560,6 +3571,9 @@ async function startServer() {
       rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     }
     const member = await pickMemberRow(rows);
+    // OAuth proves the email, never a password: hashes nobody proved (a
+    // stranger's signup with this address) are dropped (V5 H1).
+    await dropUnprovenPasswords(email, { dbRun, dbGet });
     // OAuth providers verify email ownership — no OTP needed.
     await markEmailVerified(email);
     const sessionId = await createSession(member.id);
@@ -3583,7 +3597,9 @@ async function startServer() {
       const cleanEmail = (pending.email || '').trim();
       const cleanName = (pending.name || '').trim() || cleanEmail.split('@')[0];
       if (!cleanEmail) return res.status(400).json({ error: "Signup expired — please try again" });
-      // The OAuth provider verified this address — no OTP needed.
+      // The OAuth provider verified this address — no OTP needed. It proves
+      // the email, never a password someone else set on it (V5 H1).
+      await dropUnprovenPasswords(cleanEmail, { dbRun, dbGet });
       await markEmailVerified(cleanEmail);
       // Multi-team accounts: a provider-verified email may already exist — it
       // simply gains a membership row in the new/joined team. (Duplicate
@@ -4150,6 +4166,7 @@ async function startServer() {
       return res.status(401).json({ error: "Current password is incorrect" });
     }
     const newHash = bcrypt.hashSync(String(newPassword), 10);
+    await proveHash(member.email, newHash, { dbRun, dbGet });
     // The password is account-wide: update every membership row for this email,
     // and kill every other session on all of them.
     (await dbRun("UPDATE members SET password = ? WHERE LOWER(email) = LOWER(?)", newHash, member.email));
@@ -10173,7 +10190,8 @@ Rules:
 
   app.post("/api/outreach", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const { title, description, date, hours, location, attendees, funds_raised } = req.body;
       const missingOutreach = requiredTextError(req.body || {}, REQUIRED.outreach);
@@ -10195,7 +10213,8 @@ Rules:
 
   app.patch("/api/outreach/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -10215,7 +10234,8 @@ Rules:
 
   app.delete("/api/outreach/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      // Same permission as the outreach social accounts and Bruno's outreach entries (V5 M4).
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -12196,6 +12216,36 @@ Rules:
         const refs = await validateRefs(text, shownRefs, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
         return refsBlock(teamId, refs);
       };
+      // A reply the length cap cut off inside a proposal block: ask once for
+      // the complete block (server/brunoCutBlocks.ts). Returns what to append.
+      const finishCutBlock = async (text: string, signal: AbortSignal): Promise<string> => {
+        const cut = unfinishedActionBlock(text);
+        if (!cut) return "";
+        // Only the closing fence was lost: close it (regenerating would repeat items).
+        if (onlyFenceMissing(text, cut)) return CLOSE_FENCE;
+        let second = "";
+        let finishUsage: any = null;
+        try {
+          const r = await aiChat({
+            extraSystem: systemExtra,
+            // The cut reply goes back whole (16,000 chars at most), so the
+            // second call can repeat every item it had proposed.
+            messages: [...messages, { role: "model", maxChars: 16000, text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
+            maxTokens: FINISH_BLOCK_TOKENS,
+            stream: false,
+            onUsage: (u) => { finishUsage = u; },
+            signal,
+          });
+          second = String(r.text || "");
+          logAiUsage(auth.memberId, auth.teamId, finishUsage, text.length, second.length, "ok", r.provider);
+        } catch (e: any) {
+          if (signal.aborted) return "";
+          console.error("Bruno finish-block pass failed:", e?.message);
+          // Failed calls still count on the owner's usage dashboard.
+          logAiUsage(auth.memberId, auth.teamId, null, text.length, 0, isAnthropicQuotaError(e) || isQuotaError(e) ? "quota" : "error", e?.aiProvider || "unknown");
+        }
+        return finishCutReply(cut, second).appended;
+      };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
@@ -12308,6 +12358,10 @@ Rules:
               fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
             }
           }
+          // A proposal the length cap cut off: finish it (or say it was too long).
+          const finished = await finishCutBlock(fullText, streamAbort.signal);
+          if (streamAbort.signal.aborted) { res.end(); return; }
+          if (finished) { send(finished); fullText += finished; }
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -12369,6 +12423,9 @@ Rules:
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
         if (looked) webSourcesNS.unshift(...(looked.sources || []));
       }
+      const finishedNS = await finishCutBlock(String(result || ""), nonStreamAbort.signal);
+      if (nonStreamAbort.signal.aborted) return;
+      if (finishedNS) result = String(result || "") + finishedNS;
       const memNS = extractRememberBlocks(String(result || ""));
       result = memNS.text;
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
@@ -12617,6 +12674,7 @@ Rules:
         "delete-event": { perm: "manage_calendar", error: "Only members with calendar access can delete events" },
         "communication": { perm: "manage_communications", error: "Only members with communication access can log messages" },
         "task": { perm: "manage_tasks", error: "Only members with task access can add tasks" },
+        "outreach": { perm: "manage_outreach", error: "Only members with outreach access can log outreach" },
         "task-update": { perm: "manage_tasks", error: "Only members with task access can edit tasks" },
         "budget": { perm: "manage_budget", error: "Only members with budget access can add budget entries" },
       };
