@@ -16,12 +16,14 @@ import { renderNotebookText } from "./brunoNotebook.js";
 export type NotebookOp =
   | { op: "create"; title: string; section?: number; parent?: number; template?: string; markdown?: string }
   | { op: "append"; page: number; markdown: string; after?: string }
-  | { op: "replace"; page: number; block: string; through?: string; markdown: string }
+  | { op: "replace"; page: number; block: string; blocks?: string[]; markdown: string }
   | { op: "rename"; page: number; title: string }
   | { op: "move"; page: number; section?: number; parent?: number | null }
   | { op: "delete"; page: number };
 
 export const MAX_NOTEBOOK_OPS = 10;
+/** Most blocks one rewrite may replace. */
+export const MAX_RUN = 40;
 const OPS = ["create", "append", "replace", "rename", "move", "delete"] as const;
 const bad = (msg: string) => new NotebookError(msg, 400);
 const posInt = (v: unknown) => { const n = Number(v); return Number.isSafeInteger(n) && n > 0 ? n : undefined; };
@@ -59,12 +61,18 @@ export function parseNotebookOps(items: unknown): NotebookOp[] {
         return { op: "append", page: page!, markdown, ...(raw.after ? { after: raw.after } : {}) };
       }
       case "replace": {
+        // "blocks": every id of a run of consecutive blocks, in order. Listing
+        // them all ties the write to exactly what the card showed.
+        if (raw.blocks !== undefined) {
+          const list = Array.isArray(raw.blocks) ? raw.blocks.map(blockId) : [];
+          if (list.length < 1 || list.length > MAX_RUN || list.some(b => !b) || new Set(list).size !== list.length) throw bad(`A rewrite lists 1–${MAX_RUN} distinct block ids`);
+          if (raw.block !== undefined && raw.block !== list[0]) throw bad("A rewrite's first block must start its block list");
+          const ids = list as string[];
+          return { op: "replace", page: page!, block: ids[0], ...(ids.length > 1 ? { blocks: ids } : {}), markdown: markdownOf(raw.markdown, true) };
+        }
         const block = blockId(raw.block);
         if (!block) throw bad("A rewrite needs the block id it replaces");
-        // "through": the last block of a run (a heading and everything under it).
-        const through = raw.through === undefined || raw.through === null || raw.through === block ? undefined : blockId(raw.through);
-        if (raw.through !== undefined && raw.through !== null && raw.through !== block && !through) throw bad("A rewrite's last block id isn't valid");
-        return { op: "replace", page: page!, block, ...(through ? { through } : {}), markdown: markdownOf(raw.markdown, true) };
+        return { op: "replace", page: page!, block, markdown: markdownOf(raw.markdown, true) };
       }
       case "rename": {
         const title = titleOf(raw.title);
@@ -112,17 +120,19 @@ export function appendBlocks(doc: PMNode, markdown: string, after?: string): PMN
   return doc;
 }
 
-/** The run of sibling blocks from `block` through `through` (or just `block`). */
-export function locateRange(doc: PMNode, block: string, through?: string) {
+/** Where a rewrite's blocks are: `blocks` must still be exactly consecutive
+ *  siblings in that order, so a block someone inserted after the card was
+ *  shown is never removed unseen. */
+export function locateRange(doc: PMNode, block: string, blocks?: string[]) {
   const at = locate(doc, block);
   if (!at) return null;
-  if (!through) return { siblings: at.siblings, index: at.index, count: 1 };
-  const end = at.siblings.findIndex((n, i) => i >= at.index && n.attrs?.id === through);
-  return end < 0 ? null : { siblings: at.siblings, index: at.index, count: end - at.index + 1 };
+  const ids = blocks ?? [block];
+  if (ids[0] !== block || ids.some((id, i) => at.siblings[at.index + i]?.attrs?.id !== id)) return null;
+  return { siblings: at.siblings, index: at.index, count: ids.length };
 }
 
-export function replaceBlock(doc: PMNode, block: string, markdown: string, through?: string): PMNode {
-  const at = locateRange(doc, block, through);
+export function replaceBlock(doc: PMNode, block: string, markdown: string, run?: string[]): PMNode {
+  const at = locateRange(doc, block, run);
   if (!at) throw changed();
   const old = at.siblings[at.index];
   const blocks = markdownToNotebookBlocks(markdown);
@@ -188,9 +198,12 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text;
       if (op.op === "append") out.push({ op: "append", summary: `Add to ${name}`, after: added });
       else {
-        const at = locateRange(page.content as PMNode, op.block, op.through);
+        const at = locateRange(page.content as PMNode, op.block, op.blocks);
         if (!at) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part of the page changed or was removed." }); continue; }
-        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT).text, ...(added ? { after: added } : {}), destructive: !added });
+        // Everything removed must be reviewable on the card.
+        const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT);
+        if (before.truncated) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part is too long to review in one card. Ask Bruno to rewrite it in smaller parts." }); continue; }
+        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: before.text, ...(added ? { after: added } : {}), destructive: !added });
       }
     }
   }
@@ -217,7 +230,7 @@ export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContex
         const page = await store.create(as, "page", { sectionId, parentId: op.parent ?? null, title: op.title, content });
         results.push({ op: "create", pageId: (page as any).id, title: (page as any).title });
       } else if (op.op === "append" || op.op === "replace") {
-        const page = await store.mergeEdit(as, op.page, { transform: doc => op.op === "append" ? appendBlocks(doc, op.markdown, op.after) : replaceBlock(doc, op.block, op.markdown, op.through) });
+        const page = await store.mergeEdit(as, op.page, { transform: doc => op.op === "append" ? appendBlocks(doc, op.markdown, op.after) : replaceBlock(doc, op.block, op.markdown, op.blocks) });
         results.push({ op: op.op, pageId: page.id, title: page.title });
       } else if (op.op === "rename") {
         const page = await store.mergeEdit(as, op.page, { title: op.title });

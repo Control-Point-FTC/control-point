@@ -679,7 +679,7 @@ NOTEBOOK EDIT SKILL:
 - Operations (up to 10 per block):
   * {"op":"create","title":"…","section":<section id, optional>,"parent":<page id, optional>,"template":"meeting"|"todo"|"engineering"|"design"|"blank" (optional),"markdown":"…" (optional)}
   * {"op":"append","page":<id>,"markdown":"…","after":"<block id, optional>"} adds to the end, or after that block
-  * {"op":"replace","page":<id>,"block":"<block id>","markdown":"…"} rewrites one block; an empty "markdown" removes it. Add "through":"<last block id>" to rewrite a whole run of consecutive blocks at once (a heading and everything under it, or a table plus its notes)
+  * {"op":"replace","page":<id>,"block":"<block id>","markdown":"…"} rewrites one block; an empty "markdown" removes it. To rewrite a whole run of consecutive blocks at once (a heading and everything under it, or a table plus its notes), give every id in order instead: {"op":"replace","page":<id>,"blocks":["<id1>","<id2>","<id3>"],"markdown":"…"} (up to 40)
   * {"op":"rename","page":<id>,"title":"…"}
   * {"op":"move","page":<id>,"section":<section id>} or {"op":"move","page":<id>,"parent":<page id or null>}
   * {"op":"delete","page":<id>} moves the page and its subpages to Trash

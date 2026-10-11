@@ -74,34 +74,47 @@ describe("block edits", () => {
     replaceBlock(d, "a", "");
     expect(d.content).toEqual([{ type: "paragraph" }]);
   });
-  it("rewrites a run of blocks with through, and keeps links as clickable link marks", () => {
+  it("rewrites an exact run of blocks, and keeps links as clickable link marks", () => {
     const d: any = doc(para("h", "Motors"), para("m1", "Yellow Jacket"), para("m2", "NeveRest"), para("tail", "Keep me"));
-    replaceBlock(d, "h", "Motors\n\n[goBILDA Yellow Jacket](https://www.gobilda.com/yellow-jacket/) and **NeveRest**", "m2");
+    replaceBlock(d, "h", "Motors\n\n[goBILDA Yellow Jacket](https://www.gobilda.com/yellow-jacket/) and **NeveRest**", ["h", "m1", "m2"]);
     expect(d.content.map((b: any) => b.attrs?.id)).toEqual(["h", expect.any(String), "tail"]);
     expect(JSON.stringify(d.content[1])).toContain('"href":"https://www.gobilda.com/yellow-jacket/"');
-    expect(() => replaceBlock(d, "h", "x", "gone")).toThrow(/changed or was removed/);
-    expect(() => replaceBlock(d, "tail", "x", "h")).toThrow(/changed or was removed/);
+    expect(() => replaceBlock(d, "h", "x", ["h", "gone"])).toThrow(/changed or was removed/);
+    expect(() => replaceBlock(d, "tail", "x", ["tail", "h"])).toThrow(/changed or was removed/);
+  });
+  it("refuses a run that gained a block after it was reviewed", () => {
+    const d: any = doc(para("a", "A"), para("new", "Added by a teammate"), para("b", "B"));
+    expect(() => replaceBlock(d, "a", "x", ["a", "b"])).toThrow(/changed or was removed/);
+    expect(JSON.stringify(d)).toContain("Added by a teammate");
   });
 });
 
-describe("parseNotebookOps through", () => {
-  it("accepts a valid last block id and rejects a malformed one", () => {
-    expect(parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "b", markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", through: "b", markdown: "x" }]);
-    expect(parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "a", markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", markdown: "x" }]);
-    expect(() => parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "no good!", markdown: "x" }])).toThrow();
+describe("parseNotebookOps blocks", () => {
+  it("accepts an ordered list of distinct ids and rejects bad lists", () => {
+    expect(parseNotebookOps([{ op: "replace", page: 1, blocks: ["a", "b"], markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", blocks: ["a", "b"], markdown: "x" }]);
+    expect(parseNotebookOps([{ op: "replace", page: 1, blocks: ["a"], markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", markdown: "x" }]);
+    for (const blocks of [[], ["a", "a"], ["no good!"], Array.from({ length: 41 }, (_, i) => `b${i}`), "a"])
+      expect(() => parseNotebookOps([{ op: "replace", page: 1, blocks, markdown: "x" }]), JSON.stringify(blocks).slice(0, 40)).toThrow();
+    expect(() => parseNotebookOps([{ op: "replace", page: 1, block: "z", blocks: ["a", "b"], markdown: "x" }])).toThrow();
   });
 });
 
 describe("confirmed Bruno notebook writes", () => {
   it("previews and applies a multi-block rewrite of an existing page", async () => {
     const p = await newPage("Motors reference");
-    const ops = parseNotebookOps([{ op: "replace", page: p.id, block: "p1", through: "p2", markdown: "[REV UltraPlanetary](https://www.revrobotics.com/rev-41-1600/)" }]);
+    const ops = parseNotebookOps([{ op: "replace", page: p.id, blocks: ["p1", "p2"], markdown: "[REV UltraPlanetary](https://www.revrobotics.com/rev-41-1600/)" }]);
     const [preview] = await previewNotebookOps(store, me(editor), ops);
     expect(preview.before).toContain("First line"); expect(preview.before).toContain("Second line");
     await applyNotebookOps(store, me(editor), ops, key());
     const after = await store.page(human(editor), p.id);
     expect(textOf(after)).not.toContain("Second line");
     expect(textOf(after)).toContain('"href":"https://www.revrobotics.com/rev-41-1600/"');
+  });
+  it("won't offer a rewrite whose removed text is too long to show in full", async () => {
+    const long = "x".repeat(15_000);
+    const p = await store.create(human(admin), "page", { sectionId: section, title: "Huge", content: doc(para("q1", long), para("q2", long)) }) as any;
+    const [preview] = await previewNotebookOps(store, me(editor), parseNotebookOps([{ op: "replace", page: p.id, blocks: ["q1", "q2"], markdown: "Short" }]));
+    expect(preview.error).toMatch(/too long to review/);
   });
   it("creates a page with Markdown as real blocks, attributed to the confirming member", async () => {
     const { result } = await applyNotebookOps(store, me(editor), parseNotebookOps([{ op: "create", title: "Build log", markdown: "## Plan\n- [ ] Cut plate\n\n| a | b |\n|---|---|\n| 1 | 2 |" }]), key());
