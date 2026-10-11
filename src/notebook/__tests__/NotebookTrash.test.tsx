@@ -120,7 +120,7 @@ describe('desktop notebook trash controls',()=>{
   });
   it('identifies section restore destinations by notebook and section title',async()=>{
     const duplicate={...tree,notebooks:[...tree.notebooks,{id:3,title:'Later season',sort:1,color:null}],sections:[...tree.sections,{...tree.sections[0],id:7,notebookId:3}]};
-    render(<NotebookTrash teamId={9} tree={duplicate} onRestored={vi.fn()}/>);await open();fireEvent.click(screen.getByRole('button',{name:'Choose destination'}));
+    render(<NotebookTrash teamId={9} tree={duplicate} onRestored={vi.fn()}/>);await open();fireEvent.click(screen.getByRole('button',{name:/to another place/}));
     expect(screen.getByRole('option',{name:'Team notebook / Build'})).toBeTruthy();expect(screen.getByRole('option',{name:'Later season / Build'})).toBeTruthy();
   });
 });

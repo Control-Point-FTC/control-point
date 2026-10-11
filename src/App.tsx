@@ -551,6 +551,8 @@ export default function App() {
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [isOwner, setIsOwner] = useState(false);
+  // The owner check has answered (so /owner opened directly isn't bounced first).
+  const [ownerChecked, setOwnerChecked] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [whatsNewAuto, setWhatsNewAuto] = useWhatsNewAutoOpen();
@@ -1869,17 +1871,21 @@ export default function App() {
     return ids;
   }, [visibleTabs]);
   useEffect(() => {
+    // Opening /owner directly: wait for the owner check before deciding.
+    if (activeTab === 'owner' && !ownerChecked) return;
     if (isLoggedIn && activeTab !== 'bruno' && !allVisibleTabIds.has(activeTab)) {
       navigate('/dashboard', { replace: true });
     }
-  }, [isLoggedIn, currentUser, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, currentUser, activeTab, ownerChecked, isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Owner status drives the Owner tab; only Sushil's email(s) qualify
   useEffect(() => {
     if (isLoggedIn) {
-      apiFetch('/api/owner/me').then(r => r.json()).then(d => setIsOwner(!!d.isOwner)).catch(() => setIsOwner(false));
+      setOwnerChecked(false);
+      apiFetch('/api/owner/me').then(r => r.json()).then(d => setIsOwner(!!d.isOwner)).catch(() => setIsOwner(false)).finally(() => setOwnerChecked(true));
     } else {
       setIsOwner(false);
+      setOwnerChecked(false);
     }
   }, [isLoggedIn]);
 

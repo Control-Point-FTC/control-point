@@ -34,6 +34,21 @@ const TREE_COLORS = [
 ];
 type EditDialog = { action: 'rename' | 'delete' | 'move' | 'template' | 'defaults' | 'merge'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
 const plural = { notebook: 'notebooks', section: 'sections', page: 'pages' };
+
+/** Did trashing this notebook, section or page take the open page with it? */
+export function openPageWentWith(tree: NotebookTree, kind: Kind, id: number, openId: number): boolean {
+  const page = tree.pages.find((p) => p.id === openId);
+  if (!page) return false;
+  if (kind === 'page') {
+    for (let p: typeof page | undefined = page, hops = 0; p && hops < 64; hops++) {
+      if (p.id === id) return true;
+      p = p.parentId ? tree.pages.find((x) => x.id === p!.parentId) : undefined;
+    }
+    return false;
+  }
+  if (kind === 'section') return page.sectionId === id;
+  return tree.sections.some((s) => s.id === page.sectionId && s.notebookId === id);
+}
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 // One notebook per season for now. Keep creation and its API intact for re-enabling.
 const SHOW_NOTEBOOK_CREATION = false;
@@ -93,6 +108,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [sync, setSync] = useState<NotebookSync | null>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const syncRef = useRef<NotebookSync | null>(null);
+  // Pages that vanished because this tab moved them to trash: no "no longer
+  // available" warnings for those, just one "Moved to trash" notice.
+  const trashedHere = useRef(new Set<number>());
   const { navigator } = useContext(UNSAFE_NavigationContext);
   useEffect(() => {
     const originalPush = navigator.push, originalReplace = navigator.replace;
@@ -133,7 +151,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value,navigationEpoch.current).then(()=>{if(currentRequest())setTreeStorageError('');}).catch(e=>{if(currentRequest())setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
-        void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
+        void current.discardRecovery(); syncRef.current = null; setSync(null);
+        // Only peek: the missing-page check below consumes the mark.
+        if (!trashedHere.current.has(current.pageId)) setError('This page is no longer available.');
       }
     } catch (e) {
       if(!currentRequest())return;loadFailedRef.current=true;
@@ -324,6 +344,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     }
     if (!selected) { if (activeSection == null && !(chosenBook !== null && tree.notebooks.some(n => n.id === chosenBook))) openDefault(); return; }
     if (verifiedMissing.current === selected) return;
+    // Trashed from here a moment ago: the "Moved to trash" notice already said so.
+    if (trashedHere.current.delete(selected)) { openDefault(); return; }
     verifiedMissing.current = selected;
     const asked = selected;
     // The tree may simply be older than a page created a moment ago: ask the server.
@@ -378,7 +400,20 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     }
     await mutate(async () => {
       const base = `/api/notebook/${plural[kind]}`;
-      if (action === 'delete') { await apiJson(`${base}/${item!.id}`, { method: 'DELETE' }); if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); } }
+      if (action === 'delete') {
+        await apiJson(`${base}/${item!.id}`, { method: 'DELETE' });
+        // The open page went with it (this page, a page under it, or its
+        // section or notebook): expect it to vanish without a warning. The
+        // mark is used once, and dropped after a while either way.
+        if (selected && tree && openPageWentWith(tree, kind, item!.id, selected)) {
+          const gone = selected;
+          trashedHere.current.add(gone);
+          setTimeout(() => trashedHere.current.delete(gone), 15_000);
+        }
+        setError('');
+        setLandingNotice('Moved to trash. You can restore it from Trash.');
+        if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); }
+      }
       if (action === 'rename') {
         if (kind === 'page') await savePageTitle(item!.id, name.trim());
         else await apiJson(`${base}/${item!.id}`, { method: 'PATCH', body: JSON.stringify({ title: name, color }) });
