@@ -96,7 +96,7 @@ function WebLink({ href, children }: { href?: string; children?: ReactNode }) {
   const repeat = domain && !text.toLowerCase().includes(domain.toLowerCase());
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className="text-info font-semibold underline underline-offset-2 hover:opacity-80" title={domain ? `${href} (opens in a new tab)` : undefined}>
-      {children}{repeat && <span className="ml-1 whitespace-nowrap text-[0.85em] font-normal text-text-muted no-underline">({domain})</span>}
+      {children}{repeat && <span className="ml-1 [overflow-wrap:anywhere] text-[0.85em] font-normal text-text-muted no-underline">({domain})</span>}
     </a>
   );
 }

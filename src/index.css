@@ -495,6 +495,17 @@ html.light .theme-dark .card-surface {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #3f3f47;
 }
+/* Firefox has no ::-webkit-scrollbar; give it the standard thin bar. Scoped so
+   Chromium keeps the custom pseudo-element styling (scrollbar-width disables it). */
+@supports not selector(::-webkit-scrollbar) {
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #2e2e35 transparent;
+  }
+  html.light .custom-scrollbar {
+    scrollbar-color: #d4d4d8 transparent;
+  }
+}
 
 /* ---------- buttons ---------- */
 .btn-accent-primary {
