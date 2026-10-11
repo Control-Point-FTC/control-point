@@ -69,7 +69,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, implicitCheck, nothingFoundNote, runLookups, saidNothing } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
@@ -12373,6 +12373,21 @@ Rules:
         logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
         return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources, queries, rows };
       };
+      /** The first reply only said "Checking …" and asked for no lookup: ask
+       *  once more (answer, or request the lookup it needs). Still nothing →
+       *  a web check of the question. */
+      const askAgain = async (firstText: string, signal: AbortSignal) => {
+        const question = messages[messages.length - 1].text;
+        const retryMessages = [...messages, { role: "model", text: firstText }, { role: "user", text: PROGRESS_ONLY_PROMPT }];
+        let retryUsage: any = null;
+        const retry = await aiChat({ extraSystem: systemExtra, messages: retryMessages, maxTokens, stream: false, onUsage: (u) => { retryUsage = u; }, signal })
+          .catch((e: any) => { console.error("Bruno retry after Checking… failed:", e?.message); return null; });
+        if (retry) {
+          const chars = retryMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+          logAiUsage(auth.memberId, auth.teamId, retryUsage, chars, String(retry.text || "").length, "ok", retry.provider);
+        }
+        return resolveRetry(firstText, retry?.text, question);
+      };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
@@ -12408,9 +12423,18 @@ Rules:
           // The first call's own counts, logged before any lookup pass (which logs itself).
           const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
-          // Only "Checking …" and no lookup asked for: check the web for the question.
-          const implicit = hold.blocked ? null : implicitCheck(fullText, messages[messages.length - 1].text);
-          if (implicit) fullText = implicit;
+          // Only "Checking …" and no lookup asked for: ask again (see askAgain).
+          let implicit = false;
+          if (!hold.blocked && progressOnly(fullText) && !streamAbort.signal.aborted) {
+            const again = await askAgain(fullText, streamAbort.signal);
+            if (streamAbort.signal.aborted) { res.end(); return; }
+            if (again?.kind === "answer") { send(`
+
+${again.text}`); fullText = `${fullText.trimEnd()}
+
+${again.text}`; }
+            else if (again) { fullText = again.text; implicit = true; }
+          }
           if ((hold.blocked || implicit) && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
             // The answer starts its own paragraph, live and in the saved reply alike.
@@ -12514,9 +12538,15 @@ Rules:
       // Same rule as the stream: any ```lookup block (even an unfinished or
       // unreadable one) is never shown or saved; if it can't run, say so.
       const webSourcesNS = [...(aiReply.sources || [])];
-      // Only "Checking …" and no lookup asked for: check the web for the question.
-      const implicitNS = implicitCheck(String(result || ""), messages[messages.length - 1].text);
-      if (implicitNS) result = implicitNS;
+      // Only "Checking …" and no lookup asked for: ask again (see askAgain).
+      if (progressOnly(String(result || ""))) {
+        const again = await askAgain(String(result || ""), nonStreamAbort.signal);
+        if (nonStreamAbort.signal.aborted) return;
+        if (again?.kind === "answer") result = `${String(result || "").trimEnd()}
+
+${again.text}`;
+        else if (again) result = again.text;
+      }
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries, { rows: looked.rows, webSources: (looked.sources || []).length })}`.trim();

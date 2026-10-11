@@ -371,15 +371,39 @@ export function saidNothing(answer: string): boolean {
   return lines.every(progress);
 }
 
-/** A first reply that only said "Checking …" without asking for a lookup
- *  (seen on production: the reply ended there). Returns the reply with a web
- *  check of the user's question added, so the lookup pass runs and answers
- *  (or says plainly that nothing was found); null when the reply is fine. */
-export function implicitCheck(firstText: string, question: string): string | null {
+/** A first reply that only said "Checking …" and asked for no lookup (seen on
+ *  production: the reply ended there, because nothing was checked). */
+export function progressOnly(firstText: string): boolean {
   const text = String(firstText || "");
+  return !!text.trim() && !text.includes("```lookup") && saidNothing(text);
+}
+
+/** What the model is told when its reply was only "Checking …": answer, or
+ *  ask for the lookup it actually needs (team records or the web). */
+export const PROGRESS_ONLY_PROMPT =
+  "You said you were checking, but you didn't ask for a lookup, so nothing was checked. Do one of these now: answer from what you already know, or reply with only the ```lookup block you need (the team's records, the notebook, sticky notes, or {\"kind\":\"web\",\"query\":\"...\"} for the web). Don't say \"Checking…\" again.";
+
+/** The first reply plus a web check of the user's question, so the lookup
+ *  pass runs and answers (or says plainly that nothing was found). */
+export function implicitCheck(firstText: string, question: string): string | null {
   const q = String(question || "").replace(/\s+/g, " ").trim().slice(0, 200);
-  if (!text.trim() || !q || text.includes("```lookup") || !saidNothing(text)) return null;
-  return `${text.trimEnd()}\n\`\`\`lookup\n${JSON.stringify({ kind: "web", query: q })}\n\`\`\``;
+  if (!progressOnly(firstText) || !q) return null;
+  return `${String(firstText).trimEnd()}\n\`\`\`lookup\n${JSON.stringify({ kind: "web", query: q })}\n\`\`\``;
+}
+
+/** After asking again: the lookup the model now asked for (added to the first
+ *  reply, so the lookup pass runs it), its answer, or — when it still said
+ *  nothing — a web check of the question. */
+export function resolveRetry(
+  firstText: string,
+  retryText: string | null | undefined,
+  question: string,
+): { kind: "lookup" | "web"; text: string } | { kind: "answer"; text: string } | null {
+  const { text: said, queries } = extractLookupBlocks(String(retryText || ""));
+  if (queries.length) return { kind: "lookup", text: `${String(firstText).trimEnd()}\n\`\`\`lookup\n${JSON.stringify(queries)}\n\`\`\`` };
+  if (said.trim() && !saidNothing(said)) return { kind: "answer", text: said.trim() };
+  const web = implicitCheck(firstText, question);
+  return web ? { kind: "web", text: web } : null;
 }
 
 /** What the lookup actually returned, read from runLookups' headers. */
