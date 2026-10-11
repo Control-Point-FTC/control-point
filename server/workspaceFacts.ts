@@ -182,7 +182,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   const names = f.activeMembers.slice(0, 25).map((m) => q(m.name, 40)).join(", ");
   L.push(`- Active members (per the roster): ${f.activeMembers.length}${f.activeMembers.length ? ` — ${names}${f.activeMembers.length > 25 ? ", …" : ""}` : ""}`);
   if (f.roles?.length) {
-    L.push(`- Team roles (per the roster; tasks can be assigned to a role by name): ${f.roles.slice(0, 30).map((r) => `${q(r.name, 40)} (${r.count})`).join(", ")}${f.roles.length > 30 ? ", …" : ""}`);
+    L.push(`- Team roles and how many members hold each (per the roster): ${f.roles.slice(0, 30).map((r) => `${q(r.name, 40)} (${r.count})`).join(", ")}${f.roles.length > 30 ? ", …" : ""}`);
   }
   L.push(`- Open tasks (per the task board): ${f.openTaskTotal} total — ${f.overdueTaskTotal} overdue, ${f.dueThisWeekTotal} due in the next 7 days, ${f.unassignedOpenTotal} unassigned. Completed in the last 7 days: ${f.doneLast7}.`);
 
