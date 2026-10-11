@@ -1650,7 +1650,8 @@ function sessionKey(token: string): string {
 async function markMembershipUsed(memberId: number, at = new Date().toISOString()): Promise<void> {
   try {
     await dbRun(
-      "INSERT INTO member_last_used (member_id, used_at) VALUES (?, ?) ON CONFLICT(member_id) DO UPDATE SET used_at = excluded.used_at",
+      // Keep the later stamp: a slower, older request can't move it back.
+      "INSERT INTO member_last_used (member_id, used_at) VALUES (?, ?) ON CONFLICT(member_id) DO UPDATE SET used_at = MAX(member_last_used.used_at, excluded.used_at)",
       memberId, at,
     );
   } catch (e) { console.error("markMembershipUsed failed:", (e as any)?.message || e); }
@@ -4314,6 +4315,7 @@ async function startServer() {
         // Bruno's personal facts and morning-summary records go with the account.
         { sql: `DELETE FROM bruno_memories WHERE scope = 'user' AND member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM bruno_nudges_sent WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM member_last_used WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM sticky_notes WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
@@ -4879,6 +4881,7 @@ async function startServer() {
       { sql: `DELETE FROM sessions WHERE member_id ${inMembers} AND id != ?`, args: [...memberIds, keepSessionId] },
       { sql: `DELETE FROM stream_sessions WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM bruno_nudges_sent WHERE member_id ${inMembers}`, args: memberIds },
+      { sql: `DELETE FROM member_last_used WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM member_roles WHERE member_id ${inMembers}`, args: memberIds },
       { sql: "DELETE FROM roles WHERE team_id = ?", args: [teamId] },
       // A member moved here from another workspace can still be referenced
@@ -8997,6 +9000,7 @@ Rules:
     // Bruno's personal facts about them (team facts stay with the team).
     await dbRun("DELETE FROM bruno_memories WHERE scope = 'user' AND member_id = ?", target.id);
     await dbRun("DELETE FROM bruno_nudges_sent WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM member_last_used WHERE member_id = ?", target.id);
     await dbRun("DELETE FROM sticky_notes WHERE member_id = ?", target.id);
     await dbRun("DELETE FROM members WHERE id = ?", target.id);
     return { ok: true };

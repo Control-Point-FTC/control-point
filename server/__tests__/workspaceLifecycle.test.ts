@@ -78,7 +78,7 @@ describe("delete a workspace", () => {
     const c = await seedTeam(t.db, "Throwaway");
     const rowA = await seedMember(t.db, a, "Lu", "lu@ws.test", "admin");
     await seedMember(t.db, b, "Lu", "lu@ws.test", "admin");
-    await seedMember(t.db, c, "Lu", "lu@ws.test", "admin");
+    const rowC = await seedMember(t.db, c, "Lu", "lu@ws.test", "admin");
     await t.db.execute({ sql: "INSERT INTO member_last_used (member_id, used_at) VALUES (?, '2026-01-01T00:00:00.000Z')", args: [rowA] });
     const s = await t.session(rowA);
     expect((await t.post("/api/teams/switch", { team_id: b }, s)).status).toBe(200);
@@ -88,6 +88,22 @@ describe("delete a workspace", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.switched?.team?.id).toBe(b);
     expect(JSON.stringify(r.body)).not.toContain('"password"');
+    // The deleted workspace's membership leaves no last-used record behind.
+    const left = await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM member_last_used WHERE member_id = ?", args: [rowC] });
+    expect(Number((left.rows[0] as any).n)).toBe(0);
+  });
+
+  it("a last-used stamp never moves backward", async () => {
+    const a = await seedTeam(t.db, "Here");
+    const b = await seedTeam(t.db, "There");
+    const rowA = await seedMember(t.db, a, "Mo", "mo@ws.test", "admin");
+    const rowB = await seedMember(t.db, b, "Mo", "mo@ws.test", "admin");
+    // A newer stamp already stored (a later request finished first).
+    await t.db.execute({ sql: "INSERT INTO member_last_used (member_id, used_at) VALUES (?, '2099-01-01T00:00:00.000Z')", args: [rowB] });
+    const s = await t.session(rowA);
+    expect((await t.post("/api/teams/switch", { team_id: b }, s)).status).toBe(200);
+    const row = await t.db.execute({ sql: "SELECT used_at FROM member_last_used WHERE member_id = ?", args: [rowB] });
+    expect((row.rows[0] as any).used_at).toBe("2099-01-01T00:00:00.000Z");
   });
 
   it("only someone who manages that workspace can delete it", async () => {
