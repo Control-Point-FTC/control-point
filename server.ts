@@ -12397,7 +12397,9 @@ Rules:
           // Failed calls still count on the owner's usage dashboard.
           logAiUsage(auth.memberId, auth.teamId, null, chars, 0, isAnthropicQuotaError(e) || isQuotaError(e) ? "quota" : "error", e?.aiProvider || "unknown");
         }
-        return resolveRetry(firstText, retry?.text, question);
+        const resolved = resolveRetry(firstText, retry?.text, question);
+        // The retry's own pages go with its answer (it may have searched live).
+        return resolved ? { ...resolved, sources: (retry?.sources || []) as any[] } : null;
       };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -12439,12 +12441,11 @@ Rules:
           if (!hold.blocked && progressOnly(fullText) && !streamAbort.signal.aborted) {
             const again = await askAgain(fullText, streamAbort.signal, !!aiReply.grounded);
             if (streamAbort.signal.aborted) { res.end(); return; }
-            if (again?.kind === "answer") { send(`
-
-${again.text}`); fullText = `${fullText.trimEnd()}
-
-${again.text}`; }
-            else if (again) { fullText = again.text; implicit = true; }
+            if (again?.kind === "answer") {
+              send(`\n\n${again.text}`);
+              fullText = `${fullText.trimEnd()}\n\n${again.text}`;
+              webSources.unshift(...again.sources);
+            } else if (again) { fullText = again.text; implicit = true; }
           }
           if ((hold.blocked || implicit) && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
@@ -12553,10 +12554,10 @@ ${again.text}`; }
       if (progressOnly(String(result || ""))) {
         const again = await askAgain(String(result || ""), nonStreamAbort.signal, !!aiReply.grounded);
         if (nonStreamAbort.signal.aborted) return;
-        if (again?.kind === "answer") result = `${String(result || "").trimEnd()}
-
-${again.text}`;
-        else if (again) result = again.text;
+        if (again?.kind === "answer") {
+          result = `${String(result || "").trimEnd()}\n\n${again.text}`;
+          webSourcesNS.unshift(...again.sources);
+        } else if (again) result = again.text;
       }
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
