@@ -1,6 +1,8 @@
 // Sticky Notes: a member's own scratch notes in a workspace, independent of
-// any notebook page. Private to their author (not team content, not shared,
-// not visible to Bruno). Bounded so a runaway client can't bloat the database.
+// any notebook page. Private to their author (not team content, not shared).
+// Bruno reads or edits them only for their author, when the author allows it
+// in Settings → Bruno (see brunoStickyActions.ts). Bounded so a runaway client
+// can't bloat the database.
 import { dbClient } from "../db.js";
 import type { Client } from "@libsql/client";
 
@@ -31,7 +33,8 @@ export function stickyPatch(body: Row): Row {
 }
 
 export class StickyNotes {
-  constructor(private readonly db: Client = dbClient) {}
+  /** A client or an open transaction (Bruno's confirmed cards). */
+  constructor(private readonly db: Pick<Client, "execute"> = dbClient) {}
   private async all(sql: string, ...args: any[]) { return (await this.db.execute({ sql, args })).rows as Row[]; }
   async list(teamId: number, memberId: number) {
     return (await this.all("SELECT * FROM sticky_notes WHERE team_id=? AND member_id=? ORDER BY updated_at DESC, id DESC", teamId, memberId)).map(shape);

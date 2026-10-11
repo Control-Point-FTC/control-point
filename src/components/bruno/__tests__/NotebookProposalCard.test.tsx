@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookProposalCard } from '../NotebookProposalCard';
-import { extractNotebookOps, stripNotebookBlocks } from '../../../services/notebookProposals';
+import { extractNotebookOps, extractStickyOps, stripNotebookBlocks } from '../../../services/notebookProposals';
 import { stripEventBlocks } from '../../../services/aiService';
 
 const apiJson = vi.fn();
@@ -19,6 +19,34 @@ describe('notebook proposal blocks', () => {
     expect(stripEventBlocks(text)).toBe('Adding it.');
     expect(stripNotebookBlocks('Hi\n```notebook\n[{"op":"del')).toBe('Hi\n');
     expect(extractNotebookOps('```notebook\nnot json\n```')).toEqual([]);
+  });
+  it('splits sticky note changes into their own card', () => {
+    const text = '```notebook\n[{"op":"sticky_create","body":"Bolts"},{"op":"append","page":3,"markdown":"x"}]\n```';
+    expect(extractNotebookOps(text)).toEqual([{ op: 'append', page: 3, markdown: 'x' }]);
+    expect(extractStickyOps(text)).toEqual([{ op: 'sticky_create', body: 'Bolts' }]);
+  });
+});
+
+describe('sticky note cards', () => {
+  beforeEach(() => apiJson.mockReset());
+  afterEach(cleanup);
+  it('speaks about sticky notes, applies, tells the panel to refresh, and opens it', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'sticky_create', summary: 'New sticky note', after: 'Bolts' }] });
+    card([{ op: 'sticky_create', body: 'Bolts' }]);
+    expect(await screen.findByText('New sticky note')).toBeTruthy();
+    expect(screen.getByText(/Apply 1 sticky note change\?/)).toBeTruthy();
+    expect(screen.getByText('Only your own sticky notes change.')).toBeTruthy();
+    const changed = vi.fn(); window.addEventListener('bruno-data-changed', changed);
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'sticky_create', noteId: 5, title: 'Bolts' }], replayed: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(await screen.findByText(/Sticky notes updated/)).toBeTruthy();
+    expect((changed.mock.calls[0][0] as CustomEvent).detail).toEqual({ types: ['sticky'] });
+    window.removeEventListener('bruno-data-changed', changed);
+    const { useStickyNotesOpen } = await import('../../../notebook/stickyNotesState');
+    let open = false; function Probe() { open = useStickyNotesOpen(); return null; }
+    render(<Probe />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open sticky notes' }));
+    await waitFor(() => expect(open).toBe(true));
   });
 });
 

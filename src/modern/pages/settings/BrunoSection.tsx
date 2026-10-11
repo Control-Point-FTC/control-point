@@ -3,7 +3,7 @@
 // preferences (this device) and — for the one team that has it — the
 // NavGPT ❤️ persona.
 import { useState } from 'react';
-import { BookOpen, ChevronDown, GraduationCap, Heart, Sun } from 'lucide-react';
+import { BookOpen, ChevronDown, GraduationCap, Heart, StickyNote, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
@@ -18,6 +18,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
   const [teach, setTeach] = useState(user.bruno_teach_mode === 1);
   const [nudges, setNudges] = useState(user.bruno_nudges !== 0);
   const [notebookAccess, setNotebookAccess] = useState(user.bruno_notebook !== 0);
+  const [stickyAccess, setStickyAccess] = useState(user.bruno_sticky !== 0);
   const [level, setLevel] = useState<string>(user.bruno_output_level === 'max' ? 'high' : (user.bruno_output_level || 'medium'));
   // One in-flight lock per control (as Legacy tracks teach/level/persona
   // separately), so a save of one never unlocks another mid-request.
@@ -127,6 +128,13 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
             if (busy.notebook) return;
             setNotebookAccess(next);
             void saveProfile('notebook', { bruno_notebook: next }, () => setNotebookAccess(!next), next ? 'Bruno can use the notebook.' : 'Bruno’s notebook access is off.');
+          }} /></span>
+        </SettingsRow>
+        <SettingsRow label="My sticky notes" description="Bruno can read your own sticky notes and propose new notes or edits you confirm. Nobody else's notes, ever." htmlFor="bruno-sticky">
+          <span className="flex items-center gap-2"><StickyNote className={cn('size-4', stickyAccess ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-sticky" checked={stickyAccess} disabled={!!busy.sticky} onCheckedChange={(next) => {
+            if (busy.sticky) return;
+            setStickyAccess(next);
+            void saveProfile('sticky', { bruno_sticky: next }, () => setStickyAccess(!next), next ? 'Bruno can use your sticky notes.' : 'Bruno’s sticky notes access is off.');
           }} /></span>
         </SettingsRow>
       </SettingsGroup>

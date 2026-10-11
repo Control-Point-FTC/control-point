@@ -707,6 +707,9 @@ export class NotebookStore {
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
   }); }
+  /** Raw statements inside this store's transaction (joins an open batch),
+   *  for writes that belong with a confirmed card, such as sticky notes. */
+  transact<T>(ctx: NotebookContext, fn: (tx: Transaction) => Promise<T>): Promise<T> { return this.session(ctx, s => fn(s.tx)); }
   /** Merge a section into another in one transaction: its top-level pages
    *  (with their subpages) that this member can see move to the end of the
    *  target. The source goes to trash only when nothing is left in it, hidden

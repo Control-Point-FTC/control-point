@@ -83,7 +83,9 @@ import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
 import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
-import { BRUNO_NOTEBOOK_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, type BrunoAccess } from "./server/brunoAccess.js";
+import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
+import { StickyNotes } from "./server/stickyNotes.js";
+import { BRUNO_NOTEBOOK_OFF, BRUNO_STICKY_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, gatedStickyLookup, type BrunoAccess } from "./server/brunoAccess.js";
 import { NotebookError } from "./server/notebook.js";
 // Bruno's notebook reads (lookups, screen context) use Bruno-scoped access:
 // protected sections/pages are never visible, whoever is asking.
@@ -6216,6 +6218,7 @@ async function startServer() {
    */
   /** What this member lets Bruno use (Settings → Bruno). Both default on. */
   const brunoAccess = (memberId: number) => readBrunoAccess(dbGet as any, memberId);
+  const brunoStickyNotes = new StickyNotes();
 
   async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }): Promise<string> {
     const req = parseScreenRequest(raw);
@@ -12068,7 +12071,10 @@ Rules:
         return "";
       });
       // The member turned Bruno's notebook access off: no reads, no proposals.
-      const accessCtx = access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or ```notebook blocks; if they ask about the notebook, say it's off and where to turn it on.";
+      const accessCtx = [
+        access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or propose notebook page changes; if they ask about the notebook, say it's off and where to turn it on.",
+        access.sticky ? "" : "STICKY NOTES ACCESS: OFF. This member turned off your access to their sticky notes in Settings → Bruno. Don't look them up or propose sticky note changes; if they ask, say it's off and where to turn it on.",
+      ].filter(Boolean).join("\n");
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx, accessCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
@@ -12150,7 +12156,7 @@ Rules:
       const referencesFor = async (text: string) => {
         if (!auth.teamId) return "";
         const teamId = auth.teamId;
-        const refs = await validateRefs(text, `${systemExtra}\n${lookupContext}`, (type, id) => resolveRef(refDeps, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
+        const refs = await validateRefs(text, `${systemExtra}\n${lookupContext}`, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
         return refsBlock(teamId, refs);
       };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
@@ -12160,8 +12166,12 @@ Rules:
         const dataQueries = queries.filter((q) => q.kind !== "web");
         const notebookCtx = { memberId: auth.memberId, teamId: auth.teamId };
         const allowed = await brunoAccess(auth.memberId);
-        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any))) : "";
-        lookupContext += `\n${rows}`;
+        const teamId = auth.teamId;
+        const rows = dataQueries.length ? await runLookups(dbAll as any, teamId, lookupTz, dataQueries,
+          gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
+          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note)),
+          // Only rows that came back count as "shown" for references (not request headings or failures).
+          (lines) => { lookupContext += `\n${lines.join("\n")}`; }) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12508,7 +12518,9 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
-    if (!(await brunoAccess(auth.memberId)).notebook) return res.status(403).json({ error: BRUNO_NOTEBOOK_OFF });
+    // Each card is checked against the switch for what it touches.
+    const access = await brunoAccess(auth.memberId);
+    if (isStickyCard(req.body?.ops) ? !access.sticky : !access.notebook) return res.status(403).json({ error: isStickyCard(req.body?.ops) ? BRUNO_STICKY_OFF : BRUNO_NOTEBOOK_OFF });
     try {
       await ensureRolesSeeded(auth.teamId);
       res.json(await fn({ memberId: auth.memberId, teamId: auth.teamId }, req.body ?? {}));
@@ -12518,9 +12530,13 @@ Rules:
       res.status(500).json({ error: "Couldn't apply those notebook changes — nothing was saved" });
     }
   };
-  app.post("/api/ai/notebook/preview", notebookRoute(async (ctx, body) => ({ previews: await previewNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops)) })));
+  app.post("/api/ai/notebook/preview", notebookRoute(async (ctx, body) => ({ previews: isStickyCard(body.ops)
+    ? await previewStickyOps(brunoStickyNotes, ctx, parseStickyOps(body.ops))
+    : await previewNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops)) })));
   app.post("/api/ai/notebook/apply", notebookRoute(async (ctx, body) => {
-    const { result, replayed } = await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
+    const { result, replayed } = isStickyCard(body.ops)
+      ? await applyStickyOps(brunoNotebookStore, { ...ctx, source: "bruno_confirmed" }, parseStickyOps(body.ops), String(body.receipt ?? ""))
+      : await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
     return { results: result, replayed };
   }));
 
@@ -13423,7 +13439,7 @@ Rules:
         teamId
       )) as any[];
       if (done.length) {
-        const lines = done.map((t) => `#${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
+        const lines = done.map((t) => `task #${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
         parts.push(`RECENTLY COMPLETED TASKS:\n${lines.join("\n")}`);
       }
 

@@ -21,6 +21,11 @@ export function gatedNotebookLookup(access: BrunoAccess, run: (q: LookupQuery) =
   return (q: LookupQuery): Promise<Rows> => access.notebook ? run(q) : Promise.resolve({ lines: [BRUNO_NOTEBOOK_OFF], more: false });
 }
 
+/** A sticky notes lookup runner that never reads the notes when access is off. */
+export function gatedStickyLookup(access: BrunoAccess, run: (q: LookupQuery) => Promise<Rows>) {
+  return (q: LookupQuery): Promise<Rows> => access.sticky ? run(q) : Promise.resolve({ lines: [BRUNO_STICKY_OFF], more: false });
+}
+
 /** The open notebook page's brief for the screen context, only when allowed. */
 export async function gatedNotebookBrief<T>(access: BrunoAccess, brief: () => Promise<T>): Promise<T | undefined> {
   return access.notebook ? brief() : undefined;

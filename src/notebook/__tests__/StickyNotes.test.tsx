@@ -178,4 +178,113 @@ describe('Sticky notes', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Sticky note/ })).toBeNull());
     expect(screen.getByText('No sticky notes yet.')).toBeTruthy();
   });
+  it('shows notes Bruno changed after a confirmed card, keeping unsaved typing', async () => {
+    let list = [note({ body: 'Buy zip ties' })];
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => init?.method === 'PATCH' ? new Promise(() => {}) as any : list as any);
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    fireEvent.change(card.querySelector('textarea')!, { target: { value: 'Buy zip ties and bolts' } });
+    list = [note({ body: 'Changed by Bruno' }), note({ id: 7, body: 'New from Bruno', open: false })];
+    act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+    expect(await screen.findByRole('button', { name: /New from Bruno/ })).toBeTruthy();
+    // The member's own unsaved typing wins over the refreshed copy.
+    expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Buy zip ties and bolts');
+  });
+
+  // GETs after the first load wait for the test to answer them, in order.
+  function deferredGets(initial: StickyNote[], onWrite: (init: any) => unknown = () => note()) {
+    const waiting: ((v: unknown) => void)[] = []; let first = true;
+    vi.mocked(apiJson).mockImplementation(async (_url: string, init?: any) => {
+      if (init?.method && init.method !== 'GET') return onWrite(init) as any;
+      if (first) { first = false; return initial as any; }
+      return new Promise(r => waiting.push(r)) as any;
+    });
+    const gets = () => vi.mocked(apiJson).mock.calls.filter(([, i]) => !(i as any)?.method || (i as any).method === 'GET').length;
+    return { answer: async (list: StickyNote[]) => { await waitFor(() => expect(waiting.length).toBeGreaterThan(0)); await act(async () => { waiting.shift()!(list); }); }, gets };
+  }
+  const brunoChanged = () => act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+
+  it('asks again when the member saves while a refresh is out, instead of showing the older answer', async () => {
+    const g = deferredGets([note({ body: 'Buy zip ties' })], () => note({ body: 'Typed during refresh' }));
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    brunoChanged();
+    fireEvent.change(card.querySelector('textarea')!, { target: { value: 'Typed during refresh' } });
+    fireEvent.blur(card.querySelector('textarea')!);
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([, i]) => (i as any)?.method === 'PATCH')).toBe(true));
+    await g.answer([note({ body: 'Buy zip ties' })]); // from before the save: thrown away
+    await g.answer([note({ body: 'Typed during refresh' })]);
+    expect(g.gets()).toBe(3);
+    expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Typed during refresh');
+  });
+
+  it("recoloring while a refresh is out doesn't hide Bruno's new text", async () => {
+    const g = deferredGets([note({ body: 'Buy zip ties' })], () => new Promise(() => {}));
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    brunoChanged();
+    fireEvent.change(screen.getByLabelText('Note color'), { target: { value: 'sky' } });
+    await g.answer([note({ body: 'Buy zip ties' })]);
+    await g.answer([note({ body: 'Changed by Bruno' })]);
+    expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Changed by Bruno');
+    expect((screen.getByLabelText('Note color') as HTMLSelectElement).value).toBe('sky');
+  });
+
+  it("a refresh during the first load wins over that load's older answer", async () => {
+    const waiting: ((v: unknown) => void)[] = [];
+    vi.mocked(apiJson).mockImplementation(() => new Promise(r => waiting.push(r)) as any);
+    render(<StickyNotes open onClose={vi.fn()} />);
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    brunoChanged();
+    await waitFor(() => expect(waiting).toHaveLength(2));
+    await act(async () => { waiting[1]([note({ body: 'Added by Bruno', open: false })]); });
+    await act(async () => { waiting[0]([note({ body: 'Before Bruno', open: false })]); });
+    expect(screen.getByRole('button', { name: /Added by Bruno/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Before Bruno/ })).toBeNull();
+  });
+
+  it('keeps trying when typing outruns every refresh, then shows the change', async () => {
+    const g = deferredGets([note({ body: 'Buy zip ties' })], () => new Promise(() => {}));
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    const area = card.querySelector('textarea')!;
+    brunoChanged();
+    for (let i = 0; i < 4; i++) {
+      fireEvent.change(area, { target: { value: `Typing ${i}` } });
+      await g.answer([note({ body: 'Buy zip ties', color: 'volt' })]);
+    }
+    expect(g.gets()).toBe(5);
+    await waitFor(() => expect(g.gets()).toBe(6), { timeout: 3000 });
+    await g.answer([note({ body: 'Buy zip ties', color: 'rose' })]);
+    expect((screen.getByLabelText('Note color') as HTMLSelectElement).value).toBe('rose');
+    expect((area as HTMLTextAreaElement).value).toBe('Typing 3'); // the member's unsaved text stays
+  });
+
+  it('a note created while a refresh is out stays on the list', async () => {
+    const g = deferredGets([note({ open: false })], init => init.method === 'POST' ? note({ id: 9, body: '' }) : note());
+    render(<StickyNotes open onClose={vi.fn()} />);
+    await screen.findByRole('button', { name: /Buy zip ties/ });
+    brunoChanged();
+    fireEvent.click(screen.getByRole('button', { name: /New note/ }));
+    await screen.findByRole('dialog', { name: 'Sticky note: Empty note' });
+    await g.answer([note({ open: false })]); // from before the new note: thrown away
+    await g.answer([note({ open: false }), note({ id: 9, body: '' })]);
+    expect(screen.getByRole('dialog', { name: 'Sticky note: Empty note' })).toBeTruthy();
+  });
+
+  it('a failed refresh says so and runs again when the list is reopened', async () => {
+    let fail = false;
+    vi.mocked(apiJson).mockImplementation(async () => { if (fail) throw new Error('offline'); return [note({ open: false })] as any; });
+    const view = render(<StickyNotes open onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /Buy zip ties/ })).toBeTruthy();
+    fail = true;
+    act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+    expect(await screen.findByText(/couldn’t be reloaded/)).toBeTruthy();
+    fail = false;
+    vi.mocked(apiJson).mockImplementation(async () => [note({ body: 'Fresh from Bruno', open: false })] as any);
+    view.rerender(<StickyNotes open={false} onClose={vi.fn()} />);
+    view.rerender(<StickyNotes open onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /Fresh from Bruno/ })).toBeTruthy();
+    expect(screen.queryByText(/couldn’t be reloaded/)).toBeNull();
+  });
 });
