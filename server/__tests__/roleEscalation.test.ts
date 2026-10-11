@@ -18,6 +18,8 @@ let managerId = 0;
 let peerId = 0;
 let adminRole = 0;
 let managerRole = 0;
+let crewRole = 0;
+let budgetRole = 0;
 beforeAll(async () => {
   t = await startTestServer("cp-roles-");
   team = await seedTeam(t.db, "Roles Team");
@@ -32,7 +34,11 @@ beforeAll(async () => {
   await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [managerId, managerRole] });
   manager = await t.session(managerId);
   peerId = await seedMember(t.db, team, "Pat", "pat@roles.test");
+  // A role within the manager's permissions, and one above them (made by the admin).
+  crewRole = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Pit crew', ?)", args: [team, JSON.stringify(["manage_tasks"])] })).lastInsertRowid);
+  budgetRole = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Finance', ?)", args: [team, JSON.stringify(["manage_budget"])] })).lastInsertRowid);
 }, 120_000);
+const roleRow = async (id: number) => (await t.db.execute({ sql: "SELECT name, permissions FROM roles WHERE id = ?", args: [id] })).rows[0] as any;
 afterAll(async () => { await t?.stop(); });
 
 const roleIds = async (memberId: number) =>
@@ -53,10 +59,16 @@ describe("Manage roles can't escalate", () => {
     expect((await t.patch(`/api/roles/${managerRole}`, { permissions: ["manage_roles", "manage_tasks", "manage_budget"] }, manager)).status).toBe(403);
   });
 
+  it("can't rename, empty or delete a role that has more than they do", async () => {
+    expect((await t.patch(`/api/roles/${budgetRole}`, { name: "Renamed" }, manager)).status).toBe(403);
+    expect((await t.patch(`/api/roles/${budgetRole}`, { permissions: [] }, manager)).status).toBe(403);
+    expect((await t.api(`/api/roles/${budgetRole}`, { method: "DELETE", session: manager })).status).toBe(403);
+    expect(await roleRow(budgetRole)).toMatchObject({ name: "Finance", permissions: JSON.stringify(["manage_budget"]) });
+  });
+
   it("can hand out a role within their own permissions, but can't take the Admin role away", async () => {
-    const crew = Number(((await t.db.execute({ sql: "SELECT id FROM roles WHERE team_id = ? AND name = 'Task crew'", args: [team] })).rows[0] as any).id);
-    expect((await t.post(`/api/members/${peerId}/roles`, { role_id: crew }, manager)).status).toBe(200);
-    expect(await roleIds(peerId)).toContain(crew);
+    expect((await t.post(`/api/members/${peerId}/roles`, { role_id: crewRole }, manager)).status).toBe(200);
+    expect(await roleIds(peerId)).toContain(crewRole);
     expect((await t.api(`/api/members/${adminId}/roles/${adminRole}`, { method: "DELETE", session: manager })).status).toBe(403);
     expect(await roleIds(adminId)).toContain(adminRole);
   });
