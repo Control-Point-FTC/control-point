@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import { createHash } from "node:crypto";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { inviteState, parseInviteOptions, looksLikeInviteToken, newInviteToken } from "../invites";
 
@@ -142,9 +143,15 @@ describe("invite links", () => {
     const { body } = await t.post("/api/invites", {}, admin);
     await t.db.execute({ sql: "INSERT INTO verified_emails (email, verified_at) VALUES (?, ?)", args: ["newbie@test.local", new Date().toISOString()] });
     const r = await t.post("/api/auth/signup", { accountType: "student", name: "Newbie", email: "newbie@test.local", password: "pass-word-1", inviteToken: body.token });
+    // A new password is proven with the emailed code first (V5 H1), even on a verified address.
     expect(r.status).toBe(200);
-    expect(r.body.team.id).toBe(team);
-    expect(r.body.team.access_code).toBeUndefined();
+    expect(r.body.needsVerification).toBe(true);
+    const codeHash = createHash("sha256").update("246810", "utf8").digest("hex");
+    await t.db.execute({ sql: "INSERT INTO email_verification_codes (email, code_hash, expires_at, attempts, created_at) VALUES (?, ?, ?, 0, ?)", args: ["newbie@test.local", codeHash, new Date(Date.now() + 600_000).toISOString(), new Date().toISOString()] });
+    const v = await t.post("/api/auth/verify-email", { email: "newbie@test.local", code: "246810" });
+    expect(v.status).toBe(200);
+    expect(v.body.team.id).toBe(team);
+    expect(v.body.team.access_code).toBeUndefined();
   });
 
   it("approval links file a request; approving adds the member", async () => {
