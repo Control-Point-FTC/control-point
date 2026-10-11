@@ -11750,7 +11750,7 @@ Rules:
   // (a JSON array) when the user confirms task entries. Parse, validate, strip.
   // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
   const TASKS_BLOCK_RE = /```tasks\s*\r?\n([\s\S]*?)\r?\n```/;
-  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; repeat?: unknown };
+  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; roles?: string[]; repeat?: unknown };
   function extractTasksBlock(fullText: string): { text: string; tasks: RawBrunoTask[] | null } {
     const src = String(fullText || "");
     const m = src.match(TASKS_BLOCK_RE);
@@ -11775,6 +11775,8 @@ Rules:
             ...(typeof t.due_time === "string" && TASK_TIME_RE.test(t.due_time) ? { due_time: t.due_time } : {}),
             ...(typeof t.priority === "string" ? { priority: t.priority.slice(0, 10) } : {}),
             ...(names.length ? { assignees: names } : {}),
+            // Roles as written; matched to the team's roles when applied.
+            ...(Array.isArray(t.roles) && t.roles.some((r: any) => typeof r === "string" && r.trim()) ? { roles: t.roles.filter((r: any) => typeof r === "string" && r.trim()).map((r: string) => r.trim().slice(0, 60)).slice(0, 10) } : {}),
             ...(t.repeat ? { repeat: typeof t.repeat === "string" ? t.repeat.slice(0, 20) : t.repeat } : {}),
           };
         }).filter((t): t is RawBrunoTask => !!t);
@@ -12504,12 +12506,30 @@ Rules:
 
   // What the Bruno confirm card needs to show a proposal exactly as it will be
   // saved: the team's today and its roster names.
+  /** Each team role and its active members (assigning tasks by role). */
+  async function teamRolesWithMembers(teamId: number | null) {
+    if (!teamId) return [] as { id: number; name: string; members: { id: number; name: string }[] }[];
+    // Every role, even one nobody holds yet; two roles that share a name stay two.
+    const rows = (await dbAll(
+      "SELECT r.id AS role_id, r.name AS role, m.id, m.name FROM roles r LEFT JOIN member_roles mr ON mr.role_id = r.id LEFT JOIN members m ON m.id = mr.member_id AND m.team_id = r.team_id AND COALESCE(m.is_active, 1) = 1 WHERE r.team_id = ? ORDER BY r.position, r.name, m.name",
+      teamId,
+    )) as any[];
+    const byRole = new Map<number, { id: number; name: string; members: { id: number; name: string }[] }>();
+    for (const row of rows) {
+      const entry = byRole.get(Number(row.role_id)) ?? { id: Number(row.role_id), name: String(row.role), members: [] };
+      if (row.id != null) entry.members.push({ id: Number(row.id), name: String(row.name) });
+      byRole.set(entry.id, entry);
+    }
+    return [...byRole.values()];
+  }
+
   app.get("/api/ai/proposal-context", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const roster = (await dbAll("SELECT name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
-      res.json({ today: todayIn(await teamTimeZone(auth.teamId, req.query.tz)), roster: roster.map((m: any) => String(m.name)) });
+      const roles = await teamRolesWithMembers(auth.teamId);
+      res.json({ today: todayIn(await teamTimeZone(auth.teamId, req.query.tz)), roster: roster.map((m: any) => String(m.name)), roles: roles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })) });
     } catch (error) {
       console.error("proposal-context error:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -12663,9 +12683,12 @@ Rules:
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const todayISO = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
           const names = roster.map((m: any) => String(m.name));
+          const teamRoles = await teamRolesWithMembers(auth.teamId);
           for (const raw of tasks) {
-            const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false });
+            const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false, roles: teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })) });
             const ids = t.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
+            // Assigned by role: everyone holding it now.
+            for (const role of t.roles) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
             const info = await dbRun(
               "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?)",
               auth.teamId, t.title, t.description, ids[0] ?? null, t.due_date, t.due_date ? t.due_time : null, createdAt, t.priority, t.recurrence ? JSON.stringify(t.recurrence) : null,
@@ -12685,7 +12708,8 @@ Rules:
           // targets were checked before any action was written (above).
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const names = roster.map((m: any) => String(m.name));
-          const updates = items.map((raw: any) => normalizeTaskUpdate(raw, names))
+          const teamRoles = await teamRolesWithMembers(auth.teamId);
+          const updates = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) }))))
             .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0 && updateTargets.has(u.id));
           if (!updates.length) continue;
           for (const u of updates) {
@@ -12710,8 +12734,10 @@ Rules:
               sets.push("due_time = ?"); vals.push(date ? time : null);
             }
             const before = await getTaskAssigneeIds(u.id);
-            if (c.assignees !== undefined) {
-              const ids = c.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
+            if (c.assignees !== undefined || c.roles) {
+              // The named people plus everyone holding the roles now.
+              const ids = (c.assignees ?? []).map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
+              for (const role of c.roles ?? []) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
               const valid = await setTaskAssignees(u.id, ids, auth.teamId);
               const title = c.title ?? task.title;
               for (const mid of valid) if (!before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `New task assigned: ${title}`, "task", { task_id: u.id });

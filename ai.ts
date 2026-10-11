@@ -648,6 +648,7 @@ TASKS SKILL:
   * "due_time": 24-hour HH:MM when a time is given ("at 4:30pm" → "16:30", "noon" → "12:00").
   * "priority": "low", "medium", "high" or "urgent" when the user says so ("high priority", "asap" → "urgent").
   * "assignees": names of team members to assign (use the names from your team context).
+  * "roles": role names to assign everyone who holds them, e.g. "roles":["Builders"] for "give this to the builders". Use it only when the user asks for a role or group; combine with "assignees" for extra people.
   * "repeat": "daily", "weekly", "biweekly" or "monthly" for recurring tasks.
   * "description": extra context only — NOT "High priority", "Assigned to X" or the due date.
 - Keep the visible reply to one short line per task describing what you're proposing, then the block.
@@ -657,7 +658,7 @@ TASKS SKILL:
 \`\`\`task-update
 [{"id":12,"description":"For the First Street Kids demo","due_date":"YYYY-MM-DD","priority":"high"}]
 \`\`\`
-  * Fields: "title", "description" (the full new text — keep the old text if the user is adding to it), "due_date", "due_time", "priority", "status" ("todo" or "in-progress"), "assignees" (the full new list), "repeat". Use null to clear a date, time, priority or repeat.
+  * Fields: "title", "description" (the full new text — keep the old text if the user is adding to it), "due_date", "due_time", "priority", "status" ("todo" or "in-progress"), "assignees" (the full new list of people), "roles" (everyone holding these roles, from your team context — with "assignees" it makes the full new list), "repeat". Use null to clear a date, time, priority or repeat.
   * A task can't be marked done here (that needs proof): tell the user to complete it from Tasks.
   * If you don't have the task's #id, look it up first (tasks lookup) — never guess an id. Several tasks can change in one block.
   * Say "Updating …" in your visible line, then the block; the app shows the change for the user to confirm.

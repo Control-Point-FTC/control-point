@@ -122,10 +122,61 @@ describe("Bruno apply: editing existing tasks", () => {
     expect((await rows("SELECT status FROM tasks WHERE id = ?", mine.id))[0].status).toBe("todo");
   });
 
+  it("assigns an edited task to everyone in a role", async () => {
+    const role = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Drivers', '[]')", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?), (?, ?)", args: [arnav, role, grace, role] });
+    const [mine] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, roles: ["drivers"] }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const who = (await rows("SELECT member_id FROM task_assignees WHERE task_id = ? ORDER BY member_id", mine.id)).map((x) => Number(x.member_id));
+    expect(who).toEqual([arnav, grace].sort((a, b) => a - b));
+  });
+
   it("needs task access", async () => {
     const plain = await t.session(await seedMember(t.db, team, "Pat", "pat@ba.test"));
     const [mine] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
     const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, title: "Nope" }] }] }, plain);
     expect(r.status).toBe(403);
+  });
+});
+
+describe("Bruno apply: assigning by role", () => {
+  it("assigns everyone holding the role, plus named people, and the card's context lists the roles", async () => {
+    const role = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Builders', '[]')", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?), (?, ?)", args: [arnav, role, grace, role] });
+    const ctx = await t.api("/api/ai/proposal-context", { session: admin });
+    expect(ctx.body.roles).toContainEqual({ name: "Builders", members: ["Arnav Patel", "Grace Hopper"] });
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [
+      { title: "Cut the field tiles", roles: ["builders"] },
+      { title: "Unknown crew job", roles: ["Pit crew"] },
+    ] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const assigned = async (title: string) => {
+      const [task] = await rows("SELECT id FROM tasks WHERE title = ?", title);
+      return (await rows("SELECT member_id FROM task_assignees WHERE task_id = ? ORDER BY member_id", task.id)).map((x) => Number(x.member_id));
+    };
+    expect(await assigned("Cut the field tiles")).toEqual([arnav, grace].sort((a, b) => a - b));
+    expect(await assigned("Unknown crew job")).toEqual([]); // no such role: nobody guessed
+  });
+
+  it("never picks between roles that share a name, and lists roles nobody holds yet", async () => {
+    // Both spellings exist here whatever ran before (INSERT OR IGNORE-style: only if missing).
+    if (!(await rows("SELECT id FROM roles WHERE team_id = ? AND name = 'Builders'", team)).length) await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Builders', '[]')", args: [team] });
+    const lower = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'builders', '[]')", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [arnav, lower] });
+    await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Mentors', '[]')", args: [team] });
+    const ctx = await t.api("/api/ai/proposal-context", { session: admin });
+    expect(ctx.body.roles).toContainEqual({ name: "Mentors", members: [] });
+    expect(ctx.body.roles).toContainEqual({ name: "builders", members: ["Arnav Patel"] });
+    await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [
+      { title: "Exact lower", roles: ["builders"] },
+      { title: "Ambiguous case", roles: ["BUILDERS"] },
+    ] }] }, admin);
+    const assigned = async (title: string) => {
+      const [task] = await rows("SELECT id FROM tasks WHERE title = ?", title);
+      return (await rows("SELECT member_id FROM task_assignees WHERE task_id = ? ORDER BY member_id", task.id)).map((x) => Number(x.member_id));
+    };
+    expect(await assigned("Exact lower")).toEqual([arnav]); // the exact spelling wins
+    expect(await assigned("Ambiguous case")).toEqual([]); // fits two roles: nobody guessed
   });
 });

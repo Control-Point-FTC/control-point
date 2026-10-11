@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
 import { recurrenceLabel } from '../utils/quickAdd';
-import { getTaskIndex, resolveEventItem, resolveTaskItem, resolveTaskUpdate, useProposalContext, useTaskIndex } from '../services/proposalContext';
+import { getProposalContext, getTaskIndex, resolveEventItem, resolveTaskItem, resolveTaskUpdate, useProposalContext, useTaskIndex } from '../services/proposalContext';
 
 /** A task exactly as it will be saved: title, due date and time, priority, people, repeat. */
 function taskSummary(it: any): string {
@@ -11,7 +11,8 @@ function taskSummary(it: any): string {
   const parts = [
     t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : t.due_time ? `due today at ${t.due_time}` : '',
     t.priority ? `${t.priority} priority` : '',
-    t.assignees.length ? `→ ${t.assignees.join(', ')}` : '',
+    t.assignees.length || t.roles.length ? `→ ${[...t.assignees, ...t.roles.map((r) => { const who = t.roleMembers[r]; return `everyone in ${r}${!who ? '' : who.length ? ` (${who.join(', ')})` : ' (no one has this role yet)'}`; })].join(', ')}` : '',
+    t.unmatchedRoles.length ? `no single role named ${t.unmatchedRoles.join(', ')}` : '',
     t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
     t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
   ].filter(Boolean);
@@ -32,7 +33,11 @@ function taskUpdateSummary(it: any): string {
     c.due_date !== undefined ? (c.due_date ? `due ${c.due_date}${c.due_time ? ` at ${c.due_time}` : ''}` : 'no due date') : c.due_time !== undefined ? (c.due_time ? `at ${c.due_time}` : 'no due time') : '',
     c.priority !== undefined ? (c.priority ? `${c.priority} priority` : 'no priority') : '',
     c.status ? (c.status === 'todo' ? 'back to To do' : 'In progress') : '',
-    c.assignees !== undefined ? (c.assignees.length ? `→ ${c.assignees.join(', ')}` : 'unassign everyone') : '',
+    c.assignees !== undefined || c.roles ? (c.assignees?.length || c.roles ? `→ ${[...(c.assignees ?? []), ...(c.roles ?? []).map((r) => {
+      const who = getProposalContext()?.roles?.find((x) => x.name === r)?.members;
+      return `everyone in ${r}${!who ? '' : who.length ? ` (${who.join(', ')})` : ' (no one has this role yet)'}`;
+    })].join(', ')}` : 'unassign everyone') : '',
+    u.unmatchedRoles.length ? `no single role named ${u.unmatchedRoles.join(', ')}` : '',
     c.recurrence !== undefined ? (c.recurrence ? recurrenceLabel(c.recurrence).toLowerCase() : 'stop repeating') : '',
     u.unmatched.length ? `no single team member named ${u.unmatched.join(', ')}` : '',
     u.refused.includes('status') ? 'mark it done from Tasks (it needs proof)' : '',

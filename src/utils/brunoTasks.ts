@@ -20,6 +20,8 @@ export interface BrunoTaskIn {
   /** Roster names (any case, first names ok). "assignee" (one name) is accepted too. */
   assignees?: string[] | null;
   assignee?: string | null;
+  /** Role names: everyone holding the role is assigned ("Builders"). */
+  roles?: string[] | null;
   /** "daily" | "weekly" | "biweekly" | "monthly", or a {freq, interval} rule. */
   repeat?: unknown;
 }
@@ -33,6 +35,20 @@ export interface BrunoTask {
   recurrence: Recurrence | null;
   /** Exact roster spellings. */
   assignees: string[];
+  /** Role names (the team's spelling when the roles are known). */
+  roles: string[];
+}
+
+/** A team role and who holds it (member names), for assigning by role. */
+export interface TeamRole { name: string; members: string[] }
+
+/** The one team role a name means: its exact spelling, else a single
+ *  any-case match. Null when none, or when several roles fit. */
+export function matchRole(name: string, roles: TeamRole[]): string | null {
+  const exact = roles.filter((r) => r.name === name);
+  if (exact.length) return exact.length === 1 ? exact[0].name : null;
+  const loose = roles.filter((r) => r.name.toLowerCase() === name.toLowerCase());
+  return loose.length === 1 ? loose[0].name : null;
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -118,9 +134,11 @@ export interface NormalizeOptions {
    *  browser does this before showing the confirm card; the server only
    *  saves what was confirmed). */
   fromText?: boolean;
+  /** The team's roles; when given, unknown role names are reported instead of kept. */
+  roles?: TeamRole[];
 }
 
-export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[], opts: NormalizeOptions = { fromText: true }): BrunoTask & { unmatched: string[] } {
+export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[], opts: NormalizeOptions = { fromText: true }): BrunoTask & { unmatched: string[]; unmatchedRoles: string[] } {
   const rawTitle = String(t.title || '').trim();
   const rawDesc = String(t.description || '').trim();
   const recovered: ReturnType<typeof parseQuickAdd>[] = [];
@@ -175,7 +193,15 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     if (m) { if (!assignees.includes(m)) assignees.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
   }
   for (const q of recovered) for (const n of q.assignees) if (!assignees.includes(n)) assignees.push(n);
-  return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), unmatched };
+  // Assign by role: matched to the team's roles when they're known. A name
+  // that fits more than one role is reported, never guessed.
+  const roles: string[] = [];
+  const unmatchedRoles: string[] = [];
+  for (const raw of (Array.isArray(t.roles) ? t.roles : []).map((x) => String(x || '').trim().slice(0, 60)).filter(Boolean).slice(0, 10)) {
+    const known = opts.roles ? matchRole(raw, opts.roles) : raw;
+    if (known) { if (!roles.includes(known)) roles.push(known); } else if (!unmatchedRoles.includes(raw)) unmatchedRoles.push(raw);
+  }
+  return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), roles, unmatched, unmatchedRoles };
 }
 
 const TIME_RANGE_RE = /\s*\b(?:from\s+|at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to|until)\s*(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)/i;
@@ -240,18 +266,20 @@ export interface TaskUpdateChanges {
   priority?: Priority | null;
   /** Moving it back or forward; "done" needs the completion dialog's proof. */
   status?: 'todo' | 'in-progress';
-  /** Exact roster spellings (replaces who is assigned). */
+  /** Exact roster spellings. With roles, the full new list of who is assigned. */
   assignees?: string[];
+  /** Everyone holding these roles is assigned (the team's spelling). */
+  roles?: string[];
   recurrence?: Recurrence | null;
 }
-export interface TaskUpdate { id: number; changes: TaskUpdateChanges; unmatched: string[]; refused: string[] }
+export interface TaskUpdate { id: number; changes: TaskUpdateChanges; unmatched: string[]; unmatchedRoles: string[]; refused: string[] }
 
 const CLEARS = (v: unknown) => v === null || v === '' || (typeof v === 'string' && /^(none|no|clear|remove|never)$/i.test(v.trim()));
 
 /** A ```task-update item -> the changes that will be saved, or null when it
  *  names no task or changes nothing. Pure: the card shows exactly this and
  *  the server saves exactly this. */
-export function normalizeTaskUpdate(raw: any, roster: string[] | null): TaskUpdate | null {
+export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles: TeamRole[] | null = null): TaskUpdate | null {
   if (!raw || typeof raw !== 'object') return null;
   const id = typeof raw.id === 'number' ? raw.id : parseInt(String(raw.id ?? '').replace(/^#/, ''), 10);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -259,6 +287,7 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null): TaskUpda
   const changes: TaskUpdateChanges = {};
   const unmatched: string[] = [];
   const refused: string[] = [];
+  const unmatchedRoles: string[] = [];
   // Text is kept whole: cutting it would erase saved words (the task API has no limit).
   if (has('title')) { const t = String(raw.title ?? '').trim(); if (t) changes.title = t; }
   if (has('description')) changes.description = String(raw.description ?? '').trim();
@@ -292,10 +321,19 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null): TaskUpda
     // A list that matched nobody would unassign everyone: leave them as they are.
     if (people.length || !named.length) changes.assignees = people.slice(0, 20);
   }
+  if (has('roles')) {
+    const roles: string[] = [];
+    for (const raw2 of (Array.isArray(raw.roles) ? raw.roles : []).map((x: unknown) => String(x || '').trim().slice(0, 60)).filter(Boolean).slice(0, 10)) {
+      // Roles not loaded yet: keep the name; the server matches it.
+      const known = teamRoles ? matchRole(raw2, teamRoles) : raw2;
+      if (known) { if (!roles.includes(known)) roles.push(known); } else if (!unmatchedRoles.includes(raw2)) unmatchedRoles.push(raw2);
+    }
+    if (roles.length) changes.roles = roles;
+  }
   if (has('repeat')) {
     const r = repeatToRule(raw.repeat);
     if (r) changes.recurrence = r; else if (CLEARS(raw.repeat)) changes.recurrence = null;
   }
   if (!Object.keys(changes).length && !refused.length) return null;
-  return { id, changes, unmatched, refused };
+  return { id, changes, unmatched, unmatchedRoles, refused };
 }

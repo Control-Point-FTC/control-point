@@ -23,11 +23,11 @@ describe('Bruno task updates', () => {
 
   it('keeps only the fields that change, cleaned', () => {
     expect(normalizeTaskUpdate({ id: '#7', due_date: null, priority: 'none', assignees: ['arnav', 'Zed'], status: 'In Progress', repeat: 'weekly' }, roster)).toEqual({
-      id: 7, unmatched: ['Zed'], refused: [],
+      id: 7, unmatched: ['Zed'], unmatchedRoles: [], refused: [],
       changes: { due_date: null, priority: null, assignees: ['Arnav Patel'], status: 'in-progress', recurrence: { freq: 'weekly', interval: 1 } },
     });
     // Done needs the completion dialog's proof; nobody matched never unassigns everyone.
-    expect(normalizeTaskUpdate({ id: 3, status: 'done', assignees: ['Zed'] }, roster)).toEqual({ id: 3, changes: {}, unmatched: ['Zed'], refused: ['status'] });
+    expect(normalizeTaskUpdate({ id: 3, status: 'done', assignees: ['Zed'] }, roster)).toEqual({ id: 3, changes: {}, unmatched: ['Zed'], unmatchedRoles: [], refused: ['status'] });
     expect(normalizeTaskUpdate({ id: 0, title: 'x' }, roster)).toBeNull();
     expect(normalizeTaskUpdate({ id: 5 }, roster)).toBeNull();
     // Long text is kept whole (cutting it would erase saved words).
@@ -35,6 +35,9 @@ describe('Bruno task updates', () => {
     expect(normalizeTaskUpdate({ id: 5, description: long }, roster)?.changes.description).toBe(long);
     // Before the roster loads, names are kept for the server to resolve.
     expect(normalizeTaskUpdate({ id: 5, assignees: ['arnav'] }, null)?.changes.assignees).toEqual(['arnav']);
+    // Roles: the team's spelling, never a guess between two.
+    const teamRoles = [{ name: 'Builders', members: ['Arnav Patel'] }, { name: 'Twin', members: [] }, { name: 'Twin', members: [] }];
+    expect(normalizeTaskUpdate({ id: 5, roles: ['builders', 'Twin', 'Pit'] }, roster, teamRoles)).toEqual({ id: 5, changes: { roles: ['Builders'] }, unmatched: [], unmatchedRoles: ['Twin', 'Pit'], refused: [] });
   });
 
   it('Confirm sends exactly the resolved changes', () => {
