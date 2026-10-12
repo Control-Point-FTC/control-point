@@ -98,9 +98,10 @@ describe("server without CALENDAR_TOKEN_KEY", () => {
     const del = await t.api(`/api/events/${eventId}`, { method: "DELETE", session });
     expect(del.status).toBeLessThan(300);
     let pending: any[] = [];
-    for (let i = 0; i < 40 && !pending.length; i++) {
+    // The Google cleanup runs after the response: allow a slow (cold) server.
+    for (let i = 0; i < 50 && !pending.length; i++) {
+      await new Promise((r) => setTimeout(r, 300));
       pending = (await t.db.execute({ sql: "SELECT member_id, google_event_id FROM calendar_pending_deletes", args: [] })).rows as any[];
-      if (!pending.length) await new Promise((r) => setTimeout(r, 100));
     }
     expect(pending.map((r) => [Number(r.member_id), r.google_event_id])).toEqual([[adaId, "g-evt-1"]]);
   });

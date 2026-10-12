@@ -4022,7 +4022,17 @@ async function startServer() {
     const accessToken = await getGoogleAccessToken(memberId);
     if (!accessToken) {
       if (await calendarPausedFor(memberId)) {
-        await dbRun("INSERT OR IGNORE INTO calendar_pending_deletes (member_id, google_event_id) VALUES (?, ?)", memberId, googleEventId);
+        // The event's own sync row is already gone: retry a busy database
+        // rather than lose the only record of this Google copy.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await dbRun("INSERT OR IGNORE INTO calendar_pending_deletes (member_id, google_event_id) VALUES (?, ?)", memberId, googleEventId);
+            break;
+          } catch (e) {
+            if (attempt >= 5) throw e;
+            await new Promise((r) => setTimeout(r, 200 * attempt));
+          }
+        }
       }
       return;
     }
