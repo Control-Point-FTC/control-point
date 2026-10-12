@@ -9,7 +9,13 @@ and never renumber.
 1. **Every change goes through a pull request.** Branch from `main`, push, and open the PR against `Control-Point-FTC/control-point`:
    `gh pr create -R Control-Point-FTC/control-point --head <branch>` (without `-R` gh may pick a fork).
 2. **Greptile review to 5/5.** Trigger with a `@greptile review` comment, fix every finding, and reply on and resolve each thread. Merge only when the latest Greptile review is on the PR's **current head commit**, scores **5/5**, and **0 threads are unresolved**.
-3. **Merging deploys.** A merge to `main` runs "Deploy to Oracle VM". After **every** merge, docs-only ones included, check that the run for that merge commit succeeded (`gh run list -R Control-Point-FTC/control-point --workflow "Deploy to Oracle VM" -L 1`) and that https://tryctrlpoint.org serves the new bundle (`index-*.js`). If it failed, read `gh run view <id> --log-failed` and fix it before merging anything else: a failed deploy silently leaves production on the old build.
+3. **Merging deploys.** A merge to `main` runs "Deploy to Oracle VM". After **every** merge, docs-only ones included, check that the run **for that merge commit** succeeded. The workflow can also be run by hand, so match the run's `headSha` to the merge commit rather than trusting the latest run:
+   ```bash
+   sha=$(gh pr view <n> -R Control-Point-FTC/control-point --json mergeCommit -q .mergeCommit.oid)
+   gh run list -R Control-Point-FTC/control-point --workflow "Deploy to Oracle VM" -L 10 \
+     --json databaseId,headSha,status,conclusion -q ".[] | select(.headSha == \"$sha\")"
+   ```
+   Then confirm https://tryctrlpoint.org serves the new bundle (`index-*.js`; a server-only change keeps the old one). If the run failed, read `gh run view <databaseId> --log-failed` and fix it before merging anything else: a failed deploy silently leaves production on the old build.
 4. **Tests and types before pushing.** `npm run lint` (tsc) and the relevant `npx vitest run <files>`. A bug fix comes with a test that fails on `main` and passes on the branch. Server tests start a real server (`server/__tests__/helpers/testServer.ts`); Bruno flows can be scripted end to end with the fake model in `server/__tests__/brunoFakeModel.test.ts`.
 
 ## Screenshots and verification
