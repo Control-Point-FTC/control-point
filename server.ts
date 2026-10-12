@@ -7877,7 +7877,9 @@ async function startServer() {
       await r2.del(key);
     } catch (e) {
       console.error("R2 delete failed; queued for retry:", (e as any)?.message || e);
-      await dbRun("INSERT OR IGNORE INTO r2_pending_deletes (key) VALUES (?)", key)
+      // A key queued again gets a new version, so a retry pass that read the
+      // old one can't clear this newer request.
+      await dbRun("INSERT INTO r2_pending_deletes (key) VALUES (?) ON CONFLICT(key) DO UPDATE SET version = version + 1", key)
         .catch((err: any) => console.error("Queuing an R2 delete failed:", err?.message || err));
     }
   }
@@ -7887,13 +7889,14 @@ async function startServer() {
     flushingR2Deletes = true;
     try {
       for (let after = ""; ;) {
-        const rows = (await dbAll("SELECT key FROM r2_pending_deletes WHERE key > ? ORDER BY key LIMIT 200", after)) as any[];
+        const rows = (await dbAll("SELECT key, version FROM r2_pending_deletes WHERE key > ? ORDER BY key LIMIT 200", after)) as any[];
         if (!rows.length) break;
         after = String(rows[rows.length - 1].key);
         for (const r of rows) {
           try {
             await r2.del(r.key);
-            await dbRun("DELETE FROM r2_pending_deletes WHERE key = ?", r.key);
+            // Only the request this pass carried out; a newer one stays queued.
+            await dbRun("DELETE FROM r2_pending_deletes WHERE key = ? AND version = ?", r.key, r.version);
           } catch { /* still failing: next pass */ }
         }
       }
