@@ -191,6 +191,7 @@ import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQ
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
 import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
+import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -2289,6 +2290,24 @@ async function startServer() {
     const mixed = (await dbAll("SELECT id, team_id, email FROM members WHERE email != LOWER(TRIM(email))")) as any[];
     if (mixed.length) console.warn(`[email-case] ${mixed.length} member row(s) still have mixed-case emails (case-only duplicates in one workspace) — review by hand: ids ${mixed.map((m) => m.id).join(", ")}`);
   } catch (e) { console.error("email-case check failed:", e); }
+  // Google Calendar refresh tokens: encrypt any stored before encryption existed.
+  const calendarKey = calendarKeyFromEnv();
+  if (!calendarKey) {
+    console.error("[calendar] CALENDAR_TOKEN_KEY is missing or shorter than 32 characters: Google Calendar linking and sync are paused until it is set.");
+  } else {
+    // A failed pass (e.g. a busy database) is retried until it succeeds; until
+    // then each plaintext token is also encrypted the first time it's used.
+    const encryptExisting = async () => {
+      try {
+        const n = await encryptStoredCalendarTokens({ all: dbAll, run: dbRun }, calendarKey);
+        if (n) console.log(`[calendar] encrypted ${n} stored refresh token(s)`);
+      } catch (e) {
+        console.error("[calendar] token encryption failed; retrying in 60 s:", e);
+        setTimeout(() => void encryptExisting(), 60_000).unref();
+      }
+    };
+    await encryptExisting();
+  }
   const app = express();
   // nginx on the same host proxies every request: trust its X-Forwarded-For
   // so req.ip is the real client (rate limits key on it).
@@ -2950,6 +2969,15 @@ async function startServer() {
           const fwdFileName = isForwarded && typeof message.file_name === 'string' ? message.file_name.slice(0, 200) : null;
           const fwdFileSize = isForwarded && Number.isFinite(Number(message.file_size)) ? Number(message.file_size) : null;
           const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id, reply_to_id, is_forwarded, forwarded_from, file_path, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId, replyToId, isForwarded, forwardedFrom, fwdFilePath, fwdFileName, fwdFileSize);
+          // A forwarded file must still exist in this workspace. Checked after
+          // the insert: a delete that ran first is seen here, and one that
+          // runs later sees this message using the file and keeps it.
+          let fwdKept = fwdFilePath;
+          const fwdId = fileIdFromUrl(fwdFilePath);
+          if (fwdFilePath && (fwdId == null || !(await dbGet("SELECT 1 AS ok FROM stored_files WHERE id = ? AND team_id = ?", fwdId, teamId)))) {
+            await dbRun("UPDATE messages SET file_path = NULL, file_name = NULL, file_size = NULL WHERE id = ?", Number(info.lastInsertRowid));
+            fwdKept = null;
+          }
           // Inappropriate-content flag (review-only, never blocks the send).
           flagChatMessage(message.sender_id, teamId, Number(info.lastInsertRowid), String(message.content || ""));
 
@@ -3021,9 +3049,9 @@ async function startServer() {
             reply_deleted: replyPreview?.reply_deleted || null,
             is_forwarded: isForwarded,
             forwarded_from: forwardedFrom,
-            file_path: fwdFilePath,
-            file_name: fwdFileName,
-            file_size: fwdFileSize,
+            file_path: fwdKept,
+            file_name: fwdKept ? fwdFileName : null,
+            file_size: fwdKept ? fwdFileSize : null,
             timestamp
           });
         }
@@ -3954,15 +3982,25 @@ async function startServer() {
 
   const getGoogleAccessToken = async (memberId: number): Promise<string | null> => {
     try {
+      if (!calendarKey) return null;
       const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
-      if (!link?.refresh_token) return null;
+      // Unreadable (wrong key): skip, but keep the link so a fixed key restores it.
+      const refreshToken = readCalendarToken(link?.refresh_token, calendarKey);
+      if (!refreshToken) return null;
+      // Still plaintext (the startup pass hasn't reached it): encrypt it now.
+      if (!isEncryptedCalendarToken(link.refresh_token)) {
+        await dbRun(
+          "UPDATE google_calendar_links SET refresh_token = ? WHERE member_id = ? AND refresh_token = ?",
+          encryptCalendarToken(refreshToken, calendarKey), memberId, link.refresh_token,
+        ).catch((e: any) => console.error("[calendar] encrypting a token on use failed:", e?.message || e));
+      }
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
           client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: link.refresh_token,
+          refresh_token: refreshToken,
           grant_type: "refresh_token",
         }),
       });
@@ -3980,6 +4018,84 @@ async function startServer() {
     }
   };
 
+  /** True when a member is linked but their token can't be used because the
+   *  key is missing or wrong (sync is paused, not gone). */
+  const calendarPausedFor = async (memberId: number): Promise<boolean> => {
+    const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
+    if (!link?.refresh_token) return false;
+    return !calendarKey || readCalendarToken(link.refresh_token, calendarKey) == null;
+  };
+
+  /** Delete one Google copy of a team event. While the member's calendar is
+   *  paused the deletion is queued and retried once the key works again. */
+  const deleteGoogleCopy = async (memberId: number, googleEventId: string): Promise<void> => {
+    const accessToken = await getGoogleAccessToken(memberId);
+    if (!accessToken) {
+      if (await calendarPausedFor(memberId)) {
+        // The event's own sync row is already gone: retry a busy database
+        // rather than lose the only record of this Google copy.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await dbRun("INSERT OR IGNORE INTO calendar_pending_deletes (member_id, google_event_id) VALUES (?, ?)", memberId, googleEventId);
+            break;
+          } catch (e) {
+            if (attempt >= 5) throw e;
+            await new Promise((r) => setTimeout(r, 200 * attempt));
+          }
+        }
+      }
+      return;
+    }
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(googleEventId)}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+    }).catch(() => {});
+  };
+
+  /** Retry queued deletions. A member who unlinked has no token to use, so
+   *  their queued rows are dropped. The whole queue is paged through, so rows
+   *  of a member who is still paused never hold up anyone else's. */
+  let flushingCalendarDeletes = false;
+  const flushPendingCalendarDeletes = async (): Promise<void> => {
+    // One pass at a time: a slow Google can make a pass outlast the interval.
+    if (!calendarKey || flushingCalendarDeletes) return;
+    flushingCalendarDeletes = true;
+    try {
+      for (let after = 0; ;) {
+        const rows = (await dbAll(
+          "SELECT rowid AS rid, member_id, google_event_id FROM calendar_pending_deletes WHERE rowid > ? ORDER BY rowid LIMIT 200", after,
+        )) as any[];
+        if (!rows.length) break;
+        after = Number(rows[rows.length - 1].rid);
+        await flushPendingPage(rows);
+      }
+    } catch (e) {
+      console.error("[calendar] pending deletions failed:", (e as any)?.message || e);
+    } finally {
+      flushingCalendarDeletes = false;
+    }
+  };
+  const flushPendingPage = async (rows: any[]): Promise<void> => {
+    for (const r of rows) {
+      const linked = await dbGet("SELECT 1 AS ok FROM google_calendar_links WHERE member_id = ?", r.member_id);
+      if (linked && await calendarPausedFor(r.member_id)) continue;
+      const accessToken = linked ? await getGoogleAccessToken(r.member_id) : null;
+      if (accessToken) {
+        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        // Keep it for the next pass unless Google confirmed it's gone.
+        if (!res || !(res.ok || res.status === 404 || res.status === 410)) continue;
+      } else if (linked) {
+        continue; // Google unreachable or token refresh failed: try again later.
+      }
+      await dbRun("DELETE FROM calendar_pending_deletes WHERE member_id = ? AND google_event_id = ?", r.member_id, r.google_event_id);
+    }
+  };
+  if (calendarKey) {
+    setTimeout(() => void flushPendingCalendarDeletes(), 15_000).unref();
+    setInterval(() => void flushPendingCalendarDeletes(), 10 * 60_000).unref();
+  }
+
   // Start the calendar-link OAuth flow (must be signed in).
   // Uses its own redirect URI (/api/auth/google/calendar/callback) — it must
   // be added to the Google Cloud Console's authorized redirect URIs.
@@ -3994,6 +4110,7 @@ async function startServer() {
       if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
         return res.status(400).json({ error: "Google sign-in is not configured" });
       }
+      if (!calendarKey) return res.redirect("/settings?cal_error=unavailable");
       const state = randomHex(16);
       startOAuthState(req, res, state, {
         expiry: Date.now() + 10 * 60 * 1000,
@@ -4026,6 +4143,7 @@ async function startServer() {
       if (!code || !pending || pending.expiry < Date.now() || pending.intent !== 'calendar_link') {
         return res.redirect("/settings?cal_error=invalid_state");
       }
+      if (!calendarKey) return res.redirect("/settings?cal_error=unavailable");
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -4046,7 +4164,7 @@ async function startServer() {
       const profile = profileRes.ok ? ((await profileRes.json()) as any) : {};
       await dbRun(
         "INSERT OR REPLACE INTO google_calendar_links (member_id, google_email, refresh_token, linked_at) VALUES (?, ?, ?, datetime('now'))",
-        pending.memberId, profile.email || '', refresh_token
+        pending.memberId, profile.email || '', encryptCalendarToken(refresh_token, calendarKey)
       );
       res.redirect("/settings?cal_linked=1");
     } catch (error) {
@@ -4064,7 +4182,7 @@ async function startServer() {
         "SELECT google_email, linked_at FROM google_calendar_links WHERE member_id = ?", auth.memberId
       )) as any;
       const syncEnabled = await getCalendarSyncEnabled();
-      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled });
+      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled, available: !!calendarKey });
     } catch (error) {
       console.error("Error fetching calendar link:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -4168,14 +4286,7 @@ async function startServer() {
   const deleteSyncedEvent = async (eventId: number) => {
     try {
       const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", eventId)) as any[];
-      for (const r of rows) {
-        const accessToken = await getGoogleAccessToken(r.member_id);
-        if (!accessToken) continue;
-        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }).catch(() => {});
-      }
+      for (const r of rows) await deleteGoogleCopy(r.member_id, r.google_event_id);
       await dbRun("DELETE FROM event_calendar_sync WHERE event_id = ?", eventId);
     } catch (e) {
       console.error("Calendar sync delete failed:", (e as any)?.message);
@@ -4826,10 +4937,11 @@ async function startServer() {
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
     // Every file uploaded in the workspace (notebook, chat, task proof, CAD,
-    // emoji, feedback) and the legacy chat images go with it. Avatars belong
-    // to the person (no team) and stay.
-    const teamFileIds = ((await dbAll("SELECT id FROM stored_files WHERE team_id = ?", teamId)) as any[]).map((row) => Number(row.id));
-    const messageImageIds = ((await dbAll("SELECT mi.id FROM message_images mi JOIN messages m ON m.id = mi.message_id WHERE m.team_id = ?", teamId)) as any[]).map((row) => Number(row.id));
+    // emoji, feedback) and the legacy chat images go with it; the ids come
+    // back from the deletes themselves, so an upload landing meanwhile isn't
+    // missed. Avatars belong to the person (no team) and stay.
+    const FILES_STMT = "DELETE FROM stored_files WHERE team_id = ? RETURNING id";
+    const IMAGES_STMT = "DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE team_id = ?) RETURNING id";
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
@@ -4846,7 +4958,7 @@ async function startServer() {
       { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE team_id = ?)", args: [teamId] },
+      { sql: IMAGES_STMT, args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM documentation WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
@@ -4864,7 +4976,7 @@ async function startServer() {
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM stored_files WHERE team_id = ?", args: [teamId] },
+      { sql: FILES_STMT, args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
@@ -4917,10 +5029,11 @@ async function startServer() {
       { sql: "UPDATE members SET is_active = 0, team_id = NULL WHERE id = ?", args: [keepMemberId ?? -1] },
       { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
     ];
-    await dbBatch(stmts);
+    const results = await dbBatchResults(stmts);
+    const deletedIds = (sql: string) => (results[stmts.findIndex((s) => s.sql === sql)]?.rows || []).map((row: any) => Number(row.id));
     // Remove the private object copies only after the database deletion commits.
-    for (const fileId of teamFileIds) await deleteStoredRow(fileId);
-    for (const imageId of messageImageIds) await deleteMessageImageRow(imageId).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
+    for (const fileId of deletedIds(FILES_STMT)) await deleteStoredRow(fileId);
+    for (const imageId of deletedIds(IMAGES_STMT)) await deleteMessageImageRow(imageId).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
     for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
   }
 
@@ -7740,7 +7853,10 @@ async function startServer() {
       const key = fileKey("stored_files", id);
       try {
         await r2.put(key, opts.buffer, opts.mimeType);
-        await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
+        const marked = await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
+        // The row went while uploading (its workspace was deleted): don't
+        // leave the bytes behind.
+        if (!marked.changes) await r2.del(key).catch(() => undefined);
       } catch (e) {
         console.error("R2 upload failed; keeping the file in the database:", (e as any)?.message || e);
         await dbRun("UPDATE stored_files SET data = ? WHERE id = ?", opts.buffer, id);
@@ -7771,12 +7887,18 @@ async function startServer() {
   async function deleteUnreferencedFiles(ids: number[], kind: "proof" | "chat", teamId: number | null): Promise<void> {
     for (const id of new Set(ids)) {
       try {
-        const row = (await dbGet("SELECT kind, team_id FROM stored_files WHERE id = ?", id)) as any;
-        if (!row || row.kind !== kind || (row.team_id ?? null) !== (teamId ?? null)) continue;
+        // One statement: the reference check and the delete can't be split by
+        // a task or forwarded message that starts using the file meanwhile.
         const stillUsed = kind === "proof"
-          ? await dbGet("SELECT 1 AS used FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ? LIMIT 1", fileUrlJsonPattern(id), fileUrlJsonPattern(id))
-          : await dbGet("SELECT 1 AS used FROM messages WHERE file_path = ? LIMIT 1", `/api/files/${id}`);
-        if (!stillUsed) await deleteStoredRow(id);
+          ? { sql: "SELECT 1 FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ?", args: [fileUrlJsonPattern(id), fileUrlJsonPattern(id)] }
+          : { sql: "SELECT 1 FROM messages WHERE file_path = ?", args: [`/api/files/${id}`] };
+        const r = await dbRun(
+          `DELETE FROM stored_files WHERE id = ? AND kind = ? AND team_id IS ? AND NOT EXISTS (${stillUsed.sql})`,
+          id, kind, teamId ?? null, ...stillUsed.args,
+        );
+        if (r.changes && r2) {
+          try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+        }
       } catch (e) {
         console.error(`Deleting ${kind} file #${id} failed:`, (e as any)?.message || e);
       }
@@ -9961,11 +10083,7 @@ Rules:
   async function removeGoogleCopies(copies: { member_id: number; google_event_id: string }[]) {
     for (const c of copies) {
       try {
-        const accessToken = await getGoogleAccessToken(c.member_id);
-        if (!accessToken) continue;
-        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(c.google_event_id)}`, {
-          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
-        }).catch(() => {});
+        await deleteGoogleCopy(c.member_id, c.google_event_id);
       } catch (e) {
         console.error("Calendar sync delete failed:", (e as any)?.message);
       }
