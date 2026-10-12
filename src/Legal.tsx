@@ -62,9 +62,10 @@ function PrivacyBody() {
           <strong className="text-text-base/90">When files are deleted.</strong> Deleted notebook content goes to the
           notebook trash first; its files are deleted when it is permanently deleted from the trash, unless another
           page still uses them. Replacing your profile picture deletes the old one, and deleting a custom emoji or a
-          CAD snapshot deletes its files. Currently, task completion photos are kept when the task is deleted, and
-          message and CAD files are kept when a whole workspace is deleted. We're changing this so those files are
-          deleted too; until then, you can ask us to delete them at the email below.
+          CAD snapshot deletes its files. Currently, some files are kept after what they belong to is deleted: task
+          completion photos when the task is deleted, a message's attachments when the message is deleted, and files
+          other than notebook attachments when a whole workspace or account is deleted. We're changing this so those
+          files are deleted too; until then, you can ask us to delete them at the email below.
         </p>
       </Section>
       <Section title="Google Calendar">
