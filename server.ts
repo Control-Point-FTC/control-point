@@ -190,7 +190,7 @@ import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type Shortlist
 import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQUIRED, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
-import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, readCalendarToken } from "./server/calendarTokens.js";
+import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -2294,10 +2294,18 @@ async function startServer() {
   if (!calendarKey) {
     console.error("[calendar] CALENDAR_TOKEN_KEY is missing or shorter than 32 characters: Google Calendar linking and sync are paused until it is set.");
   } else {
-    try {
-      const n = await encryptStoredCalendarTokens({ all: dbAll, run: dbRun }, calendarKey);
-      if (n) console.log(`[calendar] encrypted ${n} stored refresh token(s)`);
-    } catch (e) { console.error("[calendar] token encryption failed:", e); }
+    // A failed pass (e.g. a busy database) is retried until it succeeds; until
+    // then each plaintext token is also encrypted the first time it's used.
+    const encryptExisting = async () => {
+      try {
+        const n = await encryptStoredCalendarTokens({ all: dbAll, run: dbRun }, calendarKey);
+        if (n) console.log(`[calendar] encrypted ${n} stored refresh token(s)`);
+      } catch (e) {
+        console.error("[calendar] token encryption failed; retrying in 60 s:", e);
+        setTimeout(() => void encryptExisting(), 60_000).unref();
+      }
+    };
+    await encryptExisting();
   }
   const app = express();
   // nginx on the same host proxies every request: trust its X-Forwarded-For
@@ -3969,6 +3977,13 @@ async function startServer() {
       // Unreadable (wrong key): skip, but keep the link so a fixed key restores it.
       const refreshToken = readCalendarToken(link?.refresh_token, calendarKey);
       if (!refreshToken) return null;
+      // Still plaintext (the startup pass hasn't reached it): encrypt it now.
+      if (!isEncryptedCalendarToken(link.refresh_token)) {
+        await dbRun(
+          "UPDATE google_calendar_links SET refresh_token = ? WHERE member_id = ? AND refresh_token = ?",
+          encryptCalendarToken(refreshToken, calendarKey), memberId, link.refresh_token,
+        ).catch((e: any) => console.error("[calendar] encrypting a token on use failed:", e?.message || e));
+      }
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -3992,6 +4007,59 @@ async function startServer() {
       return null;
     }
   };
+
+  /** True when a member is linked but their token can't be used because the
+   *  key is missing or wrong (sync is paused, not gone). */
+  const calendarPausedFor = async (memberId: number): Promise<boolean> => {
+    const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
+    if (!link?.refresh_token) return false;
+    return !calendarKey || readCalendarToken(link.refresh_token, calendarKey) == null;
+  };
+
+  /** Delete one Google copy of a team event. While the member's calendar is
+   *  paused the deletion is queued and retried once the key works again. */
+  const deleteGoogleCopy = async (memberId: number, googleEventId: string): Promise<void> => {
+    const accessToken = await getGoogleAccessToken(memberId);
+    if (!accessToken) {
+      if (await calendarPausedFor(memberId)) {
+        await dbRun("INSERT OR IGNORE INTO calendar_pending_deletes (member_id, google_event_id) VALUES (?, ?)", memberId, googleEventId);
+      }
+      return;
+    }
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(googleEventId)}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+    }).catch(() => {});
+  };
+
+  /** Retry queued deletions. A member who unlinked has no token to use, so
+   *  their queued rows are dropped. */
+  const flushPendingCalendarDeletes = async (): Promise<void> => {
+    if (!calendarKey) return;
+    try {
+      const rows = (await dbAll("SELECT member_id, google_event_id FROM calendar_pending_deletes ORDER BY created_at LIMIT 200")) as any[];
+      for (const r of rows) {
+        const linked = await dbGet("SELECT 1 AS ok FROM google_calendar_links WHERE member_id = ?", r.member_id);
+        if (linked && await calendarPausedFor(r.member_id)) continue;
+        const accessToken = linked ? await getGoogleAccessToken(r.member_id) : null;
+        if (accessToken) {
+          const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+          }).catch(() => null);
+          // Keep it for the next pass unless Google confirmed it's gone.
+          if (!res || !(res.ok || res.status === 404 || res.status === 410)) continue;
+        } else if (linked) {
+          continue; // Google unreachable or token refresh failed: try again later.
+        }
+        await dbRun("DELETE FROM calendar_pending_deletes WHERE member_id = ? AND google_event_id = ?", r.member_id, r.google_event_id);
+      }
+    } catch (e) {
+      console.error("[calendar] pending deletions failed:", (e as any)?.message || e);
+    }
+  };
+  if (calendarKey) {
+    setTimeout(() => void flushPendingCalendarDeletes(), 15_000).unref();
+    setInterval(() => void flushPendingCalendarDeletes(), 10 * 60_000).unref();
+  }
 
   // Start the calendar-link OAuth flow (must be signed in).
   // Uses its own redirect URI (/api/auth/google/calendar/callback) — it must
@@ -4183,14 +4251,7 @@ async function startServer() {
   const deleteSyncedEvent = async (eventId: number) => {
     try {
       const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", eventId)) as any[];
-      for (const r of rows) {
-        const accessToken = await getGoogleAccessToken(r.member_id);
-        if (!accessToken) continue;
-        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }).catch(() => {});
-      }
+      for (const r of rows) await deleteGoogleCopy(r.member_id, r.google_event_id);
       await dbRun("DELETE FROM event_calendar_sync WHERE event_id = ?", eventId);
     } catch (e) {
       console.error("Calendar sync delete failed:", (e as any)?.message);
@@ -9928,11 +9989,7 @@ Rules:
   async function removeGoogleCopies(copies: { member_id: number; google_event_id: string }[]) {
     for (const c of copies) {
       try {
-        const accessToken = await getGoogleAccessToken(c.member_id);
-        if (!accessToken) continue;
-        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(c.google_event_id)}`, {
-          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
-        }).catch(() => {});
+        await deleteGoogleCopy(c.member_id, c.google_event_id);
       } catch (e) {
         console.error("Calendar sync delete failed:", (e as any)?.message);
       }

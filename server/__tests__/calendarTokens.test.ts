@@ -16,7 +16,10 @@ const KEY = "k".repeat(40);
 
 describe("calendar token encryption", () => {
   it("needs a key of at least 32 characters", () => {
-    expect(calendarKeyFromEnv(undefined)).toBeNull();
+    const saved = process.env.CALENDAR_TOKEN_KEY;
+    delete process.env.CALENDAR_TOKEN_KEY;
+    try { expect(calendarKeyFromEnv()).toBeNull(); }
+    finally { if (saved !== undefined) process.env.CALENDAR_TOKEN_KEY = saved; }
     expect(calendarKeyFromEnv("")).toBeNull();
     expect(calendarKeyFromEnv("short-key")).toBeNull();
     expect(calendarKeyFromEnv(KEY)).toBeInstanceOf(Buffer);
@@ -60,10 +63,13 @@ describe("calendar token encryption", () => {
 describe("server without CALENDAR_TOKEN_KEY", () => {
   let t: TestServer;
   let session = "";
+  let team = 0;
+  let adaId = 0;
   beforeAll(async () => {
     t = await startTestServer("cp-caltok-", { CALENDAR_TOKEN_KEY: "", GOOGLE_CLIENT_ID: "test-client", GOOGLE_CLIENT_SECRET: "test-secret" });
-    const team = await seedTeam(t.db, "Robo");
-    session = await t.session(await seedMember(t.db, team, "Ada", "ada@caltok.test", "admin"));
+    team = await seedTeam(t.db, "Robo");
+    adaId = await seedMember(t.db, team, "Ada", "ada@caltok.test", "admin");
+    session = await t.session(adaId);
   }, 120_000);
   afterAll(async () => { await t?.stop(); });
 
@@ -80,5 +86,22 @@ describe("server without CALENDAR_TOKEN_KEY", () => {
     const res = await fetch(`${t.base}/api/auth/google/calendar`, { headers, redirect: "manual" });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/settings?cal_error=unavailable");
+  });
+
+  it("queues the Google copy of a deleted event instead of losing it", async () => {
+    await t.db.execute({ sql: "INSERT INTO google_calendar_links (member_id, google_email, refresh_token, linked_at) VALUES (?, 'ada@gmail.test', '1//legacy-plain', datetime('now'))", args: [adaId] });
+    const created = await t.post("/api/events", { title: "Build session", date: "2099-02-03", start_time: "10:00", end_time: "12:00", event_type: "meeting" }, session);
+    expect(created.status).toBeLessThan(300);
+    const eventId = Number(created.body?.id ?? created.body?.event?.id);
+    expect(eventId).toBeGreaterThan(0);
+    await t.db.execute({ sql: "INSERT INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, 'g-evt-1')", args: [eventId, adaId] });
+    const del = await t.api(`/api/events/${eventId}`, { method: "DELETE", session });
+    expect(del.status).toBeLessThan(300);
+    let pending: any[] = [];
+    for (let i = 0; i < 40 && !pending.length; i++) {
+      pending = (await t.db.execute({ sql: "SELECT member_id, google_event_id FROM calendar_pending_deletes", args: [] })).rows as any[];
+      if (!pending.length) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(pending.map((r) => [Number(r.member_id), r.google_event_id])).toEqual([[adaId, "g-evt-1"]]);
   });
 });
