@@ -191,6 +191,7 @@ import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQ
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
 import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
+import { findOrphanFiles } from "./server/orphanFiles.js";
 import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
@@ -7860,7 +7861,7 @@ async function startServer() {
         const marked = await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
         // The row went while uploading (its workspace was deleted): don't
         // leave the bytes behind.
-        if (!marked.changes) await r2.del(key).catch(() => undefined);
+        if (!marked.changes) await deleteR2Object(key);
       } catch (e) {
         console.error("R2 upload failed; keeping the file in the database:", (e as any)?.message || e);
         await dbRun("UPDATE stored_files SET data = ? WHERE id = ?", opts.buffer, id);
@@ -7868,41 +7869,80 @@ async function startServer() {
     }
     return id;
   }
-  /** Delete a stored_files row and its R2 copy (best effort for R2). */
+  /** Delete an R2 object. One R2 refuses is queued in r2_pending_deletes
+   *  (its row is already gone, so nothing else would find it) and retried. */
+  async function deleteR2Object(key: string): Promise<void> {
+    if (!r2) return;
+    try {
+      await r2.del(key);
+    } catch (e) {
+      console.error("R2 delete failed; queued for retry:", (e as any)?.message || e);
+      // A key queued again gets a new version, so a retry pass that read the
+      // old one can't clear this newer request.
+      await dbRun("INSERT INTO r2_pending_deletes (key) VALUES (?) ON CONFLICT(key) DO UPDATE SET version = version + 1", key)
+        .catch((err: any) => console.error("Queuing an R2 delete failed:", err?.message || err));
+    }
+  }
+  let flushingR2Deletes = false;
+  async function flushR2PendingDeletes(): Promise<void> {
+    if (!r2 || flushingR2Deletes) return;
+    flushingR2Deletes = true;
+    try {
+      for (let after = ""; ;) {
+        const rows = (await dbAll("SELECT key, version FROM r2_pending_deletes WHERE key > ? ORDER BY key LIMIT 200", after)) as any[];
+        if (!rows.length) break;
+        after = String(rows[rows.length - 1].key);
+        for (const r of rows) {
+          try {
+            await r2.del(r.key);
+            // Only the request this pass carried out; a newer one stays queued.
+            await dbRun("DELETE FROM r2_pending_deletes WHERE key = ? AND version = ?", r.key, r.version);
+          } catch { /* still failing: next pass */ }
+        }
+      }
+    } catch (e) {
+      console.error("R2 pending deletes failed:", (e as any)?.message || e);
+    } finally {
+      flushingR2Deletes = false;
+    }
+  }
+  if (r2) setInterval(() => void flushR2PendingDeletes(), 10 * 60_000).unref();
+  /** Delete a stored_files row and its R2 copy. */
   async function deleteStoredRow(id: number): Promise<void> {
     await dbRun("DELETE FROM stored_files WHERE id = ?", id);
     // The key is derived from the id, so the object goes too even if a
     // background copy hadn't recorded r2_key yet (the copier also removes
     // an upload whose row disappeared meanwhile).
-    if (r2) {
-      try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
-    }
+    await deleteR2Object(fileKey("stored_files", id));
   }
-  /** Delete a legacy chat image row and its R2 copy (best effort for R2). */
+  /** Delete a legacy chat image row and its R2 copy. */
   async function deleteMessageImageRow(id: number): Promise<void> {
     await dbRun("DELETE FROM message_images WHERE id = ?", id);
-    if (r2) {
-      try { await r2.del(fileKey("message_images", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
-    }
+    await deleteR2Object(fileKey("message_images", id));
   }
-  /** After a task or message is deleted: remove the files it pointed at.
-   *  Only files of that kind from that workspace are touched, and only when
-   *  no remaining task (proof) or message (chat) still uses them. */
+  /** Delete one proof or chat file of that workspace only if no remaining
+   *  task (proof) or message (chat) still uses it. True when it was deleted;
+   *  a database error is thrown to the caller. */
+  async function deleteIfUnreferenced(id: number, kind: "proof" | "chat", teamId: number | null): Promise<boolean> {
+    // One statement: the reference check and the delete can't be split by
+    // a task or forwarded message that starts using the file meanwhile.
+    const stillUsed = kind === "proof"
+      ? { sql: "SELECT 1 FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ?", args: [fileUrlJsonPattern(id), fileUrlJsonPattern(id)] }
+      : { sql: "SELECT 1 FROM messages WHERE file_path = ?", args: [`/api/files/${id}`] };
+    const r = await dbRun(
+      `DELETE FROM stored_files WHERE id = ? AND kind = ? AND team_id IS ? AND NOT EXISTS (${stillUsed.sql})`,
+      id, kind, teamId ?? null, ...stillUsed.args,
+    );
+    if (!r.changes) return false;
+    await deleteR2Object(fileKey("stored_files", id));
+    return true;
+  }
+  /** After a task or message is deleted: remove the files it pointed at
+   *  (best effort; see deleteIfUnreferenced). */
   async function deleteUnreferencedFiles(ids: number[], kind: "proof" | "chat", teamId: number | null): Promise<void> {
     for (const id of new Set(ids)) {
       try {
-        // One statement: the reference check and the delete can't be split by
-        // a task or forwarded message that starts using the file meanwhile.
-        const stillUsed = kind === "proof"
-          ? { sql: "SELECT 1 FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ?", args: [fileUrlJsonPattern(id), fileUrlJsonPattern(id)] }
-          : { sql: "SELECT 1 FROM messages WHERE file_path = ?", args: [`/api/files/${id}`] };
-        const r = await dbRun(
-          `DELETE FROM stored_files WHERE id = ? AND kind = ? AND team_id IS ? AND NOT EXISTS (${stillUsed.sql})`,
-          id, kind, teamId ?? null, ...stillUsed.args,
-        );
-        if (r.changes && r2) {
-          try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
-        }
+        await deleteIfUnreferenced(id, kind, teamId);
       } catch (e) {
         console.error(`Deleting ${kind} file #${id} failed:`, (e as any)?.message || e);
       }
@@ -7961,7 +8001,7 @@ async function startServer() {
             if (Number(upd?.changes)) r2Progress.copied++;
             else if (!(await dbGet(`SELECT id FROM ${table} WHERE id = ?`, r.id))) {
               // Deleted while we copied it: don't leave its bytes behind.
-              await r2.del(key).catch(() => undefined);
+              await deleteR2Object(key);
             }
           } catch (e) {
             r2Progress.failed++;
@@ -8021,6 +8061,48 @@ async function startServer() {
     setTimeout(() => void syncFilesToR2(), Math.min(every, 10_000)).unref();
     setInterval(() => void syncFilesToR2(), every).unref();
   }
+
+  // One-off: delete files left behind by records deleted before deletes took
+  // their files with them (server/orphanFiles.ts says what counts). Runs once
+  // per database; the result is kept in maintenance_runs.
+  const ORPHAN_CLEANUP = "orphan-files-2026-10";
+  async function cleanUpOrphanFilesOnce(): Promise<void> {
+    try {
+      if (await dbGet("SELECT 1 AS done FROM maintenance_runs WHERE name = ?", ORPHAN_CLEANUP)) return;
+      const found = await findOrphanFiles({ all: dbAll });
+      // Every delete re-checks its condition, and a database error stops the
+      // job unrecorded (the next start retries). R2 objects R2 refuses are
+      // queued in r2_pending_deletes. Counts are rows actually deleted.
+      const result = { deletedWorkspace: 0, unusedProof: 0, unusedChat: 0, chatImages: 0 };
+      for (const id of found.deletedWorkspace) {
+        const r = await dbRun("DELETE FROM stored_files WHERE id = ? AND kind != 'avatar' AND team_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = stored_files.team_id)", id);
+        if (r.changes) { result.deletedWorkspace++; await deleteR2Object(fileKey("stored_files", id)); }
+      }
+      // Proof and chat go through the atomic "still unused?" delete, so a file
+      // that gained a reference meanwhile is kept.
+      for (const f of found.unusedProof) if (await deleteIfUnreferenced(f.id, "proof", f.teamId)) result.unusedProof++;
+      for (const f of found.unusedChat) if (await deleteIfUnreferenced(f.id, "chat", f.teamId)) result.unusedChat++;
+      for (const id of found.chatImages) {
+        const r = await dbRun("DELETE FROM message_images WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = message_images.message_id)", id);
+        if (r.changes) { result.chatImages++; await deleteR2Object(fileKey("message_images", id)); }
+      }
+      console.log(`[maintenance] ${ORPHAN_CLEANUP}: deleted ${JSON.stringify(result)}`);
+      await dbRun("INSERT OR IGNORE INTO maintenance_runs (name, ran_at, result) VALUES (?, ?, ?)", ORPHAN_CLEANUP, new Date().toISOString(), JSON.stringify(result));
+      console.log(`[maintenance] ${ORPHAN_CLEANUP} done`);
+    } catch (e) {
+      // Not recorded, so the next start tries again.
+      console.error(`[maintenance] ${ORPHAN_CLEANUP} failed:`, (e as any)?.message || e);
+    }
+  }
+  setTimeout(() => void cleanUpOrphanFilesOnce(), Number(process.env.ORPHAN_CLEANUP_DELAY_MS) || 60_000).unref();
+  // Owner: which one-off maintenance jobs ran, and what they did.
+  app.get("/api/owner/maintenance", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const rows = (await dbAll("SELECT name, ran_at, result FROM maintenance_runs ORDER BY ran_at DESC")) as any[];
+    res.json({ runs: rows.map((r) => ({ name: r.name, ran_at: r.ran_at, result: (() => { try { return JSON.parse(r.result); } catch { return r.result; } })() })) });
+  });
+
   const fileUrl = (id: number): string => `/api/files/${id}`;
   /** Delete a member's own previous avatar file — only when the stored file
    *  is an avatar uploaded by one of `memberIds` and no other member row
