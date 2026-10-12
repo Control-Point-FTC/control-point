@@ -4044,8 +4044,11 @@ async function startServer() {
   /** Retry queued deletions. A member who unlinked has no token to use, so
    *  their queued rows are dropped. The whole queue is paged through, so rows
    *  of a member who is still paused never hold up anyone else's. */
+  let flushingCalendarDeletes = false;
   const flushPendingCalendarDeletes = async (): Promise<void> => {
-    if (!calendarKey) return;
+    // One pass at a time: a slow Google can make a pass outlast the interval.
+    if (!calendarKey || flushingCalendarDeletes) return;
+    flushingCalendarDeletes = true;
     try {
       for (let after = 0; ;) {
         const rows = (await dbAll(
@@ -4057,6 +4060,8 @@ async function startServer() {
       }
     } catch (e) {
       console.error("[calendar] pending deletions failed:", (e as any)?.message || e);
+    } finally {
+      flushingCalendarDeletes = false;
     }
   };
   const flushPendingPage = async (rows: any[]): Promise<void> => {
