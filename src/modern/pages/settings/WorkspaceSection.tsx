@@ -101,7 +101,6 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
   };
 
   if (!team) return <p className="text-sm text-muted-foreground">You’re not in a workspace yet.</p>;
-  const canSyncCalendar = (hasPerm ? hasPerm('manage_calendar') : false) || currentUser?.role === 'President';
 
   return (
     <div>
@@ -167,7 +166,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
         </SettingsGroup>
       )}
 
-      <GoogleCalendarGroup settings={settings} canSync={canSyncCalendar} onRefresh={() => refresh?.settings?.()} />
+      <GoogleCalendarGroup />
       <CalendarFeedGroup />
 
       <SettingsGroup title="Leave or delete" description="Step away from this workspace, or remove it for everyone.">
@@ -296,11 +295,13 @@ function CalendarFeedGroup() {
   );
 }
 
-function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; canSync: boolean; onRefresh: () => void }) {
+// Sync is a per-team switch (members with calendar access); the server says
+// whether it's on and whether this member may change it.
+function GoogleCalendarGroup() {
   const [link, setLink] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [syncOn, setSyncOn] = useState(settings?.google_calendar_sync === '1');
   const [saving, setSaving] = useState(false);
+  const syncOn = !!link?.team_sync_enabled;
   const load = async () => {
     setLoading(true);
     try {
@@ -311,7 +312,6 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
     finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
-  useEffect(() => { setSyncOn(settings?.google_calendar_sync === '1'); }, [settings?.google_calendar_sync]);
   // OAuth return flags (the Google redirect comes back to /settings).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -325,7 +325,7 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
   }, []);
 
   const unlink = async () => {
-    if (!(await confirmDialog({ title: 'Unlink Google Calendar?', message: 'Team events will no longer sync to your personal calendar.', confirmLabel: 'Unlink' }))) return;
+    if (!(await confirmDialog({ title: 'Unlink Google Calendar?', message: 'The team events Control Point added to your Google Calendar are removed, and Control Point loses access to it.', confirmLabel: 'Unlink' }))) return;
     const res = await apiFetch('/api/calendar/link', { method: 'DELETE' });
     if (res.ok) { notify('Google Calendar unlinked', 'success'); void load(); }
     else notify('Could not unlink — try again.', 'error');
@@ -333,11 +333,10 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
   const toggleSync = async () => {
     setSaving(true);
     try {
-      const res = await apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'google_calendar_sync', value: syncOn ? '0' : '1' }) });
+      const res = await apiFetch('/api/calendar/team-sync', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !syncOn }) });
       if (res.ok) {
-        setSyncOn(!syncOn);
-        notify(syncOn ? 'Team calendar sync turned off' : 'Team calendar sync turned on — new events will push to linked calendars', 'success');
-        onRefresh();
+        setLink((l: any) => ({ ...l, team_sync_enabled: !syncOn }));
+        notify(syncOn ? 'Team calendar sync turned off' : 'Team calendar sync turned on — upcoming events are being added to linked calendars', 'success');
       } else notify('Could not save setting', 'error');
     } catch {
       notify('Could not save setting', 'error');
@@ -355,13 +354,13 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
               ? <Button variant="outline" onClick={() => void unlink()}><Unlink /> Unlink</Button>
               : <Button asChild><a href="/api/auth/google/calendar"><CalendarDays /> Link Google Calendar <ExternalLink className="size-3.5" /></a></Button>}
           </SettingsRow>
-          {canSync && (
+          {link?.can_manage_sync && (
             <SettingsRow label="Sync team events to members’ calendars" description="Meetings, league meets and other events appear on every linked member’s calendar." htmlFor="cal-sync">
               <Switch id="cal-sync" checked={syncOn} disabled={saving} onCheckedChange={() => void toggleSync()} />
             </SettingsRow>
           )}
           {link?.linked && !link?.team_sync_enabled && (
-            <p className="flex items-center gap-2 border-t border-border px-4 py-3 text-sm text-muted-foreground"><Badge variant="outline">Off</Badge> Team sync is off — an admin can turn it on.</p>
+            <p className="flex items-center gap-2 border-t border-border px-4 py-3 text-sm text-muted-foreground"><Badge variant="outline">Off</Badge> Team sync is off — someone who manages the calendar can turn it on.</p>
           )}
         </>
       )}
