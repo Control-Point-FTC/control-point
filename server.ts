@@ -192,6 +192,7 @@ import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
 import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
 import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
+import { googleEventBody, isDeadRefreshToken } from "./server/googleCalendar.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -3971,19 +3972,35 @@ async function startServer() {
 
   // --- Google Calendar linking (per-member, from Settings) ---
   // Separate OAuth flow with calendar.events scope. Stores a refresh token per
-  // member; the admin's `google_calendar_sync` setting controls whether team
-  // events auto-push to every linked member's personal calendar.
+  // member; each team's `google_calendar_sync` switch (teams column, managed
+  // by members with calendar access) controls whether its events are pushed to
+  // every linked member's personal calendar.
+  const GOOGLE_CALENDAR_API = (process.env.GOOGLE_CALENDAR_API_BASE || "https://www.googleapis.com/calendar/v3").replace(/\/$/, "");
+  const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || "https://oauth2.googleapis.com/token";
+  const GOOGLE_REVOKE_URL = process.env.GOOGLE_REVOKE_URL || "https://oauth2.googleapis.com/revoke";
+  const googleEventUrl = (googleEventId?: string) =>
+    `${GOOGLE_CALENDAR_API}/calendars/primary/events${googleEventId ? `/${encodeURIComponent(googleEventId)}` : ""}`;
 
-  const getCalendarSyncEnabled = async (): Promise<boolean> => {
+  const getCalendarSyncEnabled = async (teamId: number | null | undefined): Promise<boolean> => {
+    if (!teamId) return false;
     try {
-      const row = (await dbGet("SELECT value FROM settings WHERE key = 'google_calendar_sync'")) as any;
-      return row?.value === '1';
+      const row = (await dbGet("SELECT google_calendar_sync FROM teams WHERE id = ?", teamId)) as any;
+      return Number(row?.google_calendar_sync) === 1;
     } catch { return false; }
   };
+
+  /** Short note for the server log from a failed Google response. */
+  const googleError = async (r: Response) => `${r.status} ${(await r.text().catch(() => "")).slice(0, 300)}`;
+
+  // Access tokens last about an hour: one per member, reused until a minute
+  // before it expires, instead of a token refresh for every event.
+  const accessTokens = new Map<number, { token: string; until: number }>();
 
   const getGoogleAccessToken = async (memberId: number): Promise<string | null> => {
     try {
       if (!calendarKey) return null;
+      const cached = accessTokens.get(memberId);
+      if (cached && cached.until > Date.now()) return cached.token;
       const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
       // Unreadable (wrong key): skip, but keep the link so a fixed key restores it.
       const refreshToken = readCalendarToken(link?.refresh_token, calendarKey);
@@ -3995,7 +4012,7 @@ async function startServer() {
           encryptCalendarToken(refreshToken, calendarKey), memberId, link.refresh_token,
         ).catch((e: any) => console.error("[calendar] encrypting a token on use failed:", e?.message || e));
       }
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -4004,17 +4021,24 @@ async function startServer() {
           refresh_token: refreshToken,
           grant_type: "refresh_token",
         }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!tokenRes.ok) {
-        // Refresh token revoked/expired — drop the link so the user can re-link.
-        if (tokenRes.status === 400 || tokenRes.status === 401) {
-          await dbRun("DELETE FROM google_calendar_links WHERE member_id = ?", memberId);
+        const body = await tokenRes.json().catch(() => null);
+        // Only a dead refresh token (revoked/expired) drops the link so the
+        // member can re-link; a server-side problem must not unlink everyone.
+        if (isDeadRefreshToken(tokenRes.status, body)) {
+          await dbRun("DELETE FROM google_calendar_links WHERE member_id = ? AND refresh_token = ?", memberId, link.refresh_token);
         }
+        console.error(`[calendar] token refresh for member ${memberId} failed: ${tokenRes.status} ${(body as any)?.error || ""}`);
         return null;
       }
-      const { access_token } = (await tokenRes.json()) as any;
-      return access_token || null;
-    } catch {
+      const { access_token, expires_in } = (await tokenRes.json()) as any;
+      if (!access_token) return null;
+      accessTokens.set(memberId, { token: access_token, until: Date.now() + (Math.max(Number(expires_in) || 3600, 120) - 60) * 1000 });
+      return access_token;
+    } catch (e) {
+      console.error(`[calendar] token refresh for member ${memberId} failed:`, (e as any)?.message || e);
       return null;
     }
   };
@@ -4047,9 +4071,10 @@ async function startServer() {
       }
       return;
     }
-    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(googleEventId)}`, {
+    const r = await fetch(googleEventUrl(googleEventId), {
       method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
-    }).catch(() => {});
+    }).catch((e) => { console.error("[calendar] delete failed:", e?.message || e); return null; });
+    if (r && !r.ok && r.status !== 404 && r.status !== 410) console.error(`[calendar] delete of a Google copy failed: ${await googleError(r)}`);
   };
 
   /** Retry queued deletions. A member who unlinked has no token to use, so
@@ -4081,7 +4106,7 @@ async function startServer() {
       if (linked && await calendarPausedFor(r.member_id)) continue;
       const accessToken = linked ? await getGoogleAccessToken(r.member_id) : null;
       if (accessToken) {
-        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+        const res = await fetch(googleEventUrl(r.google_event_id), {
           method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
         }).catch(() => null);
         // Keep it for the next pass unless Google confirmed it's gone.
@@ -4145,7 +4170,7 @@ async function startServer() {
         return res.redirect("/settings?cal_error=invalid_state");
       }
       if (!calendarKey) return res.redirect("/settings?cal_error=unavailable");
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -4155,6 +4180,7 @@ async function startServer() {
           redirect_uri: getCalendarRedirectUri(req),
           grant_type: "authorization_code",
         }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!tokenRes.ok) throw new Error("Token exchange failed");
       const { access_token, refresh_token } = (await tokenRes.json()) as any;
@@ -4167,6 +4193,9 @@ async function startServer() {
         "INSERT OR REPLACE INTO google_calendar_links (member_id, google_email, refresh_token, linked_at) VALUES (?, ?, ?, datetime('now'))",
         pending.memberId, profile.email || '', encryptCalendarToken(refresh_token, calendarKey)
       );
+      accessTokens.delete(pending.memberId);
+      // The team's upcoming events follow right away (when its sync is on).
+      void backfillMemberCalendar(pending.memberId);
       res.redirect("/settings?cal_linked=1");
     } catch (error) {
       console.error("Calendar link callback error:", error);
@@ -4182,21 +4211,81 @@ async function startServer() {
       const link = (await dbGet(
         "SELECT google_email, linked_at FROM google_calendar_links WHERE member_id = ?", auth.memberId
       )) as any;
-      const syncEnabled = await getCalendarSyncEnabled();
-      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled, available: !!calendarKey });
+      res.json({
+        linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null,
+        team_sync_enabled: await getCalendarSyncEnabled(auth.teamId),
+        can_manage_sync: auth.teamId ? await hasPerm(auth, "manage_calendar") : false,
+        available: !!calendarKey,
+      });
     } catch (error) {
       console.error("Error fetching calendar link:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
+  // Turn the team's calendar sync on or off (members with calendar access).
+  // Turning it on sends every linked member the team's upcoming events.
+  app.put("/api/calendar/team-sync", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_calendar");
+      if (!auth) return;
+      const enabled = req.body?.enabled === true;
+      await dbRun("UPDATE teams SET google_calendar_sync = ? WHERE id = ?", enabled ? 1 : 0, auth.teamId);
+      if (enabled) void backfillTeamCalendars(auth.teamId!);
+      res.json({ ok: true, team_sync_enabled: enabled });
+    } catch (error) {
+      console.error("Error saving calendar sync:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /** Disconnect a member's Google Calendar: the team events we put in it are
+   *  deleted, Google's grant is revoked (Google forgets the authorization),
+   *  and the stored link and mappings go. `onlyLinkedAt`: only a link made at
+   *  that time (a newer link is left alone). */
+  const disconnectGoogleCalendar = async (memberId: number, onlyLinkedAt?: string | null): Promise<void> => {
+    const link = (await dbGet("SELECT refresh_token, linked_at FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
+    if (onlyLinkedAt !== undefined && link && String(link.linked_at ?? "") !== String(onlyLinkedAt ?? "")) return;
+    const copies = (await dbAll("SELECT google_event_id FROM event_calendar_sync WHERE member_id = ?", memberId)) as any[];
+    if (!link && !copies.length) return;
+    // Credentials first: they can't be read once the link row is gone.
+    const accessToken = link ? await getGoogleAccessToken(memberId) : null;
+    const refreshToken = link && calendarKey ? readCalendarToken(link.refresh_token, calendarKey) : null;
+    await dbBatch([
+      { sql: "DELETE FROM event_calendar_sync WHERE member_id = ?", args: [memberId] },
+      link
+        ? { sql: "DELETE FROM google_calendar_links WHERE member_id = ? AND refresh_token = ?", args: [memberId, link.refresh_token] }
+        : { sql: "SELECT 1" },
+    ]);
+    accessTokens.delete(memberId);
+    void (async () => {
+      if (accessToken) {
+        for (const c of copies) {
+          const r = await fetch(googleEventUrl(c.google_event_id), {
+            method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+          }).catch(() => null);
+          if (r && !r.ok && r.status !== 404 && r.status !== 410) console.error(`[calendar] unlink: deleting a Google copy failed: ${await googleError(r)}`);
+        }
+      } else if (copies.length) {
+        console.error(`[calendar] unlink: no usable token for member ${memberId}; ${copies.length} Google copies left in their calendar`);
+      }
+      // Revoked last: revoking also ends the access token used above.
+      if (refreshToken) {
+        const r = await fetch(GOOGLE_REVOKE_URL, {
+          method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token: refreshToken }), signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        if (r && !r.ok && r.status !== 400) console.error(`[calendar] revoking a grant failed: ${await googleError(r)}`);
+      }
+    })();
+  };
+
   // Unlink the current member's Google Calendar.
   app.delete("/api/calendar/link", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      await dbRun("DELETE FROM google_calendar_links WHERE member_id = ?", auth.memberId);
-      await dbRun("DELETE FROM event_calendar_sync WHERE member_id = ?", auth.memberId);
+      await disconnectGoogleCalendar(auth.memberId);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error unlinking calendar:", error);
@@ -4204,95 +4293,118 @@ async function startServer() {
     }
   });
 
-  // Push one team event to one member's Google Calendar.
-  const pushEventToGoogle = async (memberId: number, event: any): Promise<string | null> => {
+  /** Push one team event to one member's Google Calendar and record the copy.
+   *  A copy that another push recorded first is deleted again (no duplicates). */
+  const pushEventToGoogle = async (memberId: number, event: any, timeZone: string): Promise<void> => {
     const accessToken = await getGoogleAccessToken(memberId);
-    if (!accessToken) return null;
-    const body: any = {
-      summary: event.title,
-      description: `${event.description || ''}\n\n— via Control Point`.trim(),
-      location: event.location || undefined,
-    };
-    if (event.start_time) {
-      // Timed event — interpret in the server's local timezone
-      const dateStr = `${event.date}T${event.start_time}:00`;
-      const endStr = event.end_time ? `${event.date}T${event.end_time}:00` : null;
-      body.start = { dateTime: dateStr };
-      body.end = { dateTime: endStr || dateStr };
-    } else {
-      body.start = { date: event.date };
-      const end = new Date(event.date + 'T12:00:00Z');
-      end.setUTCDate(end.getUTCDate() + 1);
-      body.end = { date: end.toISOString().slice(0, 10) };
-    }
-    try {
-      const r = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) return null;
-      const created = (await r.json()) as any;
-      return created.id || null;
-    } catch {
-      return null;
-    }
+    if (!accessToken) return;
+    const r = await fetch(googleEventUrl(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(googleEventBody(event, timeZone)),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((e) => { console.error("[calendar] push failed:", e?.message || e); return null; });
+    if (!r) return;
+    if (!r.ok) { console.error(`[calendar] push of event ${event.id} for member ${memberId} failed: ${await googleError(r)}`); return; }
+    const googleEventId = String(((await r.json().catch(() => ({}))) as any).id || "");
+    if (!googleEventId) return;
+    const saved = await dbRun(
+      "INSERT OR IGNORE INTO event_calendar_sync (event_id, member_id, google_event_id) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM events WHERE id = ?)",
+      event.id, memberId, googleEventId, event.id,
+    );
+    if (!saved.changes) await deleteGoogleCopy(memberId, googleEventId);
   };
+
+  /** Members of the team with a working link and no copy of this event yet. */
+  const membersMissingCopy = async (eventId: number, teamId: number): Promise<number[]> =>
+    ((await dbAll(
+      `SELECT g.member_id FROM google_calendar_links g
+       JOIN members m ON m.id = g.member_id
+       WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1
+         AND NOT EXISTS (SELECT 1 FROM event_calendar_sync s WHERE s.event_id = ? AND s.member_id = g.member_id)`, teamId, eventId,
+    )) as any[]).map((r) => Number(r.member_id));
 
   const syncEventToCalendars = async (event: any, teamId: number) => {
-    if (!(await getCalendarSyncEnabled())) return;
     try {
-      const links = (await dbAll(
-        `SELECT g.member_id FROM google_calendar_links g
-         JOIN members m ON m.id = g.member_id
-         WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1`, teamId
-      )) as any[];
-      for (const l of links) {
-        const googleEventId = await pushEventToGoogle(l.member_id, event);
-        if (googleEventId) {
-          await dbRun(
-            "INSERT OR REPLACE INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, ?)",
-            event.id, l.member_id, googleEventId
-          );
-        }
-      }
+      if (!(await getCalendarSyncEnabled(teamId))) return;
+      const timeZone = await teamTimeZone(teamId);
+      for (const memberId of await membersMissingCopy(Number(event.id), teamId)) await pushEventToGoogle(memberId, event, timeZone);
     } catch (e) {
-      console.error("Calendar sync failed:", (e as any)?.message);
+      console.error("[calendar] sync failed:", (e as any)?.message || e);
     }
   };
 
+  /** Send an edited event (title, notes, place, date and times) to every
+   *  existing Google copy, whether or not sync is still on. A copy deleted on
+   *  Google's side is forgotten and pushed again if sync is on. */
   const updateSyncedEvent = async (event: any) => {
-    if (!(await getCalendarSyncEnabled())) return;
     try {
       const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", event.id)) as any[];
-      for (const r of rows) {
-        const accessToken = await getGoogleAccessToken(r.member_id);
+      if (!rows.length) return;
+      const timeZone = await teamTimeZone(event.team_id);
+      const body = JSON.stringify(googleEventBody(event, timeZone));
+      let gone = false;
+      for (const row of rows) {
+        const accessToken = await getGoogleAccessToken(row.member_id);
         if (!accessToken) continue;
-        const body: any = {
-          summary: event.title,
-          description: `${event.description || ''}\n\n— via Control Point`.trim(),
-          location: event.location || undefined,
-        };
-        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }).catch(() => {});
+        const r = await fetch(googleEventUrl(row.google_event_id), {
+          method: "PATCH", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body, signal: AbortSignal.timeout(10_000),
+        }).catch((e) => { console.error("[calendar] update failed:", e?.message || e); return null; });
+        if (r && (r.status === 404 || r.status === 410)) {
+          await dbRun("DELETE FROM event_calendar_sync WHERE event_id = ? AND member_id = ? AND google_event_id = ?", event.id, row.member_id, row.google_event_id);
+          gone = true;
+        } else if (r && !r.ok) {
+          console.error(`[calendar] update of event ${event.id} for member ${row.member_id} failed: ${await googleError(r)}`);
+        }
       }
+      if (gone) await syncEventToCalendars(event, event.team_id);
     } catch (e) {
-      console.error("Calendar sync update failed:", (e as any)?.message);
+      console.error("[calendar] update failed:", (e as any)?.message || e);
     }
   };
 
-  const deleteSyncedEvent = async (eventId: number) => {
+  /** A newly linked member, or a team that just turned sync on, gets the
+   *  team's upcoming events (today onwards, up to 250). */
+  const backfillMemberCalendar = async (memberId: number): Promise<void> => {
     try {
-      const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", eventId)) as any[];
-      for (const r of rows) await deleteGoogleCopy(r.member_id, r.google_event_id);
-      await dbRun("DELETE FROM event_calendar_sync WHERE event_id = ?", eventId);
+      const m = (await dbGet("SELECT team_id FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
+      if (!m?.team_id || !(await getCalendarSyncEnabled(m.team_id))) return;
+      const timeZone = await teamTimeZone(m.team_id);
+      const events = (await dbAll(
+        `SELECT e.* FROM events e WHERE e.team_id = ? AND e.date >= ?
+           AND NOT EXISTS (SELECT 1 FROM event_calendar_sync s WHERE s.event_id = e.id AND s.member_id = ?)
+         ORDER BY e.date, e.start_time LIMIT 250`, m.team_id, todayIn(timeZone), memberId,
+      )) as any[];
+      for (const event of events) await pushEventToGoogle(memberId, event, timeZone);
     } catch (e) {
-      console.error("Calendar sync delete failed:", (e as any)?.message);
+      console.error(`[calendar] backfill for member ${memberId} failed:`, (e as any)?.message || e);
     }
   };
+  const backfillTeamCalendars = async (teamId: number): Promise<void> => {
+    const linked = (await dbAll(
+      "SELECT g.member_id FROM google_calendar_links g JOIN members m ON m.id = g.member_id WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1", teamId,
+    )) as any[];
+    for (const l of linked) await backfillMemberCalendar(Number(l.member_id));
+  };
+
+  // One-time reset of links made before the calendar fix (migration 128): a
+  // row leaves the queue only once its member is disconnected, so a failed
+  // start just retries next time.
+  const resetOldCalendarLinks = async (): Promise<void> => {
+    try {
+      const rows = (await dbAll("SELECT member_id, linked_at FROM calendar_links_to_reset")) as any[];
+      if (!rows.length) return;
+      for (const r of rows) {
+        await disconnectGoogleCalendar(Number(r.member_id), r.linked_at ?? null);
+        await dbRun("DELETE FROM calendar_links_to_reset WHERE member_id = ?", r.member_id);
+      }
+      console.log(`[calendar] reset ${rows.length} calendar link(s) made before the sync fix`);
+    } catch (e) {
+      console.error("[calendar] resetting old links failed:", (e as any)?.message || e);
+    }
+  };
+  setTimeout(() => void resetOldCalendarLinks(), Number(process.env.CALENDAR_RESET_DELAY_MS) || 5_000).unref();
 
   // --- Self-service account management ---
 
@@ -4831,6 +4943,8 @@ async function startServer() {
     await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", row.id);
     // Personal sticky notes in this workspace go with the membership.
     await dbRun("DELETE FROM sticky_notes WHERE member_id = ?", row.id);
+    // So does the Google Calendar link (and the team's events in it).
+    await disconnectGoogleCalendar(row.id).catch((e) => console.error("[calendar] disconnect on leave failed:", e?.message || e));
     // Hand back a session on another team when leaving the active one; the
     // current session simply becomes teamless when nothing remains.
     let switched: any = null;
@@ -4940,6 +5054,11 @@ async function startServer() {
    */
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
+    // Linked Google Calendars lose this team's events and are disconnected
+    // (before the rows that hold their credentials go).
+    for (const l of (await dbAll("SELECT g.member_id FROM google_calendar_links g JOIN members m ON m.id = g.member_id WHERE m.team_id = ?", teamId)) as any[]) {
+      await disconnectGoogleCalendar(Number(l.member_id)).catch((e) => console.error("[calendar] disconnect on workspace delete failed:", e?.message || e));
+    }
     // Every file uploaded in the workspace (notebook, chat, task proof, CAD,
     // emoji, feedback) and the legacy chat images go with it; the ids come
     // back from the deletes themselves, so an upload landing meanwhile isn't
@@ -6897,6 +7016,7 @@ async function startServer() {
       { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
       { sql: "DELETE FROM sticky_notes WHERE member_id = ?", args: [memberId] },
     ]);
+    await disconnectGoogleCalendar(memberId).catch((e) => console.error("[calendar] disconnect on removal failed:", e?.message || e));
     await endMemberPresence(auth.teamId, memberId);
     broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
     res.json({ success: true });
@@ -10003,7 +10123,9 @@ Rules:
   /** Push every occurrence of a series saved in one transaction to linked Google Calendars. */
   async function syncSeriesRows(teamId: number, seriesId: number, exceptId?: number) {
     const rows = (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ?", seriesId, teamId)) as any[];
-    for (const row of rows) if (row.id !== exceptId) void syncEventToCalendars(row, teamId);
+    // One occurrence at a time, in the background (a long series must not
+    // fire hundreds of Google requests at once).
+    void (async () => { for (const row of rows) if (row.id !== exceptId) await syncEventToCalendars(row, teamId); })();
   }
 
   /** A submitted repeat rule: null for none, or an error message. */
@@ -10208,7 +10330,8 @@ Rules:
           "SELECT e.* FROM events e WHERE e.series_id = ? AND e.team_id = ? AND e.id != ? AND NOT EXISTS (SELECT 1 FROM event_calendar_sync s WHERE s.event_id = e.id) AND e.date > ?",
           seriesId, auth.teamId, existing.id, newDate,
         )) as any[];
-        for (const row of fresh) void syncEventToCalendars(row, auth.teamId);
+        const teamId = auth.teamId;
+        void (async () => { for (const row of fresh) await syncEventToCalendars(row, teamId); })();
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, updated: merged.length });
@@ -13098,10 +13221,17 @@ Rules:
             .slice(0, 20);
           if (!ids.length) continue;
           const placeholders = ids.map(() => "?").join(",");
+          // Members' Google copies are read before the delete (the cascade
+          // takes the mappings) and removed after it.
+          const copies = (await dbAll(
+            `SELECT s.member_id, s.google_event_id FROM event_calendar_sync s JOIN events e ON e.id = s.event_id WHERE e.team_id = ? AND e.id IN (${placeholders})`,
+            auth.teamId, ...ids,
+          )) as any[];
           const info: any = await dbRun(
             `DELETE FROM events WHERE team_id = ? AND id IN (${placeholders})`,
             auth.teamId, ...ids
           );
+          if (copies.length) void removeGoogleCopies(copies);
           const deleted = Number(info?.changes) || 0;
           if (deleted) applied["delete-event"] = (applied["delete-event"] || 0) + deleted;
         } else if (kind === "outreach") {
