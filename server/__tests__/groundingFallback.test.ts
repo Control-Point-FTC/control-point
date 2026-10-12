@@ -67,3 +67,43 @@ describe("Gemini's search allowance spent", () => {
     expect(r).toMatchObject({ text: "Hi!", provider: "anthropic", grounded: false });
   });
 });
+
+/** A streamed reply in SSE form, cut every `every` bytes. */
+const sse = (lines: string[], every = 37) => {
+  const bytes = new TextEncoder().encode(lines.join(""));
+  return new Response(new ReadableStream({
+    start(c) { for (let i = 0; i < bytes.length; i += every) c.enqueue(bytes.slice(i, i + every)); c.close(); },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } });
+};
+const claudeEvents = (events: any[]) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+const geminiStream = (text: string) => sse([`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] })}\n\n`]);
+
+describe("streamed: a reply is never shown twice", () => {
+  it("Claude fails before any text: Gemini answers without search", async () => {
+    fetchMock
+      .mockResolvedValueOnce(groundingSpent())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }), { status: 529 }))
+      .mockResolvedValueOnce(geminiStream("From memory: usually about $100."));
+    const chunks: string[] = [];
+    const r = await aiChat({ messages: question, maxTokens: 512, stream: true, onChunk: (c) => chunks.push(c) });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(urlOf(2)).toContain("streamGenerateContent");
+    expect(bodyOf(2).tools).toBeUndefined();
+    expect(chunks.join("")).toBe("From memory: usually about $100.");
+    expect(r).toMatchObject({ provider: "gemini", grounded: false });
+  });
+
+  it("Claude fails after showing some text: no second answer is started", async () => {
+    fetchMock
+      .mockResolvedValueOnce(groundingSpent())
+      .mockResolvedValueOnce(sse(claudeEvents([
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "The Axon MAX is " } },
+        { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+      ])));
+    const chunks: string[] = [];
+    await expect(aiChat({ messages: question, maxTokens: 512, stream: true, onChunk: (c) => chunks.push(c) })).rejects.toThrow(/overloaded/i);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(chunks.join("")).toBe("The Axon MAX is ");
+  });
+});
