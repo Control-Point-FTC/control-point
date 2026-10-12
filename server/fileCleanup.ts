@@ -3,10 +3,12 @@
 // (messages.file_path) and in JSON (tasks.completion_images and the images of
 // each tasks.completion_history entry).
 
-const FILE_URL = /^\/api\/files\/(\d+)$/;
+// Canonical form only ("/api/files/7", never "/api/files/007"): reference
+// checks compare URLs as text, so every stored URL must be canonical.
+const FILE_URL = /^\/api\/files\/([1-9]\d*)$/;
 
 export function fileIdFromUrl(url: unknown): number | null {
-  const m = FILE_URL.exec(String(url ?? "").trim());
+  const m = FILE_URL.exec(String(url ?? ""));
   return m ? Number(m[1]) : null;
 }
 

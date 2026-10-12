@@ -15,6 +15,9 @@ describe("file references", () => {
     expect(fileIdFromUrl("/api/files/12")).toBe(12);
     expect(fileIdFromUrl("/uploads/a.png")).toBeNull();
     expect(fileIdFromUrl("/api/files/12/../13")).toBeNull();
+    // Only the canonical form: reference checks compare URLs as text.
+    expect(fileIdFromUrl("/api/files/007")).toBeNull();
+    expect(fileIdFromUrl(" /api/files/7")).toBeNull();
     expect(fileIdFromUrl(null)).toBeNull();
   });
 
