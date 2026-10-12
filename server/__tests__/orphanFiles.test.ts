@@ -21,7 +21,7 @@ const file = async (kind: string, teamId: number | null, old = true) => Number((
 })).lastInsertRowid);
 
 beforeAll(async () => {
-  t = await startTestServer("cp-orphans-", { ORPHAN_CLEANUP_DELAY_MS: "6000" });
+  t = await startTestServer("cp-orphans-", { ORPHAN_CLEANUP_DELAY_MS: "15000" });
   team = await seedTeam(t.db, "Robo");
   member = await seedMember(t.db, team, "Ada", "ada@orphans.test", "admin");
   const goneTeam = 9999;
@@ -50,9 +50,9 @@ beforeAll(async () => {
   ids.goneImage = Number((await t.db.execute({ sql: `INSERT INTO message_images (message_id, mime_type, data, created_at) VALUES (424242, 'image/png', x'00', ${OLD})`, args: [] })).lastInsertRowid);
 
   // Wait for the job to record its run.
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 60; i++) {
     if ((await q("SELECT 1 FROM maintenance_runs WHERE name = 'orphan-files-2026-10'")).length) break;
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 1000));
   }
 }, 120_000);
 afterAll(async () => { await t?.stop(); });
