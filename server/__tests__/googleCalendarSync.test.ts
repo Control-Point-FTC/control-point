@@ -46,6 +46,7 @@ const KEY = "c".repeat(40);
 describe("sync against a fake Google", () => {
   let google: Server;
   let calls: Call[] = [];
+  const allCalls: Call[] = []; // never cleared
   let n = 0;
   let t: TestServer;
   const teams: Record<string, number> = {};
@@ -73,6 +74,7 @@ describe("sync against a fake Google", () => {
       req.on("end", () => {
         const body = req.headers["content-type"]?.includes("json") ? JSON.parse(raw || "{}") : Object.fromEntries(new URLSearchParams(raw));
         calls.push({ method: req.method!, path: req.url!, body });
+        allCalls.push({ method: req.method!, path: req.url!, body });
         const json = (status: number, data: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(data)); };
         if (req.url === "/token") {
           if (body.refresh_token === "dead") return json(400, { error: "invalid_grant" });
@@ -82,6 +84,7 @@ describe("sync against a fake Google", () => {
         if (req.url === "/revoke") return json(200, {});
         if (req.method === "POST") return json(200, { id: `g${++n}` });
         if (req.method === "PATCH") return json(200, {});
+        if (req.method === "DELETE" && req.url!.endsWith("/g-fail")) return json(503, { error: "backendError" });
         if (req.method === "DELETE") { res.writeHead(204); return res.end(); }
         json(404, {});
       });
@@ -98,8 +101,13 @@ describe("sync against a fake Google", () => {
     teams.old = await seedTeam(t.db, "Old");
     members.old = await seedMember(t.db, teams.old, "Olu", "olu@gcal.test");
     await link(members.old, "old-token", "2026-10-01 09:00:00");
-    await t.db.execute({ sql: "INSERT INTO event_calendar_sync (event_id, member_id, google_event_id) SELECT id, ?, 'g-old' FROM events LIMIT 0", args: [members.old] });
+    const oldEvent = Number((await t.db.execute({ sql: "INSERT INTO events (title, date, team_id) VALUES ('Old meet', '2099-01-01', ?)", args: [teams.old] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, 'g-old')", args: [oldEvent, members.old] });
     await t.db.execute({ sql: "INSERT INTO calendar_links_to_reset (member_id, linked_at) VALUES (?, '2026-10-01 09:00:00')", args: [members.old] });
+    // Queued for reset, but relinked since (a newer linked_at): kept.
+    members.relinked = await seedMember(t.db, teams.old, "Rae", "rae@gcal.test");
+    await link(members.relinked, "new-token", "2026-10-13 09:00:00");
+    await t.db.execute({ sql: "INSERT INTO calendar_links_to_reset (member_id, linked_at) VALUES (?, '2026-10-01 09:00:00')", args: [members.relinked] });
 
     for (const name of ["a", "b", "c"]) {
       teams[name] = await seedTeam(t.db, `Team ${name}`);
@@ -183,8 +191,33 @@ describe("sync against a fake Google", () => {
     expect(await waitFor(async () => (await q("SELECT 1 FROM google_calendar_links WHERE member_id = ?", members.b)).length === 0)).toBe(true);
   });
 
-  it("links from before the fix are reset once", async () => {
+  it("links from before the fix are reset once: copies deleted, then the grant revoked", async () => {
     expect(await waitFor(async () => (await q("SELECT 1 FROM calendar_links_to_reset")).length === 0, 30_000)).toBe(true);
     expect(await q("SELECT 1 FROM google_calendar_links WHERE member_id = ?", members.old)).toHaveLength(0);
+    expect(await waitFor(() => allCalls.some((c) => c.path === "/revoke" && c.body.token === "old-token"))).toBe(true);
+    const del = allCalls.findIndex((c) => c.method === "DELETE" && c.path.endsWith("/events/g-old"));
+    const revoke = allCalls.findIndex((c) => c.path === "/revoke" && c.body.token === "old-token");
+    expect(del).toBeGreaterThanOrEqual(0);
+    expect(del).toBeLessThan(revoke);
+    expect(await waitFor(async () => (await q("SELECT 1 FROM calendar_disconnects WHERE member_id = ?", members.old)).length === 0)).toBe(true);
+    // A link made after the snapshot is kept.
+    expect(await q("SELECT 1 FROM google_calendar_links WHERE member_id = ?", members.relinked)).toHaveLength(1);
+    expect(allCalls.some((c) => c.path === "/revoke" && c.body.token === "new-token")).toBe(false);
+  });
+
+  it("a Google delete that fails stays queued for a retry", async () => {
+    const member = await seedMember(t.db, teams.a, "Flo", "flo@gcal.test");
+    await link(member, "rt-flaky");
+    const ev = Number((await t.db.execute({ sql: "INSERT INTO events (title, date, team_id) VALUES ('Flaky', '2099-06-01', ?)", args: [teams.a] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, 'g-fail')", args: [ev, member] });
+    const session = await t.session(member);
+    const r = await t.api("/api/calendar/link", { method: "DELETE", session });
+    expect(r.status).toBe(200);
+    expect(await q("SELECT 1 FROM google_calendar_links WHERE member_id = ?", member)).toHaveLength(0);
+    expect(await waitFor(async () => Number((await q("SELECT attempts FROM calendar_disconnects WHERE member_id = ?", member))[0]?.attempts) >= 1)).toBe(true);
+    const job = (await q("SELECT refresh_token, google_event_ids FROM calendar_disconnects WHERE member_id = ?", member))[0];
+    expect(JSON.parse(job.google_event_ids)).toEqual(["g-fail"]);
+    expect(job.refresh_token).toBeTruthy();
+    expect(calls.some((c) => c.path === "/revoke" && c.body.token === "rt-flaky")).toBe(false);
   });
 });
