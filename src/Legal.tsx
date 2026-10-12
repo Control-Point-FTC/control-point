@@ -99,9 +99,10 @@ function PrivacyBody() {
         </p>
         <p>
           So you can keep working offline, the app also saves copies of notebook pages you open and of recent team data
-          in your browser on that device. These are deleted when you sign out. Scouting data packs you download for
-          offline use contain public FTC event data and stay until you remove them or clear your browser data. On a
-          shared computer, sign out when you're done.
+          in your browser on that device. These are deleted when you sign out. Two things stay after you sign out, until
+          you clear your browser data: scouting entries your team has saved (including ones not yet sent, so they
+          aren't lost at an event without internet), and scouting data packs you download, which contain public FTC
+          event data. On a shared computer, sign out and clear the browser's site data when you're done.
         </p>
         <p>We don't use advertising or cross-site tracking cookies.</p>
       </Section>
