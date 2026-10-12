@@ -9,11 +9,11 @@ import { useLocation } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
-import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
+import { MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
 import { useBatchedStream } from '../useBatchedStream';
-import { confirmDialog } from '../dialog';
+import { confirmDialog, notify } from '../dialog';
 import { useDraft } from '../../modern/drafts';
 import type { BrunoChat, BrunoChatMessage } from '../../types/bruno';
 import { thinkingSteps, type ThinkingStep } from './BrunoThinking';
@@ -61,6 +61,11 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   // Screenshots / PDFs attached to the next message — cleared on send, never saved.
   const [attached, setAttached] = useState<AttachedImage[]>([]);
   const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
+  // What's attached right now (send's closure is older than files added while it runs).
+  const attachedRef = useRef(attached);
+  attachedRef.current = attached;
+  const attachedPdfsRef = useRef(attachedPdfs);
+  attachedPdfsRef.current = attachedPdfs;
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
     setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
@@ -188,10 +193,19 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     abortRef.current = startAc;
     // The message wasn't sent: give it back, keeping anything typed or
     // attached since (the composer stays editable while busy).
+    // Files go back first and the limits still hold, so the composer only
+    // shows what a send will really include; newer files that don't fit are
+    // mentioned in a notice.
     const giveBack = () => {
       setInput((cur) => (cur.trim() ? cur : content));
-      setAttached((prev) => [...outgoing, ...prev].slice(0, MAX_BRUNO_IMAGES));
-      setAttachedPdfs((prev) => [...outgoingPdfs, ...prev]);
+      const images = [...outgoing, ...attachedRef.current];
+      const pdfs = [...outgoingPdfs, ...attachedPdfsRef.current];
+      setAttached(images.slice(0, MAX_BRUNO_IMAGES));
+      setAttachedPdfs(pdfs.slice(0, MAX_BRUNO_PDFS));
+      const dropped = Math.max(0, images.length - MAX_BRUNO_IMAGES) + Math.max(0, pdfs.length - MAX_BRUNO_PDFS);
+      if (dropped) {
+        notify(`Your message is back in the box. ${dropped} newer file${dropped === 1 ? '' : 's'} didn't fit (up to ${MAX_BRUNO_IMAGES} images and ${MAX_BRUNO_PDFS} PDFs); add ${dropped === 1 ? 'it' : 'them'} again after sending.`, 'info');
+      }
     };
     try {
       if (!chatId) {

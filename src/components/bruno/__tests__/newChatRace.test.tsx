@@ -123,3 +123,25 @@ describe('when the new chat can’t be started', () => {
     expect(result.current.input).toBe(question);
   });
 });
+
+describe('giving files back', () => {
+  it('keeps the limits: the sent PDFs first, newer ones that do not fit are left out with a notice', async () => {
+    const dialog = await import('../../dialog');
+    const notifySpy = vi.spyOn(dialog, 'notify').mockImplementation(() => {});
+    let refuse!: () => void;
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url.startsWith('/api/bruno/chats?')) return ok([]);
+      if (url === '/api/bruno/chats' && init?.method === 'POST') return new Promise((r) => { refuse = () => r({ ok: false, json: async () => ({}) }); });
+      return ok({});
+    });
+    const pdf = (n: number) => ({ name: `p${n}.pdf`, mimeType: 'application/pdf', data: 'x' }) as any;
+    const { result } = renderHook(() => useBrunoConversation({ currentUser: { id: 7 } }), { wrapper });
+    act(() => result.current.setAttachedPdfs([pdf(1), pdf(2), pdf(3)]));
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send('Read these'); });
+    act(() => result.current.setAttachedPdfs([pdf(4), pdf(5), pdf(6), pdf(7)]));
+    await act(async () => { refuse(); await sending; });
+    expect(result.current.attachedPdfs.map((p: any) => p.name)).toEqual(['p1.pdf', 'p2.pdf', 'p3.pdf', 'p4.pdf', 'p5.pdf']);
+    expect(notifySpy).toHaveBeenCalledWith(expect.stringMatching(/2 newer files didn't fit/), 'info');
+  });
+});
