@@ -28,12 +28,20 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   const [chats, setChats] = useState<BrunoChat[]>([]);
   const [chatsHasMore, setChatsHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeId, setActiveId] = useState<number | null>(() => {
+  const [activeId, setActiveIdState] = useState<number | null>(() => {
     // Expanding the side panel passes its chat through location state so
     // the full view lands on the same conversation.
     const s = (location.state as any)?.chatId;
     return typeof s === 'number' && s > 0 ? s : null;
   });
+  // The member picked a chat, started a new one or sent something: the chat
+  // list arriving later must not switch them to the latest chat (V5 audit
+  // Low 14: "New chat" right after opening /bruno lost the new conversation).
+  const chose = useRef(activeId !== null);
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  /** The member's own choice of chat. */
+  const setActiveId = useCallback((id: number | null) => { chose.current = true; setActiveIdState(id); }, []);
   // Same, for expands that happen while the full view is already mounted.
   useEffect(() => {
     const s = (location.state as any)?.chatId;
@@ -77,8 +85,9 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       const list: BrunoChat[] = res.ok ? await res.json() : [];
       setChats((prev) => (append ? [...prev, ...list] : list));
       setChatsHasMore(list.length === CHAT_PAGE);
-      if (selectId !== undefined) setActiveId(selectId);
-      else if (activeId === null && list.length > 0 && !append) setActiveId(list[0].id);
+      if (selectId !== undefined) setActiveIdState(selectId);
+      // Open the latest chat only while the member hasn't chosen anything yet.
+      else if (!chose.current && activeIdRef.current === null && list.length > 0 && !append) setActiveIdState(list[0].id);
     } catch {
       /* offline — keep empty */
     } finally {
@@ -91,8 +100,15 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A chat this page just created for a message being sent: its messages are
+  // already on screen, so switching to it must not load the server copy.
+  const createdHere = useRef<number | null>(null);
+
   useEffect(() => {
-    if (activeId === null || busyRef.current) {
+    // Used once: coming back to that chat later loads it as usual.
+    const justCreated = activeId !== null && activeId === createdHere.current;
+    createdHere.current = null;
+    if (activeId === null || busyRef.current || justCreated) {
       if (activeId === null) setMessages([]);
       return;
     }
@@ -156,18 +172,30 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
     if ((!content && !attached.length && !attachedPdfs.length) || busyRef.current) return;
+    chose.current = true;
     setInput('');
     const outgoing = attached;
     const outgoingPdfs = attachedPdfs;
     setAttached([]);
     setAttachedPdfs([]);
     let chatId = activeId;
+    // Busy from the start: opening the new chat below must not load its
+    // (still empty) server copy over the message being sent.
+    setBusy(true);
+    busyRef.current = true;
     try {
       if (!chatId) {
         const res = await apiFetch('/api/bruno/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-        if (!res.ok) return;
+        if (!res.ok) {
+          // Couldn't start the chat: give the message back instead of losing it.
+          setInput(content);
+          setAttached(outgoing);
+          setAttachedPdfs(outgoingPdfs);
+          return;
+        }
         const created = await res.json();
         chatId = created.id;
+        createdHere.current = chatId;
         setActiveId(chatId);
       }
       const next: BuildHelperMessage[] = [...messages, {
@@ -177,8 +205,6 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
         ...(outgoingPdfs.length ? { pdfs: outgoingPdfs } : {}),
       }];
       setMessages(next);
-      setBusy(true);
-      busyRef.current = true;
       await streamReply(next, chatId!, { persona: personaByChat[chatId!], images: outgoing.length, pdfs: outgoingPdfs.length });
       fetchChats(chatId);
     } catch (e: any) {
