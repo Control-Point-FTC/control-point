@@ -617,19 +617,24 @@ export async function aiChat(opts: {
       opts.onUsage,
       opts.signal,
       route.grounded,
-      onSources
+      onSources,
+      // Search allowance spent: with Claude set up, its web search answers a
+      // grounded question (below) instead of Gemini answering unchecked.
+      !isAnthropicConfigured()
     );
     return { text, provider: "gemini", grounded: route.grounded, sources: dedupeSources(sources) };
   } catch (err: any) {
     if (isAnthropicConfigured() && isGeminiFailoverable(err)) {
       console.warn(`[AI] Gemini failed (%s); failing over once to Anthropic`, String(err?.message || err).slice(0, 120));
+      // Whether the fallback already showed the member anything.
+      let shown = false;
       try {
         const text = await callAnthropicChat({
           system,
           messages: opts.messages,
           maxTokens: opts.maxTokens,
           stream: opts.stream,
-          onChunk: opts.onChunk,
+          onChunk: opts.onChunk ? (c: string) => { if (c) shown = true; opts.onChunk!(c); } : undefined,
           onUsage: opts.onUsage,
           signal: opts.signal,
           // A grounded question keeps its web search on the fallback too.
@@ -638,6 +643,18 @@ export async function aiChat(opts: {
         });
         return { text, provider: "anthropic", grounded: route.grounded, sources: dedupeSources(sources) };
       } catch (anthropicErr: any) {
+        // Only the search allowance was spent and Claude couldn't help either:
+        // answer without live search, as before, rather than not at all (only
+        // when nothing was shown yet, so no reply is streamed twice).
+        if (err?.groundingQuota && !shown && !opts.signal?.aborted) {
+          console.warn("[AI] Anthropic fallback failed after a grounding 429; answering without web search");
+          try {
+            const text = await buildHelperChat(opts.messages, opts.maxTokens, opts.onChunk, opts.extraSystem, opts.onUsage, opts.signal, false, onSources);
+            return { text, provider: "gemini", grounded: false, sources: dedupeSources(sources) };
+          } catch (plainErr: any) {
+            fail("gemini", plainErr);
+          }
+        }
         fail("anthropic", anthropicErr);
       }
     }
