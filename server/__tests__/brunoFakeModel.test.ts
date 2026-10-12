@@ -110,11 +110,17 @@ describe("a reply that only says Checking…", () => {
   });
 
   it("never ends there: if every try says nothing, Bruno says so plainly", async () => {
-    gemini.script = ["Checking recent FTC event results in New Jersey...", "Checking again…", "Checking FTC Scout…"];
+    // Every scripted reply is only a progress line: anything else in the
+    // reply has to come from the server's own note.
+    gemini.script = ["Checking recent FTC event results in New Jersey...", "Checking again…", "Looking into it…"];
     const r = await ask("What were the recent FTC event results in New Jersey?");
-    expect(r.saved).not.toMatch(/^\s*Checking[^\n]*$/);
-    expect(r.saved).toMatch(/ftcscout\.org|FTC Scout/);
-    expect(r.shown).toMatch(/ftcscout\.org|FTC Scout/);
+    expect(gemini.requests).toHaveLength(3);
+    const note = /I couldn't find anything current on that\. FIRST's event site \(https:\/\/ftc-events\.firstinspires\.org\) and FTC Scout \(https:\/\/ftcscout\.org\)/;
+    expect(r.saved).toMatch(note);
+    expect(r.shown).toMatch(note);
+    // No line of the saved reply is anything but progress or the note.
+    const lines = r.saved.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    expect(lines.filter((l) => !/^(Checking|Looking)\b/.test(l) && !note.test(l))).toEqual([]);
   });
 });
 
