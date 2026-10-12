@@ -191,6 +191,7 @@ import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQ
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
 import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
+import { findOrphanFiles } from "./server/orphanFiles.js";
 import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
@@ -8021,6 +8022,42 @@ async function startServer() {
     setTimeout(() => void syncFilesToR2(), Math.min(every, 10_000)).unref();
     setInterval(() => void syncFilesToR2(), every).unref();
   }
+
+  // One-off: delete files left behind by records deleted before deletes took
+  // their files with them (server/orphanFiles.ts says what counts). Runs once
+  // per database; the result is kept in maintenance_runs.
+  const ORPHAN_CLEANUP = "orphan-files-2026-10";
+  async function cleanUpOrphanFilesOnce(): Promise<void> {
+    try {
+      if (await dbGet("SELECT 1 AS done FROM maintenance_runs WHERE name = ?", ORPHAN_CLEANUP)) return;
+      const found = await findOrphanFiles({ all: dbAll });
+      console.log(`[maintenance] ${ORPHAN_CLEANUP}: deleted workspaces ${found.deletedWorkspace.length}, task photos ${found.unusedProof.length}, chat files ${found.unusedChat.length}, chat images ${found.chatImages.length}`);
+      for (const id of found.deletedWorkspace) await deleteStoredRow(id);
+      // Proof and chat go through the atomic "still unused?" delete, so a file
+      // that gained a reference meanwhile is kept.
+      for (const f of found.unusedProof) await deleteUnreferencedFiles([f.id], "proof", f.teamId);
+      for (const f of found.unusedChat) await deleteUnreferencedFiles([f.id], "chat", f.teamId);
+      for (const id of found.chatImages) await deleteMessageImageRow(id);
+      const result = {
+        deletedWorkspace: found.deletedWorkspace.length, unusedProof: found.unusedProof.length,
+        unusedChat: found.unusedChat.length, chatImages: found.chatImages.length,
+      };
+      await dbRun("INSERT OR IGNORE INTO maintenance_runs (name, ran_at, result) VALUES (?, ?, ?)", ORPHAN_CLEANUP, new Date().toISOString(), JSON.stringify(result));
+      console.log(`[maintenance] ${ORPHAN_CLEANUP} done`);
+    } catch (e) {
+      // Not recorded, so the next start tries again.
+      console.error(`[maintenance] ${ORPHAN_CLEANUP} failed:`, (e as any)?.message || e);
+    }
+  }
+  setTimeout(() => void cleanUpOrphanFilesOnce(), Number(process.env.ORPHAN_CLEANUP_DELAY_MS) || 60_000).unref();
+  // Owner: which one-off maintenance jobs ran, and what they did.
+  app.get("/api/owner/maintenance", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const rows = (await dbAll("SELECT name, ran_at, result FROM maintenance_runs ORDER BY ran_at DESC")) as any[];
+    res.json({ runs: rows.map((r) => ({ name: r.name, ran_at: r.ran_at, result: (() => { try { return JSON.parse(r.result); } catch { return r.result; } })() })) });
+  });
+
   const fileUrl = (id: number): string => `/api/files/${id}`;
   /** Delete a member's own previous avatar file — only when the stored file
    *  is an avatar uploaded by one of `memberIds` and no other member row
