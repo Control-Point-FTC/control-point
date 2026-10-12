@@ -21,6 +21,10 @@ and never renumber.
      --attach './before-tasks.png#Task sheet before' --attach './after-tasks.png#Task sheet after'
    ```
    A body that references `![alt](./after-tasks.png)` has the reference rewritten to the uploaded asset. `gh pr edit --attach` and `gh pr comment --attach` work the same way. Name files `before-…`/`after-…` so pairs are obvious. Do not open the PR and hand the missing media back as a TODO.
+   - **Attach only what this run captured.** Pass the exact files your capture produced, never "whatever is in the folder": a failed re-capture must not let a stale or partial file stand in as evidence.
+   - **Motion gets a short video**, not a still: `--attach` takes video too. Keep recordings to a few seconds (30 at most) of the interaction itself.
+   - **Frosted surfaces lie in some captures.** The app uses `backdrop-blur` (dialogs, overlays, sticky headers). Chrome can drop `backdrop-filter` from headless, 2x, or surface-level (CDP) captures with no warning, so a before/after pair can come back identical and read as "no change". Capture those in a visible window at 1x scale, and say so if you couldn't.
+   - **Reduced-motion variants need reduced motion turned on.** The app honors `prefers-reduced-motion` (`src/index.css`, the walkthrough, Bruno's icon, animated numbers). Automated browsers usually report `no-preference`, so a change to the reduced-motion path must be captured with reduced motion emulated, or the before/after shows the same full animation twice.
 7. **Verify on production after the deploy, with evidence.** Once the deploy for the merge succeeds, check the change on https://tryctrlpoint.org and post a verification comment on the PR with a screenshot (`gh pr comment <n> --attach …`). Say plainly what could not be checked and why (for example, a race that can't be forced on a fast connection, or video that won't load in a hidden automation tab).
 
 ## Production safety
