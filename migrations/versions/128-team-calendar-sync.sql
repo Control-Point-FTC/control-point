@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS calendar_disconnects (
   refresh_token TEXT,
   google_event_ids TEXT NOT NULL DEFAULT '[]',
   attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT, -- NULL = due now; set after a failed try (backoff)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

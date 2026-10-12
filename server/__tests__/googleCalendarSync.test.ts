@@ -219,5 +219,11 @@ describe("sync against a fake Google", () => {
     expect(JSON.parse(job.google_event_ids)).toEqual(["g-fail"]);
     expect(job.refresh_token).toBeTruthy();
     expect(calls.some((c) => c.path === "/revoke" && c.body.token === "rt-flaky")).toBe(false);
+    // Another unlink wakes the worker, but this job waits for its retry time.
+    const deletesBefore = calls.filter((c) => c.method === "DELETE" && c.path.endsWith("/g-fail")).length;
+    await t.api("/api/calendar/link", { method: "DELETE", session: sessions.a });
+    await new Promise((r2) => setTimeout(r2, 1500));
+    expect(calls.filter((c) => c.method === "DELETE" && c.path.endsWith("/g-fail")).length).toBe(deletesBefore);
+    expect(Number((await q("SELECT attempts FROM calendar_disconnects WHERE member_id = ?", member))[0].attempts)).toBe(1);
   });
 });

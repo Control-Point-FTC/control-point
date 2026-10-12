@@ -4305,7 +4305,10 @@ async function startServer() {
         const jobs = (await dbAll("SELECT * FROM calendar_disconnects WHERE id > ? ORDER BY id LIMIT 50", after)) as any[];
         if (!jobs.length) break;
         after = Number(jobs[jobs.length - 1].id);
-        for (const job of jobs) await processCalendarDisconnect(job);
+        // A job that failed waits for its own retry time, however often the
+        // worker is woken (every unlink wakes it).
+        const now = new Date().toISOString();
+        for (const job of jobs) if (!job.next_attempt_at || job.next_attempt_at <= now) await processCalendarDisconnect(job);
       }
     } catch (e) {
       console.error("[calendar] disconnect jobs failed:", (e as any)?.message || e);
@@ -4321,7 +4324,9 @@ async function startServer() {
         console.error(`[calendar] giving up disconnect job ${job.id} (member ${job.member_id}) after ${attempts} tries: ${why}`);
         await finish();
       } else {
-        await dbRun("UPDATE calendar_disconnects SET attempts = ? WHERE id = ?", attempts, job.id);
+        // Backoff: 10 minutes after the first failure, growing to 2 hours.
+        const waitMs = Math.min(attempts * 10, 120) * 60_000;
+        await dbRun("UPDATE calendar_disconnects SET attempts = ?, next_attempt_at = ? WHERE id = ?", attempts, new Date(Date.now() + waitMs).toISOString(), job.id);
       }
     };
     if (!job.refresh_token) {
