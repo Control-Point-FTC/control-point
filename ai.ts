@@ -11,7 +11,9 @@
 import { dbGet } from "./db.js";
 import { geminiSources, type WebSource } from "./server/webSources.js";
 
-const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+/** Gemini's API root. GEMINI_API_BASE points it elsewhere, e.g. at a
+ *  scripted stand-in in tests; production leaves it unset. */
+const apiBase = () => process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 export function aiModel(): string {
@@ -180,7 +182,7 @@ async function callGemini(opts: {
 }): Promise<string> {
   const model = aiModel();
   const endpoint = opts.stream ? "streamGenerateContent" : "generateContent";
-  const url = `${API_BASE}/models/${model}:${endpoint}${opts.stream ? "?alt=sse" : ""}`;
+  const url = `${apiBase()}/models/${model}:${endpoint}${opts.stream ? "?alt=sse" : ""}`;
 
   const parts: any[] = [{ text: opts.user }];
   for (const img of opts.images || []) {
@@ -824,7 +826,7 @@ export async function buildHelperChat(
   const model = aiModel();
   const stream = !!onChunk;
   const endpoint = stream ? "streamGenerateContent" : "generateContent";
-  const url = `${API_BASE}/models/${model}:${endpoint}${stream ? "?alt=sse" : ""}`;
+  const url = `${apiBase()}/models/${model}:${endpoint}${stream ? "?alt=sse" : ""}`;
 
   const body: any = {
     system_instruction: { parts: [{ text: extraSystem ? BUILD_HELPER_SYSTEM + "\n\n" + extraSystem : BUILD_HELPER_SYSTEM }] },

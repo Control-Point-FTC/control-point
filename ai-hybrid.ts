@@ -28,7 +28,8 @@ import {
 } from "./ai.js";
 import { anthropicSources, dedupeSources, type WebSource } from "./server/webSources.js";
 
-const ANTHROPIC_API_BASE = "https://api.anthropic.com/v1";
+/** Claude's API root; ANTHROPIC_API_BASE points it elsewhere (tests only). */
+const anthropicApiBase = () => process.env.ANTHROPIC_API_BASE || "https://api.anthropic.com/v1";
 // claude-sonnet-4-20250514 was retired on 2026-06-15 (requests 404), so the
 // fallback had been failing. ANTHROPIC_MODEL still overrides this.
 const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
@@ -309,7 +310,7 @@ async function callAnthropicChat(opts: {
   };
 
   const send = (b: any) => fetchWithPolicy(
-    `${ANTHROPIC_API_BASE}/messages`,
+    `${anthropicApiBase()}/messages`,
     { method: "POST", headers, body: JSON.stringify(b) },
     { timeoutMs: ANTHROPIC_TIMEOUT_MS, label: "Anthropic", signal: opts.signal }
   );
