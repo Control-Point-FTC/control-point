@@ -19,6 +19,14 @@ describe("Bruno's rules", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/you don't share members' email addresses or phone numbers/);
     expect(BUILD_HELPER_SYSTEM).toMatch(/don't suggest the details are missing/);
   });
+  it("doesn't state a count for proposals (the card shows the exact one)", () => {
+    // V5 re-check: "Proposing 15 calendar events" above a card holding 16.
+    expect(BUILD_HELPER_SYSTEM).toMatch(/don't say how many: the confirm card shows the exact count/);
+    expect(BUILD_HELPER_SYSTEM).not.toMatch(/e\.g\. "Proposing \d|e\.g\. "Proposing to delete \d/);
+    // The guard really catches the old examples.
+    expect('(e.g. "Proposing 9 holiday events:")').toMatch(/e\.g\. "Proposing \d|e\.g\. "Proposing to delete \d/);
+    expect('(e.g. "Proposing to delete 7 holiday events")').toMatch(/e\.g\. "Proposing \d|e\.g\. "Proposing to delete \d/);
+  });
   it("only links records that answer the question", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/Only link records that answer the question; don't add chips for unrelated tasks or pages/);
   });
