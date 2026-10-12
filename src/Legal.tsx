@@ -63,9 +63,14 @@ function PrivacyBody() {
           notebook trash first; its files are deleted when it is permanently deleted from the trash, unless another
           page still uses them. Replacing your profile picture deletes the old one, and deleting a custom emoji or a
           CAD snapshot deletes its files. Currently, some files are kept after what they belong to is deleted: task
-          completion photos when the task is deleted, a message's attachments when the message is deleted, and files
-          other than notebook attachments when a whole workspace or account is deleted. We're changing this so those
-          files are deleted too; until then, you can ask us to delete them at the email below.
+          completion photos when the task is deleted, a message's attachments when the message is deleted, files
+          other than notebook attachments when a whole workspace is deleted, and the files on your messages and on
+          tasks assigned to you when you delete your account. We're changing this so those files are deleted too;
+          until then, you can ask us to delete them at the email below.
+        </p>
+        <p>
+          Files you add to your team's notebook or CAD belong to the team: they stay with the team after you leave it
+          or delete your account.
         </p>
       </Section>
       <Section title="Google Calendar">
