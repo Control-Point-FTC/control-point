@@ -4032,28 +4032,38 @@ async function startServer() {
   };
 
   /** Retry queued deletions. A member who unlinked has no token to use, so
-   *  their queued rows are dropped. */
+   *  their queued rows are dropped. The whole queue is paged through, so rows
+   *  of a member who is still paused never hold up anyone else's. */
   const flushPendingCalendarDeletes = async (): Promise<void> => {
     if (!calendarKey) return;
     try {
-      const rows = (await dbAll("SELECT member_id, google_event_id FROM calendar_pending_deletes ORDER BY created_at LIMIT 200")) as any[];
-      for (const r of rows) {
-        const linked = await dbGet("SELECT 1 AS ok FROM google_calendar_links WHERE member_id = ?", r.member_id);
-        if (linked && await calendarPausedFor(r.member_id)) continue;
-        const accessToken = linked ? await getGoogleAccessToken(r.member_id) : null;
-        if (accessToken) {
-          const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
-            method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
-          }).catch(() => null);
-          // Keep it for the next pass unless Google confirmed it's gone.
-          if (!res || !(res.ok || res.status === 404 || res.status === 410)) continue;
-        } else if (linked) {
-          continue; // Google unreachable or token refresh failed: try again later.
-        }
-        await dbRun("DELETE FROM calendar_pending_deletes WHERE member_id = ? AND google_event_id = ?", r.member_id, r.google_event_id);
+      for (let after = 0; ;) {
+        const rows = (await dbAll(
+          "SELECT rowid AS rid, member_id, google_event_id FROM calendar_pending_deletes WHERE rowid > ? ORDER BY rowid LIMIT 200", after,
+        )) as any[];
+        if (!rows.length) break;
+        after = Number(rows[rows.length - 1].rid);
+        await flushPendingPage(rows);
       }
     } catch (e) {
       console.error("[calendar] pending deletions failed:", (e as any)?.message || e);
+    }
+  };
+  const flushPendingPage = async (rows: any[]): Promise<void> => {
+    for (const r of rows) {
+      const linked = await dbGet("SELECT 1 AS ok FROM google_calendar_links WHERE member_id = ?", r.member_id);
+      if (linked && await calendarPausedFor(r.member_id)) continue;
+      const accessToken = linked ? await getGoogleAccessToken(r.member_id) : null;
+      if (accessToken) {
+        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        // Keep it for the next pass unless Google confirmed it's gone.
+        if (!res || !(res.ok || res.status === 404 || res.status === 410)) continue;
+      } else if (linked) {
+        continue; // Google unreachable or token refresh failed: try again later.
+      }
+      await dbRun("DELETE FROM calendar_pending_deletes WHERE member_id = ? AND google_event_id = ?", r.member_id, r.google_event_id);
     }
   };
   if (calendarKey) {
