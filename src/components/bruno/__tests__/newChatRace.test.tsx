@@ -76,3 +76,50 @@ describe('a chat created by sending', () => {
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/bruno/chats/140'));
   });
 });
+
+describe('when the new chat can’t be started', () => {
+  const question = 'Plan our build season';
+  const setupCreate = (create: (init: any) => Promise<any>) => {
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url.startsWith('/api/bruno/chats?')) return ok([]);
+      if (url === '/api/bruno/chats' && init?.method === 'POST') return create(init);
+      return ok({});
+    });
+  };
+
+  it('a dropped connection gives the message back', async () => {
+    setupCreate(async () => { throw new TypeError('Failed to fetch'); });
+    const { result } = renderHook(() => useBrunoConversation({ currentUser: { id: 7 } }), { wrapper });
+    await act(async () => { await result.current.send(question); });
+    expect(result.current.input).toBe(question);
+    expect(ai.streamBuildHelper).not.toHaveBeenCalled();
+  });
+
+  it('a refusal gives it back without replacing what was typed since', async () => {
+    let refuse!: () => void;
+    setupCreate(() => new Promise((r) => { refuse = () => r({ ok: false, json: async () => ({}) }); }));
+    const { result } = renderHook(() => useBrunoConversation({ currentUser: { id: 7 } }), { wrapper });
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send(question); });
+    act(() => result.current.setInput('a newer thought'));
+    await act(async () => { refuse(); await sending; });
+    expect(result.current.input).toBe('a newer thought');
+  });
+
+  it('Stop while the chat is being created cancels it, and no reply starts', async () => {
+    let seenSignal: AbortSignal | undefined;
+    setupCreate((init) => new Promise((_r, reject) => {
+      seenSignal = init.signal;
+      init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }));
+    const { result } = renderHook(() => useBrunoConversation({ currentUser: { id: 7 } }), { wrapper });
+    let sending!: Promise<void>;
+    act(() => { sending = result.current.send(question); });
+    await waitFor(() => expect(result.current.busy).toBe(true));
+    await act(async () => { result.current.stop(); await sending; });
+    expect(seenSignal?.aborted).toBe(true);
+    expect(ai.streamBuildHelper).not.toHaveBeenCalled();
+    expect(result.current.busy).toBe(false);
+    expect(result.current.input).toBe(question);
+  });
+});

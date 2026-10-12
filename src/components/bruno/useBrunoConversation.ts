@@ -180,17 +180,33 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     setAttachedPdfs([]);
     let chatId = activeId;
     // Busy from the start: opening the new chat below must not load its
-    // (still empty) server copy over the message being sent.
+    // (still empty) server copy over the message being sent. Stop works from
+    // the start too: it cancels creating the chat, and no reply begins.
     setBusy(true);
     busyRef.current = true;
+    const startAc = new AbortController();
+    abortRef.current = startAc;
+    // The message wasn't sent: give it back, keeping anything typed or
+    // attached since (the composer stays editable while busy).
+    const giveBack = () => {
+      setInput((cur) => (cur.trim() ? cur : content));
+      setAttached((prev) => [...outgoing, ...prev].slice(0, MAX_BRUNO_IMAGES));
+      setAttachedPdfs((prev) => [...outgoingPdfs, ...prev]);
+    };
     try {
       if (!chatId) {
-        const res = await apiFetch('/api/bruno/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-        if (!res.ok) {
-          // Couldn't start the chat: give the message back instead of losing it.
-          setInput(content);
-          setAttached(outgoing);
-          setAttachedPdfs(outgoingPdfs);
+        let res: Response;
+        try {
+          res = await apiFetch('/api/bruno/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}), signal: startAc.signal });
+        } catch (e) {
+          // Stopped, or the connection dropped: the message comes back either way.
+          giveBack();
+          if (startAc.signal.aborted) return;
+          throw e;
+        }
+        if (!res.ok || startAc.signal.aborted) {
+          // Couldn't start the chat (or Stop was pressed): give the message back.
+          giveBack();
           return;
         }
         const created = await res.json();
@@ -198,6 +214,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
         createdHere.current = chatId;
         setActiveId(chatId);
       }
+      if (startAc.signal.aborted) { giveBack(); return; }
       const next: BuildHelperMessage[] = [...messages, {
         role: 'user',
         text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?'),
@@ -211,6 +228,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       stream.finish();
       setMessages((prev) => [...prev, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);
     } finally {
+      if (abortRef.current === startAc) abortRef.current = null;
       setBusy(false);
       busyRef.current = false;
     }
