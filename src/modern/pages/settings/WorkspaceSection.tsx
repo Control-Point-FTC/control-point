@@ -317,6 +317,7 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
     const params = new URLSearchParams(window.location.search);
     if (!params.has('cal_linked') && !params.has('cal_error')) return;
     if (params.get('cal_linked') === '1') { notify('Google Calendar linked!', 'success'); void load(); }
+    else if (params.get('cal_error') === 'unavailable') notify('Google Calendar linking is unavailable right now.', 'error');
     else notify('Could not link Google Calendar — try again.', 'error');
     params.delete('cal_linked'); params.delete('cal_error');
     const q = params.toString();

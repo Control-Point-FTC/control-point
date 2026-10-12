@@ -190,6 +190,7 @@ import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type Shortlist
 import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQUIRED, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
+import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -2288,6 +2289,16 @@ async function startServer() {
     const mixed = (await dbAll("SELECT id, team_id, email FROM members WHERE email != LOWER(TRIM(email))")) as any[];
     if (mixed.length) console.warn(`[email-case] ${mixed.length} member row(s) still have mixed-case emails (case-only duplicates in one workspace) — review by hand: ids ${mixed.map((m) => m.id).join(", ")}`);
   } catch (e) { console.error("email-case check failed:", e); }
+  // Google Calendar refresh tokens: encrypt any stored before encryption existed.
+  const calendarKey = calendarKeyFromEnv();
+  if (!calendarKey) {
+    console.error("[calendar] CALENDAR_TOKEN_KEY is missing or shorter than 32 characters: Google Calendar linking and sync are paused until it is set.");
+  } else {
+    try {
+      const n = await encryptStoredCalendarTokens({ all: dbAll, run: dbRun }, calendarKey);
+      if (n) console.log(`[calendar] encrypted ${n} stored refresh token(s)`);
+    } catch (e) { console.error("[calendar] token encryption failed:", e); }
+  }
   const app = express();
   // nginx on the same host proxies every request: trust its X-Forwarded-For
   // so req.ip is the real client (rate limits key on it).
@@ -3953,15 +3964,18 @@ async function startServer() {
 
   const getGoogleAccessToken = async (memberId: number): Promise<string | null> => {
     try {
+      if (!calendarKey) return null;
       const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
-      if (!link?.refresh_token) return null;
+      // Unreadable (wrong key): skip, but keep the link so a fixed key restores it.
+      const refreshToken = readCalendarToken(link?.refresh_token, calendarKey);
+      if (!refreshToken) return null;
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           client_id: GOOGLE_CLIENT_ID,
           client_secret: GOOGLE_CLIENT_SECRET,
-          refresh_token: link.refresh_token,
+          refresh_token: refreshToken,
           grant_type: "refresh_token",
         }),
       });
@@ -3993,6 +4007,7 @@ async function startServer() {
       if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
         return res.status(400).json({ error: "Google sign-in is not configured" });
       }
+      if (!calendarKey) return res.redirect("/settings?cal_error=unavailable");
       const state = randomHex(16);
       startOAuthState(req, res, state, {
         expiry: Date.now() + 10 * 60 * 1000,
@@ -4025,6 +4040,7 @@ async function startServer() {
       if (!code || !pending || pending.expiry < Date.now() || pending.intent !== 'calendar_link') {
         return res.redirect("/settings?cal_error=invalid_state");
       }
+      if (!calendarKey) return res.redirect("/settings?cal_error=unavailable");
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -4045,7 +4061,7 @@ async function startServer() {
       const profile = profileRes.ok ? ((await profileRes.json()) as any) : {};
       await dbRun(
         "INSERT OR REPLACE INTO google_calendar_links (member_id, google_email, refresh_token, linked_at) VALUES (?, ?, ?, datetime('now'))",
-        pending.memberId, profile.email || '', refresh_token
+        pending.memberId, profile.email || '', encryptCalendarToken(refresh_token, calendarKey)
       );
       res.redirect("/settings?cal_linked=1");
     } catch (error) {
@@ -4063,7 +4079,7 @@ async function startServer() {
         "SELECT google_email, linked_at FROM google_calendar_links WHERE member_id = ?", auth.memberId
       )) as any;
       const syncEnabled = await getCalendarSyncEnabled();
-      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled });
+      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled, available: !!calendarKey });
     } catch (error) {
       console.error("Error fetching calendar link:", error);
       res.status(500).json({ error: "Internal server error" });
