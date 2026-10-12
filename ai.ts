@@ -796,7 +796,10 @@ export async function buildHelperChat(
   onUsage?: (usage: AiUsage) => void,
   signal?: AbortSignal,
   grounded: boolean = true,
-  onSources?: (sources: WebSource[]) => void
+  onSources?: (sources: WebSource[]) => void,
+  /** On a grounded 429, retry once without search (true), or throw it
+   *  marked `groundingQuota` so the caller can search elsewhere (false). */
+  retryUngroundedOnQuota: boolean = true
 ): Promise<string> {
   // Keep cost/latency bounded: last 12 turns, each capped, plus a total
   // history budget (~16k chars ≈ 4k tokens) so long pastes can't blow up
@@ -849,9 +852,15 @@ export async function buildHelperChat(
       const text = await res.text().catch(() => "");
       const err = new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
       // A 429 on a grounded call can mean the search-grounding allowance —
-      // not the model quota — is exhausted. Retry once without grounding so
-      // the call degrades gracefully instead of hard-failing.
+      // not the model quota — is exhausted. Either hand the search to the
+      // caller's fallback provider, or retry once without grounding so the
+      // call degrades gracefully instead of hard-failing.
       if (shouldRetryWithoutGrounding(res.status, withGrounding)) {
+        if (!retryUngroundedOnQuota) {
+          console.warn("[AI] 429 on grounded request; handing the search to the fallback provider");
+          (err as any).groundingQuota = true;
+          throw err;
+        }
         console.warn("[AI] 429 on grounded request; retrying once without google_search");
         return doFetch(false);
       }
