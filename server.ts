@@ -190,6 +190,7 @@ import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type Shortlist
 import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQUIRED, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
+import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -4303,6 +4304,10 @@ async function startServer() {
     }));
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
+      // Files on the messages and tasks deleted below go with them (after the batch commits).
+      const goneTasks = (await dbAll(`SELECT team_id, completion_images, completion_history FROM tasks WHERE assigned_to IN (${ph})`, ...ids)) as any[];
+      const goneMessages = (await dbAll(`SELECT team_id, file_path FROM messages WHERE sender_id IN (${ph})`, ...ids)) as any[];
+      const goneImageIds = ((await dbAll(`SELECT mi.id FROM message_images mi JOIN messages m ON m.id = mi.message_id WHERE m.sender_id IN (${ph})`, ...ids)) as any[]).map((r) => Number(r.id));
       // Independent deletes → one batch (atomic on Turso, single round trip)
       // Include every table with a FK to members(id) — team deletion should have
       // cleaned team-scoped rows, but belt-and-suspenders here prevents 500s.
@@ -4312,6 +4317,7 @@ async function startServer() {
         { sql: `DELETE FROM notifications WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM member_roles WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM attendance WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE sender_id IN (${ph}))`, args: ids },
         { sql: `DELETE FROM messages WHERE sender_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM tasks WHERE assigned_to IN (${ph})`, args: ids },
         { sql: `DELETE FROM feedback WHERE user_id IN (${ph})`, args: ids },
@@ -4324,6 +4330,12 @@ async function startServer() {
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
+      for (const id of goneImageIds) await deleteMessageImageRow(id).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
+      for (const t of goneTasks) await deleteUnreferencedFiles(taskProofFileIds(t), "proof", t.team_id);
+      for (const m of goneMessages) {
+        const fileId = fileIdFromUrl(m.file_path);
+        if (fileId != null) await deleteUnreferencedFiles([fileId], "chat", m.team_id);
+      }
     } else {
       await dbBatch([
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
@@ -4813,7 +4825,11 @@ async function startServer() {
    */
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
-    const notebookFileIds=((await dbAll("SELECT id FROM stored_files WHERE team_id = ? AND kind = 'notebook'",teamId)) as any[]).map(row=>Number(row.id));
+    // Every file uploaded in the workspace (notebook, chat, task proof, CAD,
+    // emoji, feedback) and the legacy chat images go with it. Avatars belong
+    // to the person (no team) and stay.
+    const teamFileIds = ((await dbAll("SELECT id FROM stored_files WHERE team_id = ?", teamId)) as any[]).map((row) => Number(row.id));
+    const messageImageIds = ((await dbAll("SELECT mi.id FROM message_images mi JOIN messages m ON m.id = mi.message_id WHERE m.team_id = ?", teamId)) as any[]).map((row) => Number(row.id));
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
@@ -4830,6 +4846,7 @@ async function startServer() {
       { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM documentation WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
@@ -4847,7 +4864,7 @@ async function startServer() {
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM stored_files WHERE team_id = ? AND kind = 'notebook'", args: [teamId] },
+      { sql: "DELETE FROM stored_files WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
@@ -4902,7 +4919,8 @@ async function startServer() {
     ];
     await dbBatch(stmts);
     // Remove the private object copies only after the database deletion commits.
-    for(const fileId of notebookFileIds)await deleteStoredRow(fileId);
+    for (const fileId of teamFileIds) await deleteStoredRow(fileId);
+    for (const imageId of messageImageIds) await deleteMessageImageRow(imageId).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
     for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
   }
 
@@ -7740,6 +7758,30 @@ async function startServer() {
       try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
     }
   }
+  /** Delete a legacy chat image row and its R2 copy (best effort for R2). */
+  async function deleteMessageImageRow(id: number): Promise<void> {
+    await dbRun("DELETE FROM message_images WHERE id = ?", id);
+    if (r2) {
+      try { await r2.del(fileKey("message_images", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+    }
+  }
+  /** After a task or message is deleted: remove the files it pointed at.
+   *  Only files of that kind from that workspace are touched, and only when
+   *  no remaining task (proof) or message (chat) still uses them. */
+  async function deleteUnreferencedFiles(ids: number[], kind: "proof" | "chat", teamId: number | null): Promise<void> {
+    for (const id of new Set(ids)) {
+      try {
+        const row = (await dbGet("SELECT kind, team_id FROM stored_files WHERE id = ?", id)) as any;
+        if (!row || row.kind !== kind || (row.team_id ?? null) !== (teamId ?? null)) continue;
+        const stillUsed = kind === "proof"
+          ? await dbGet("SELECT 1 AS used FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ? LIMIT 1", fileUrlJsonPattern(id), fileUrlJsonPattern(id))
+          : await dbGet("SELECT 1 AS used FROM messages WHERE file_path = ? LIMIT 1", `/api/files/${id}`);
+        if (!stillUsed) await deleteStoredRow(id);
+      } catch (e) {
+        console.error(`Deleting ${kind} file #${id} failed:`, (e as any)?.message || e);
+      }
+    }
+  }
   /** The bytes of a stored file: R2 first, the database copy as fallback. */
   async function readStoredBytes(table: "stored_files" | "message_images", id: number, r2Key: string | null, blobLen: number): Promise<Buffer | null> {
     if (r2Key && r2) {
@@ -8084,7 +8126,7 @@ async function startServer() {
     const silent = req.query.silent === 'true'; // Check for silent deletion
     
     try {
-      const existing: any = (await dbGet("SELECT team_id, sender_id FROM messages WHERE id = ?", messageId));
+      const existing: any = (await dbGet("SELECT team_id, sender_id, file_path FROM messages WHERE id = ?", messageId));
       if (!existing || existing.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Message not found" });
       }
@@ -8095,7 +8137,12 @@ async function startServer() {
         return res.status(403).json({ error: "You can only delete your own messages" });
       }
       // Hard delete - permanently remove the message from database
+      const imageIds = ((await dbAll("SELECT id FROM message_images WHERE message_id = ?", messageId)) as any[]).map((r) => Number(r.id));
       (await dbRun("DELETE FROM messages WHERE id = ?", messageId));
+      // Its attachment and images go with it.
+      for (const id of imageIds) await deleteMessageImageRow(id).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
+      const fileId = fileIdFromUrl(existing.file_path);
+      if (fileId != null) await deleteUnreferencedFiles([fileId], "chat", existing.team_id);
       
       if (!silent) { // Only broadcast if not silent deletion
         broadcastToTeam(auth.teamId, {
@@ -9650,13 +9697,15 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
-      const task = (await dbGet("SELECT team_id, is_board FROM tasks WHERE id = ?", req.params.id)) as any;
+      const task = (await dbGet("SELECT team_id, is_board, completion_images, completion_history FROM tasks WHERE id = ?", req.params.id)) as any;
       if (!task || task.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Task not found" });
       }
       if (await boardTaskHidden(task, auth.memberId, auth.teamId)) return res.status(404).json({ error: "Task not found" });
       try { await dbRun("DELETE FROM task_assignees WHERE task_id = ?", req.params.id); } catch { /* table may not exist yet */ }
       (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
+      // Its completion photos go with it.
+      await deleteUnreferencedFiles(taskProofFileIds(task), "proof", task.team_id);
       void broadcastTaskEvent(auth.teamId, { type: "task_deleted", id: Number(req.params.id) });
       res.json({ success: true });
     } catch (error) {
