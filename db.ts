@@ -47,8 +47,9 @@ export async function dbBatch(stmts: { sql: string; args?: Args }[]): Promise<vo
   await dbClient.batch(stmts.map((s) => ({ sql: s.sql, args: norm(s.args ?? []) })));
 }
 
-/** One write transaction (lock taken up front); each statement's insert id and change count. */
-export async function dbBatchResults(stmts: { sql: string; args?: Args }[]): Promise<{ lastInsertRowid: number; changes: number }[]> {
+/** One write transaction (lock taken up front); each statement's insert id,
+ *  change count and rows (for RETURNING). */
+export async function dbBatchResults(stmts: { sql: string; args?: Args }[]): Promise<{ lastInsertRowid: number; changes: number; rows: any[] }[]> {
   const rs = await dbClient.batch(stmts.map((s) => ({ sql: s.sql, args: norm(s.args ?? []) })), "write");
-  return rs.map((r) => ({ lastInsertRowid: Number(r.lastInsertRowid), changes: r.rowsAffected }));
+  return rs.map((r) => ({ lastInsertRowid: Number(r.lastInsertRowid), changes: r.rowsAffected, rows: r.rows as any[] }));
 }

@@ -190,6 +190,7 @@ import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type Shortlist
 import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQUIRED, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
+import { fileIdFromUrl, fileUrlJsonPattern, taskProofFileIds } from "./server/fileCleanup.js";
 import { calendarKeyFromEnv, encryptCalendarToken, encryptStoredCalendarTokens, isEncryptedCalendarToken, readCalendarToken } from "./server/calendarTokens.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
@@ -2963,11 +2964,21 @@ async function startServer() {
           }
           const isForwarded = message.is_forwarded ? 1 : 0;
           const forwardedFrom = typeof message.forwarded_from === 'string' ? message.forwarded_from.slice(0, 160) : '';
-          // Forwarded attachments reuse the original file URL
-          const fwdFilePath = isForwarded && typeof message.file_path === 'string' ? message.file_path.slice(0, 500) : null;
+          // Forwarded attachments reuse the original file, stored as its
+          // canonical URL so the file's reference checks see this message.
+          const fwdId = isForwarded ? fileIdFromUrl(message.file_path) : null;
+          const fwdFilePath = fwdId != null ? `/api/files/${fwdId}` : null;
           const fwdFileName = isForwarded && typeof message.file_name === 'string' ? message.file_name.slice(0, 200) : null;
           const fwdFileSize = isForwarded && Number.isFinite(Number(message.file_size)) ? Number(message.file_size) : null;
           const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id, reply_to_id, is_forwarded, forwarded_from, file_path, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId, replyToId, isForwarded, forwardedFrom, fwdFilePath, fwdFileName, fwdFileSize);
+          // A forwarded file must still exist in this workspace. Checked after
+          // the insert: a delete that ran first is seen here, and one that
+          // runs later sees this message using the file and keeps it.
+          let fwdKept = fwdFilePath;
+          if (fwdId != null && !(await dbGet("SELECT 1 AS ok FROM stored_files WHERE id = ? AND team_id = ?", fwdId, teamId))) {
+            await dbRun("UPDATE messages SET file_path = NULL, file_name = NULL, file_size = NULL WHERE id = ?", Number(info.lastInsertRowid));
+            fwdKept = null;
+          }
           // Inappropriate-content flag (review-only, never blocks the send).
           flagChatMessage(message.sender_id, teamId, Number(info.lastInsertRowid), String(message.content || ""));
 
@@ -3039,9 +3050,9 @@ async function startServer() {
             reply_deleted: replyPreview?.reply_deleted || null,
             is_forwarded: isForwarded,
             forwarded_from: forwardedFrom,
-            file_path: fwdFilePath,
-            file_name: fwdFileName,
-            file_size: fwdFileSize,
+            file_path: fwdKept,
+            file_name: fwdKept ? fwdFileName : null,
+            file_size: fwdKept ? fwdFileSize : null,
             timestamp
           });
         }
@@ -4405,17 +4416,23 @@ async function startServer() {
     }));
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
+      // Files on the messages and tasks deleted below go with them (after the
+      // batch commits); they're read from the deleted rows (RETURNING).
+      const IMAGES = `DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE sender_id IN (${ph})) RETURNING id`;
+      const MESSAGES = `DELETE FROM messages WHERE sender_id IN (${ph}) RETURNING team_id, file_path`;
+      const TASKS = `DELETE FROM tasks WHERE assigned_to IN (${ph}) RETURNING team_id, completion_images, completion_history`;
       // Independent deletes → one batch (atomic on Turso, single round trip)
       // Include every table with a FK to members(id) — team deletion should have
       // cleaned team-scoped rows, but belt-and-suspenders here prevents 500s.
-      await dbBatch([
+      const stmts = [
         { sql: `DELETE FROM sessions WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM stream_sessions WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM notifications WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM member_roles WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM attendance WHERE member_id IN (${ph})`, args: ids },
-        { sql: `DELETE FROM messages WHERE sender_id IN (${ph})`, args: ids },
-        { sql: `DELETE FROM tasks WHERE assigned_to IN (${ph})`, args: ids },
+        { sql: IMAGES, args: ids },
+        { sql: MESSAGES, args: ids },
+        { sql: TASKS, args: ids },
         { sql: `DELETE FROM feedback WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM call_participants WHERE member_id IN (${ph})`, args: ids },
         // Bruno's personal facts and morning-summary records go with the account.
@@ -4425,7 +4442,15 @@ async function startServer() {
         { sql: `DELETE FROM sticky_notes WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
-      ]);
+      ];
+      const results = await dbBatchResults(stmts);
+      const rowsOf = (sql: string) => results[stmts.findIndex((s) => s.sql === sql)]?.rows || [];
+      for (const r of rowsOf(IMAGES)) await deleteMessageImageRow(Number(r.id)).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
+      for (const t of rowsOf(TASKS)) await deleteUnreferencedFiles(taskProofFileIds(t), "proof", t.team_id);
+      for (const m of rowsOf(MESSAGES)) {
+        const fileId = fileIdFromUrl(m.file_path);
+        if (fileId != null) await deleteUnreferencedFiles([fileId], "chat", m.team_id);
+      }
     } else {
       await dbBatch([
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
@@ -4915,7 +4940,12 @@ async function startServer() {
    */
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
-    const notebookFileIds=((await dbAll("SELECT id FROM stored_files WHERE team_id = ? AND kind = 'notebook'",teamId)) as any[]).map(row=>Number(row.id));
+    // Every file uploaded in the workspace (notebook, chat, task proof, CAD,
+    // emoji, feedback) and the legacy chat images go with it; the ids come
+    // back from the deletes themselves, so an upload landing meanwhile isn't
+    // missed. Avatars belong to the person (no team) and stay.
+    const FILES_STMT = "DELETE FROM stored_files WHERE team_id = ? RETURNING id";
+    const IMAGES_STMT = "DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE team_id = ?) RETURNING id";
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
@@ -4932,6 +4962,7 @@ async function startServer() {
       { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
+      { sql: IMAGES_STMT, args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM documentation WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
@@ -4949,7 +4980,7 @@ async function startServer() {
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM stored_files WHERE team_id = ? AND kind = 'notebook'", args: [teamId] },
+      { sql: FILES_STMT, args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
@@ -5002,9 +5033,11 @@ async function startServer() {
       { sql: "UPDATE members SET is_active = 0, team_id = NULL WHERE id = ?", args: [keepMemberId ?? -1] },
       { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
     ];
-    await dbBatch(stmts);
+    const results = await dbBatchResults(stmts);
+    const deletedIds = (sql: string) => (results[stmts.findIndex((s) => s.sql === sql)]?.rows || []).map((row: any) => Number(row.id));
     // Remove the private object copies only after the database deletion commits.
-    for(const fileId of notebookFileIds)await deleteStoredRow(fileId);
+    for (const fileId of deletedIds(FILES_STMT)) await deleteStoredRow(fileId);
+    for (const imageId of deletedIds(IMAGES_STMT)) await deleteMessageImageRow(imageId).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
     for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
   }
 
@@ -7824,7 +7857,10 @@ async function startServer() {
       const key = fileKey("stored_files", id);
       try {
         await r2.put(key, opts.buffer, opts.mimeType);
-        await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
+        const marked = await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
+        // The row went while uploading (its workspace was deleted): don't
+        // leave the bytes behind.
+        if (!marked.changes) await r2.del(key).catch(() => undefined);
       } catch (e) {
         console.error("R2 upload failed; keeping the file in the database:", (e as any)?.message || e);
         await dbRun("UPDATE stored_files SET data = ? WHERE id = ?", opts.buffer, id);
@@ -7840,6 +7876,36 @@ async function startServer() {
     // an upload whose row disappeared meanwhile).
     if (r2) {
       try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+    }
+  }
+  /** Delete a legacy chat image row and its R2 copy (best effort for R2). */
+  async function deleteMessageImageRow(id: number): Promise<void> {
+    await dbRun("DELETE FROM message_images WHERE id = ?", id);
+    if (r2) {
+      try { await r2.del(fileKey("message_images", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+    }
+  }
+  /** After a task or message is deleted: remove the files it pointed at.
+   *  Only files of that kind from that workspace are touched, and only when
+   *  no remaining task (proof) or message (chat) still uses them. */
+  async function deleteUnreferencedFiles(ids: number[], kind: "proof" | "chat", teamId: number | null): Promise<void> {
+    for (const id of new Set(ids)) {
+      try {
+        // One statement: the reference check and the delete can't be split by
+        // a task or forwarded message that starts using the file meanwhile.
+        const stillUsed = kind === "proof"
+          ? { sql: "SELECT 1 FROM tasks WHERE completion_images LIKE ? OR completion_history LIKE ?", args: [fileUrlJsonPattern(id), fileUrlJsonPattern(id)] }
+          : { sql: "SELECT 1 FROM messages WHERE file_path = ?", args: [`/api/files/${id}`] };
+        const r = await dbRun(
+          `DELETE FROM stored_files WHERE id = ? AND kind = ? AND team_id IS ? AND NOT EXISTS (${stillUsed.sql})`,
+          id, kind, teamId ?? null, ...stillUsed.args,
+        );
+        if (r.changes && r2) {
+          try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+        }
+      } catch (e) {
+        console.error(`Deleting ${kind} file #${id} failed:`, (e as any)?.message || e);
+      }
     }
   }
   /** The bytes of a stored file: R2 first, the database copy as fallback. */
@@ -8186,7 +8252,7 @@ async function startServer() {
     const silent = req.query.silent === 'true'; // Check for silent deletion
     
     try {
-      const existing: any = (await dbGet("SELECT team_id, sender_id FROM messages WHERE id = ?", messageId));
+      const existing: any = (await dbGet("SELECT team_id, sender_id, file_path FROM messages WHERE id = ?", messageId));
       if (!existing || existing.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Message not found" });
       }
@@ -8197,7 +8263,16 @@ async function startServer() {
         return res.status(403).json({ error: "You can only delete your own messages" });
       }
       // Hard delete - permanently remove the message from database
-      (await dbRun("DELETE FROM messages WHERE id = ?", messageId));
+      // Its attachment and images go with it, read from the deleted rows.
+      const [imgs, msgs] = await dbBatchResults([
+        { sql: "DELETE FROM message_images WHERE message_id = ? RETURNING id", args: [messageId] },
+        { sql: "DELETE FROM messages WHERE id = ? RETURNING team_id, file_path", args: [messageId] },
+      ]);
+      for (const r of imgs.rows) await deleteMessageImageRow(Number(r.id)).catch((e) => console.error("Deleting a chat image failed:", e?.message || e));
+      for (const m of msgs.rows) {
+        const fileId = fileIdFromUrl(m.file_path);
+        if (fileId != null) await deleteUnreferencedFiles([fileId], "chat", m.team_id);
+      }
       
       if (!silent) { // Only broadcast if not silent deletion
         broadcastToTeam(auth.teamId, {
@@ -9758,7 +9833,10 @@ Rules:
       }
       if (await boardTaskHidden(task, auth.memberId, auth.teamId)) return res.status(404).json({ error: "Task not found" });
       try { await dbRun("DELETE FROM task_assignees WHERE task_id = ?", req.params.id); } catch { /* table may not exist yet */ }
-      (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
+      // Its completion photos go with it: read from the deleted row itself, so
+      // a completion saved just before the delete isn't missed.
+      const gone = (await dbAll("DELETE FROM tasks WHERE id = ? RETURNING team_id, completion_images, completion_history", req.params.id)) as any[];
+      for (const t of gone) await deleteUnreferencedFiles(taskProofFileIds(t), "proof", t.team_id);
       void broadcastTaskEvent(auth.teamId, { type: "task_deleted", id: Number(req.params.id) });
       res.json({ success: true });
     } catch (error) {
