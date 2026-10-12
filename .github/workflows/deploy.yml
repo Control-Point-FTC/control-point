@@ -66,10 +66,10 @@ jobs:
         run: |
           mkdir -p stage/backend
           cp -r dist stage/dist
-          # Everything tracked except uploads, tests and repo plumbing. src/ ships too:
+          # Everything tracked except uploads, tests, docs and repo plumbing. src/ ships too:
           # the server imports shared modules from src/types, src/utils and src/notebook,
-          # and tsx only loads what is imported.
-          git archive HEAD -- . ':(exclude)uploads' ':(exclude).github' ':(exclude).claude' \
+          # and tsx only loads what is imported. docs/ is for people, not the server.
+          git archive HEAD -- . ':(exclude)uploads' ':(exclude).github' ':(exclude).claude' ':(exclude)docs' \
             ':(exclude,glob)**/__tests__/**' | tar -x -C stage/backend
           ( cd stage/backend && find . -type f | sed 's|^\./||' | sort ) > stage/manifest
           mv stage/manifest stage/backend/.deploy-manifest
@@ -95,9 +95,11 @@ jobs:
         if: steps.gate.outputs.ok == 'true'
         run: |
           ( cd stage/backend && find . -type f ! -path './public/*' | sed 's|^\./||' | sort ) > stage/files.txt
-          $SSH "sudo sh -c 'cd $APP && xargs md5sum 2>/dev/null; true'" < stage/files.txt > stage/vm.md5
-          ( cd stage/backend && xargs md5sum < ../files.txt ) > stage/new.md5
-          comm -13 <(sort stage/vm.md5) <(sort stage/new.md5) | awk '{print $2}' > stage/changed.txt
+          # File names may contain spaces: pass them NUL-separated, and keep
+          # everything after md5sum's separator (two spaces, or space-star) as the name.
+          tr '\n' '\0' < stage/files.txt | $SSH "sudo sh -c 'cd $APP && xargs -0 md5sum 2>/dev/null; true'" > stage/vm.md5
+          ( cd stage/backend && tr '\n' '\0' < ../files.txt | xargs -0 md5sum ) > stage/new.md5
+          comm -13 <(sort stage/vm.md5) <(sort stage/new.md5) | sed 's/^[0-9a-f]* [ *]//' > stage/changed.txt
           echo "Backend files that will change:"; sed 's/^/  /' stage/changed.txt
           if grep -q '^migrations/' stage/changed.txt; then
             echo "::notice::New or changed migrations will run on the live database at startup."
