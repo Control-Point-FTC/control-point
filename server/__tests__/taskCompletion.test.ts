@@ -79,7 +79,9 @@ beforeAll(async () => {
   proc = spawn("npx", ["tsx", "server.ts"], {
     shell: process.platform === "win32",
     cwd: REPO,
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
+    // Blank the AI key: verify-proof tests must exercise the deterministic
+    // paths (including AI-unavailable) without real API calls or cost.
+    env: { ...process.env, GEMINI_API_KEY: "", DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
     stdio: "ignore",
   });
   await waitForServer(base);
@@ -243,5 +245,169 @@ describe("task completion proof", () => {
     const images = JSON.parse(body?.task?.completion_images || "[]");
     expect(images.length).toBeGreaterThan(0);
     expect(String(images[0])).toMatch(/^\/api\/files\//);
+  });
+});
+
+describe("proof verification", () => {
+  const mkVerifyTask = async (title: string, proofRequirement: string | null, assignedTo?: number) => {
+    const db = (globalThis as any).__db;
+    const teamRow: any = await db.execute({ sql: "SELECT team_id FROM members WHERE id = ?", args: [mids().assigneeId] });
+    const r = await db.execute({
+      sql: "INSERT INTO tasks (team_id, assigned_to, title, status, proof_requirement) VALUES (?, ?, ?, 'in-progress', ?)",
+      args: [teamRow.rows[0].team_id, assignedTo ?? mids().assigneeId, title, proofRequirement],
+    });
+    return Number(r.lastInsertRowid);
+  };
+  const completeJson = (taskId: number, sess: string, body: any) =>
+    api(`/api/tasks/${taskId}/complete`, sess, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("verify-proof passes without AI when proof is 'none'", async () => {
+    const taskId = await mkVerifyTask("No proof task", "none");
+    const { status, body } = await api(`/api/tasks/${taskId}/verify-proof`, SESS.assignee, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: "", link: "", imageCount: 0 }),
+    });
+    expect(status).toBe(200);
+    expect(body?.verdict).toBe("pass");
+    expect(body?.required).toBe("none");
+  });
+
+  it("verify-proof signals AI-unavailable (client fails open to review)", async () => {
+    const taskId = await mkVerifyTask("AI check task", "auto");
+    const { status, body } = await api(`/api/tasks/${taskId}/verify-proof`, SESS.assignee, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: "Did the thing.", link: "", imageCount: 0 }),
+    });
+    expect(status).toBe(503);
+    expect(body?.aiUnavailable).toBe(true);
+  });
+
+  it("verify-proof rejects outsiders", async () => {
+    const taskId = await mkVerifyTask("Guarded verify task", "auto");
+    const { status } = await api(`/api/tasks/${taskId}/verify-proof`, SESS.outsider, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: "x", link: "", imageCount: 0 }),
+    });
+    expect(status).toBe(403);
+  });
+
+  it("complete stores the link and auto-approves an AI-passed note", async () => {
+    const taskId = await mkVerifyTask("Note proof task", "auto");
+    const { status, body } = await completeJson(taskId, SESS.assignee, {
+      notes: "Mounted both hooks and tested a full climb.",
+      link: "",
+      verified: "pass",
+      required: "note",
+      aiNote: "Specific build detail.",
+    });
+    expect(status).toBe(200);
+    expect(body?.task?.status).toBe("done");
+    expect(body?.task?.completion_review).toBe("approved");
+    expect(body?.task?.completion_ai_note).toBe("Specific build detail.");
+  });
+
+  it("complete stores a link and routes code tasks to review even on AI pass", async () => {
+    const taskId = await mkVerifyTask("Auto path code", "link");
+    const { status, body } = await completeJson(taskId, SESS.assignee, {
+      notes: "Implemented pure pursuit; tuned lookahead.",
+      link: "https://github.com/example/repo/pull/42",
+      verified: "pass",
+      required: "link",
+      aiNote: "Link present with detail.",
+    });
+    expect(status).toBe(200);
+    expect(body?.task?.completion_link).toBe("https://github.com/example/repo/pull/42");
+    expect(body?.task?.completion_review).toBe("pending");
+  });
+
+  it("complete without a verify result defaults to pending review", async () => {
+    const taskId = await mkVerifyTask("Unverified task", "auto");
+    const { status, body } = await completeJson(taskId, SESS.assignee, { notes: "Did stuff." });
+    expect(status).toBe(200);
+    expect(body?.task?.completion_review).toBe("pending");
+  });
+
+  it("complete enforces an explicit photo requirement", async () => {
+    const taskId = await mkVerifyTask("Photo proof task", "photo");
+    const { status, body } = await completeJson(taskId, SESS.assignee, { notes: "Built it, trust me." });
+    expect(status).toBe(400);
+    expect(String(body?.error || "")).toMatch(/photo/i);
+  });
+
+  it("complete enforces an explicit link requirement (link or detailed note)", async () => {
+    const taskId = await mkVerifyTask("Link proof task", "link");
+    const thin = await completeJson(taskId, SESS.assignee, { notes: "n" });
+    expect(thin.status).toBe(400);
+    const detailed = await completeJson(taskId, SESS.assignee, {
+      notes: "Wrote the autonomous routine in Main.java, tested on the practice field twice.",
+    });
+    expect(detailed.status).toBe(200);
+    expect(detailed.body?.task?.completion_review).toBe("pending");
+  });
+
+  it("review approve keeps the task done; reject reopens it", async () => {
+    const db = (globalThis as any).__db;
+    const mkDonePending = async (title: string) => {
+      const teamRow: any = await db.execute({ sql: "SELECT team_id FROM members WHERE id = ?", args: [mids().assigneeId] });
+      const r = await db.execute({
+        sql: "INSERT INTO tasks (team_id, assigned_to, title, status, completion_review, completed_by) VALUES (?, ?, ?, 'done', 'pending', ?)",
+        args: [teamRow.rows[0].team_id, mids().assigneeId, title, mids().assigneeId],
+      });
+      return Number(r.lastInsertRowid);
+    };
+    const review = (taskId: number, sess: string, body: any) =>
+      api(`/api/tasks/${taskId}/review`, sess, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const approveId = await mkDonePending("Review me approve");
+    const ar = await review(approveId, SESS.admin, { decision: "approve" });
+    expect(ar.status).toBe(200);
+    expect(ar.body?.task?.status).toBe("done");
+    expect(ar.body?.task?.completion_review).toBe("approved");
+
+    const rejectId = await mkDonePending("Review me reject");
+    const rr = await review(rejectId, SESS.admin, { decision: "reject", note: "Add a photo." });
+    expect(rr.status).toBe(200);
+    expect(rr.body?.task?.status).toBe("in-progress");
+    expect(rr.body?.task?.completion_review).toBe("rejected");
+
+    const denied = await review(approveId, SESS.assignee, { decision: "approve" });
+    expect(denied.status).toBe(403);
+  });
+
+  it("create/update accept proof_requirement, invalid values fall back to auto", async () => {
+    const created = await api("/api/tasks", SESS.admin, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Proof setting task", proof_requirement: "photo" }),
+    });
+    expect(created.status).toBe(200);
+    const bad = await api("/api/tasks", SESS.admin, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Bad proof setting task", proof_requirement: "banana" }),
+    });
+    expect(bad.status).toBe(200);
+    const db = (globalThis as any).__db;
+    const row: any = await db.execute({ sql: "SELECT proof_requirement FROM tasks WHERE id = ?", args: [bad.body?.id] });
+    expect(row.rows[0].proof_requirement).toBe("auto");
+    const patched = await api(`/api/tasks/${created.body?.id}`, SESS.admin, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proof_requirement: "link" }),
+    });
+    expect(patched.status).toBe(200);
+    const row2: any = await db.execute({ sql: "SELECT proof_requirement FROM tasks WHERE id = ?", args: [created.body?.id] });
+    expect(row2.rows[0].proof_requirement).toBe("link");
   });
 });
