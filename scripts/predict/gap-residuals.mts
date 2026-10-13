@@ -19,7 +19,7 @@ const season = Number(arg("season") ?? 2024);
 const tunedFile = arg("tuned");
 const rating = tunedFile
   ? (({ a: _a, b: _b, preExtra: _p, ...r }) => r)(JSON.parse(readFileSync(tunedFile, "utf8")).best)
-  : JSON.parse(readFileSync("server/predict/model.json", "utf8")).rating;
+  : JSON.parse(readFileSync("node_modules/@control-scout/predict-engine/dist/model.json", "utf8")).rating;
 const book = new RatingBook(rating);
 const WEEK = 7 * 864e5;
 const buckets = new Map<string, { n: number; sum: number; abs: number; sq: number }>();
