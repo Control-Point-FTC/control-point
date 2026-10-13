@@ -981,6 +981,20 @@ if (!taskColumns.some((c: any) => c.name === 'completed_by')) {
 if (!taskColumns.some((c: any) => c.name === 'completion_images')) {
   (await dbExec("ALTER TABLE tasks ADD COLUMN completion_images TEXT"));
 }
+// Proof-of-work verification: what proof a task requires ('auto' lets Bruno AI
+// infer from the title), plus the review outcome of the completion.
+if (!taskColumns.some((c: any) => c.name === 'proof_requirement')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN proof_requirement TEXT DEFAULT 'auto'"));
+}
+if (!taskColumns.some((c: any) => c.name === 'completion_review')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completion_review TEXT"));
+}
+if (!taskColumns.some((c: any) => c.name === 'completion_ai_note')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completion_ai_note TEXT"));
+}
+if (!taskColumns.some((c: any) => c.name === 'completion_link')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completion_link TEXT"));
+}
 // Notifications: optional JSON metadata (e.g. mention → channel_id/message_id)
 // so clients can deep-link and clear per-channel.
 const notificationColumns = (await dbAll("PRAGMA table_info(notifications)"));
@@ -8625,6 +8639,10 @@ Rules:
       if (!auth) return;
       const { title, description, status, assigned_to, assignee_ids, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
+      // Proof requirement: 'auto' (Bruno AI infers), 'photo', 'link', 'note', or 'none'.
+      const PROOF_REQUIREMENTS = ['auto', 'photo', 'link', 'note', 'none'];
+      const proofRequirement = PROOF_REQUIREMENTS.includes(req.body?.proof_requirement)
+        ? req.body.proof_requirement : 'auto';
       // Optional time of day it's due (HH:MM); only meaningful with a date.
       const dueTime = due_date && TASK_TIME_RE.test(String(req.body?.due_time || "")) ? String(req.body.due_time) : null;
       if (req.body?.due_time && !dueTime && due_date) return res.status(400).json({ error: "Use a time like 15:30" });
@@ -8646,7 +8664,7 @@ Rules:
       }
       const legacyAssignedTo = validIds[0] || null;
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, dueTime, is_board || 0, createdAt));
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, proof_requirement, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, dueTime, is_board || 0, proofRequirement, createdAt));
 
       const taskId = Number(info.lastInsertRowid);
       await setTaskAssignees(taskId, validIds, auth.teamId);
@@ -8800,10 +8818,11 @@ Rules:
       if (req.body?.status === 'done' && task.status !== 'done') {
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
-      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined)) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, proof_requirement } = req.body;
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || proof_requirement !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
+      const PROOF_REQUIREMENTS = ['auto', 'photo', 'link', 'note', 'none'];
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
       // Status-only moves keep the old path; field edits update the rest.
@@ -8825,6 +8844,9 @@ Rules:
         sets.push('due_time = ?'); vals.push(resultingDate ? wanted : null);
       }
       if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
+      if (proof_requirement !== undefined && PROOF_REQUIREMENTS.includes(proof_requirement)) {
+        sets.push('proof_requirement = ?'); vals.push(proof_requirement);
+      }
       if (assigned_to !== undefined || assignee_ids !== undefined) {
         let newIds: number[] = [];
         if (Array.isArray(assignee_ids)) {
