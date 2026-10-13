@@ -8924,6 +8924,7 @@ Rules:
         return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
       }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
+      const link = String(req.body?.link || "").trim().slice(0, 500) || null;
       // Proof images are persisted in the database so they survive restarts.
       const images: string[] = [];
       for (const f of (req.files || []) as any[]) {
@@ -8934,18 +8935,37 @@ Rules:
         });
         images.push(fileUrl(fid));
       }
-      // Proof is required: a description, screenshots, or both.
-      if (!notes && images.length === 0) {
-        return res.status(400).json({ error: "Add a description or at least one screenshot as proof of completion." });
+      const PROOF_REQ = ['auto', 'photo', 'link', 'note', 'none'];
+      const proofSetting = PROOF_REQ.includes(task.proof_requirement) ? task.proof_requirement : 'auto';
+      // Proof is required: a description, link, screenshots, or a combination.
+      if (proofSetting !== 'none' && !notes && images.length === 0 && !link) {
+        return res.status(400).json({ error: "Add a description, link, or at least one screenshot as proof of completion." });
+      }
+      // Deterministic guards for explicit requirements (no AI needed).
+      if (proofSetting === 'photo' && images.length === 0) {
+        return res.status(400).json({ error: "This task requires a photo — attach at least one." });
+      }
+      if (proofSetting === 'link' && !link && notes.length < 20) {
+        return res.status(400).json({ error: "This task requires a link to the work, or a detailed note about where it was done." });
       }
       const prevImages = (() => { try { return JSON.parse(task.completion_images || "[]"); } catch { return []; } })();
       const allImages = [...prevImages, ...images].slice(0, 10);
       const now = new Date().toISOString();
+      // Review routing: the client's verify-proof result arrives as verified /
+      // required / aiNote. Code tasks ('link') always need a human sign-off;
+      // anything the AI didn't clearly pass goes to the review queue too.
+      const verifiedPass = req.body?.verified === 'pass';
+      const aiRequired = ['photo', 'link', 'note'].includes(req.body?.required) ? req.body.required : null;
+      const aiNote = String(req.body?.aiNote || "").slice(0, 500) || null;
+      let review: string;
+      if (proofSetting === 'none') review = 'approved';
+      else if (verifiedPass && aiRequired !== 'link') review = 'approved';
+      else review = 'pending';
       // Unassigned task: the completer claims it.
       const assignee = task.assigned_to || auth.memberId;
       await dbRun(
-        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ? WHERE id = ?",
-        now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, req.params.id
+        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, completion_link = ?, completion_review = ?, completion_ai_note = ?, assigned_to = ? WHERE id = ?",
+        now, auth.memberId, notes || null, JSON.stringify(allImages), link, review, aiNote, assignee, req.params.id
       );
       if (task.assigned_to && task.assigned_to !== auth.memberId) {
         const completer = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
@@ -8959,6 +8979,112 @@ Rules:
       res.status(500).json({ error: "Internal server error" });
     }
     });
+  });
+
+  // Proof-of-work verification: Bruno AI checks a completion submission before
+  // the task is marked done. Body: { notes, link, imageCount, followups }.
+  // Returns { required, verdict, message } where verdict is
+  // 'pass' | 'followup' | 'flag'. 503 + aiUnavailable when AI isn't
+  // configured or errors — the client then submits flagged for admin review.
+  const verifyLimiter = new RateLimiter();
+  setInterval(() => verifyLimiter.sweep(), 10 * 60 * 1000).unref();
+  app.post("/api/tasks/:id/verify-proof",
+    limit(verifyLimiter, "verify-proof", [byIp(20, 10 * MIN)]),
+    async (req: any, res: any) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      const canManage = await hasPerm(auth, 'manage_tasks');
+      const taskAssignees = await getTaskAssigneeIds(Number(req.params.id));
+      const isAssignee = taskAssignees.includes(auth.memberId) || task.assigned_to === auth.memberId;
+      if (!canManage && !isAssignee && (taskAssignees.length > 0 || task.assigned_to)) {
+        return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
+      }
+      const PROOF_REQUIREMENTS = ['auto', 'photo', 'link', 'note', 'none'];
+      const proofSetting = PROOF_REQUIREMENTS.includes(task.proof_requirement) ? task.proof_requirement : 'auto';
+      // 'none' skips verification entirely.
+      if (proofSetting === 'none') {
+        return res.json({ required: 'none', verdict: 'pass', message: 'No proof required for this task.' });
+      }
+      if (!isGeminiConfigured()) {
+        return res.status(503).json({ error: "AI verification is not available right now.", aiUnavailable: true });
+      }
+      const notes = String(req.body?.notes || "").trim().slice(0, 2000);
+      const link = String(req.body?.link || "").trim().slice(0, 500);
+      const imageCount = Math.max(0, Math.min(5, Number(req.body?.imageCount) || 0));
+      const followups = Array.isArray(req.body?.followups)
+        ? req.body.followups.slice(0, 4).map((f: any) => `Q: ${String(f?.q || "").slice(0, 200)} A: ${String(f?.a || "").slice(0, 400)}`).join("\n")
+        : "";
+      const system = `You verify task-completion proof for a student FIRST Tech Challenge robotics team. Be strict but fair: students do real work, but a single character, "done", or one vague word is not proof.
+Return ONLY a JSON object, no markdown fences, no commentary: {"required": "photo"|"link"|"note", "verdict": "pass"|"followup"|"flag", "message": "..."}
+- "required": the proof type this task needs. photo = physical build or CAD work (a picture shows it). link = code or digital work (GitHub, Onshape, Colab, docs link). note = a written description is enough.
+- "verdict": "pass" if the submission credibly shows the work; "followup" if it's thin but one specific answer could fix it; "flag" if it's nonsense or clearly not real work.
+- "message": for pass, one line on what convinced you (shown to the manager). For followup, ONE specific question naming exactly what's missing. For flag, why it's going to review.`;
+      const user = `Task: "${task.title}"${task.description ? ` — ${task.description}` : ""}
+Proof setting: ${proofSetting} (${proofSetting === 'auto' ? 'you decide what proof fits this task' : 'the manager explicitly requires this'})
+Submission: notes="${notes || "(empty)"}", link="${link || "(none)"}", photos attached: ${imageCount}${followups ? `\nEarlier in this check:\n${followups}` : ""}`;
+      let raw: string;
+      try {
+        raw = await aiGenerate(system, user, 300);
+      } catch (e: any) {
+        console.error("verify-proof AI error:", e?.message || e);
+        return res.status(503).json({ error: "AI verification is not available right now.", aiUnavailable: true });
+      }
+      let parsed: any = null;
+      try {
+        const m = raw.match(/\{[\s\S]*\}/);
+        parsed = m ? JSON.parse(m[0]) : null;
+      } catch { /* fall through to flag */ }
+      if (!parsed || !['pass', 'followup', 'flag'].includes(parsed.verdict)) {
+        // Unparseable AI output: don't block the student, send to review.
+        return res.json({ required: 'note', verdict: 'flag', message: 'Bruno could not verify this automatically — sent to a manager for review.' });
+      }
+      if (!['photo', 'link', 'note'].includes(parsed.required)) parsed.required = 'note';
+      res.json({ required: parsed.required, verdict: parsed.verdict, message: String(parsed.message || "").slice(0, 500) });
+    } catch (error) {
+      console.error("Error verifying proof:", error);
+      res.status(503).json({ error: "AI verification is not available right now.", aiUnavailable: true });
+    }
+  });
+
+  // Review a completed task: managers approve (stays done) or reject (reopens
+  // it so the work actually gets done). Completions the AI didn't clearly
+  // pass — and all code/link tasks — land here.
+  app.post("/api/tasks/:id/review", async (req: any, res: any) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      const decision = req.body?.decision;
+      if (decision !== 'approve' && decision !== 'reject') {
+        return res.status(400).json({ error: "decision must be 'approve' or 'reject'" });
+      }
+      if (task.status !== 'done') {
+        return res.status(400).json({ error: "Only completed tasks can be reviewed" });
+      }
+      const note = String(req.body?.note || "").trim().slice(0, 500) || null;
+      if (decision === 'approve') {
+        await dbRun("UPDATE tasks SET completion_review = 'approved', completion_ai_note = COALESCE(?, completion_ai_note) WHERE id = ?", note, req.params.id);
+      } else {
+        await dbRun("UPDATE tasks SET status = 'in-progress', completion_review = 'rejected', completion_ai_note = ? WHERE id = ?", note, req.params.id);
+        if (task.completed_by) {
+          createNotification(task.completed_by, `Your completion of "${task.title}" was sent back${note ? `: ${note}` : " — add more proof and resubmit"}.`, 'task', { task_id: Number(req.params.id) });
+        }
+      }
+      const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      res.json({ success: true, task: updated });
+    } catch (error) {
+      console.error("Error reviewing task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   // Budget
