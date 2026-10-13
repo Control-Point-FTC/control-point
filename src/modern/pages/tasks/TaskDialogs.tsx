@@ -1,7 +1,7 @@
 // Tasks dialogs (Modern): Bruno bulk import and the proof-of-completion
 // dialog. Same handlers/props as the Legacy versions.
 import { useEffect, useMemo } from 'react';
-import { CheckCircle2, ImagePlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
+import { Camera, CheckCircle2, ImagePlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
 import {
   Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, Textarea,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -88,10 +88,21 @@ export function BulkImportDialog({ ctl }: { ctl: Ctl }) {
 
 const MAX_FILES = 5;
 
-/** Proof of completion (Modern). Same props as components/TaskCompletionDialog. */
-export function CompletionDialog({ task, notes, onNotesChange, files, onFilesChange, completing, onSubmit, onClose }: {
-  task: any; notes: string; onNotesChange: (v: string) => void; files: File[]; onFilesChange: (f: File[]) => void;
-  completing: boolean; onSubmit: () => void; onClose: () => void;
+const PROOF_HINTS: Record<string, string> = {
+  photo: "This task needs a photo as proof — snap the finished work.",
+  link: "Link to the work (GitHub, Onshape, Colab…) or describe in detail where it was done.",
+  note: "Describe what was done — a sentence or two about the actual work.",
+  none: "No proof needed — just mark it done.",
+  auto: "Add a note, link, or photo — Bruno checks it matches the task.",
+};
+
+/** Proof of completion (Modern). */
+export function CompletionDialog({ task, notes, onNotesChange, link, onLinkChange, files, onFilesChange, completing, verifying, aiQuestion, onSubmit, onClose }: {
+  task: any; notes: string; onNotesChange: (v: string) => void;
+  link: string; onLinkChange: (v: string) => void;
+  files: File[]; onFilesChange: (f: File[]) => void;
+  completing: boolean; verifying: boolean; aiQuestion: string | null;
+  onSubmit: () => void; onClose: () => void;
 }) {
   const previews = useMemo(() => files.map((f) => ({ file: f, url: URL.createObjectURL(f) })), [files]);
   useEffect(() => () => { for (const p of previews) URL.revokeObjectURL(p.url); }, [previews]);
@@ -99,9 +110,11 @@ export function CompletionDialog({ task, notes, onNotesChange, files, onFilesCha
     const images = incoming.filter((f) => f.type.startsWith('image/'));
     if (images.length) onFilesChange([...files, ...images].slice(0, MAX_FILES));
   };
-  const valid = notes.trim().length > 0 || files.length > 0;
+  const valid = notes.trim().length > 0 || files.length > 0 || link.trim().length > 0;
+  const busy = completing || verifying;
+  const hint = PROOF_HINTS[task?.proof_requirement] || PROOF_HINTS.auto;
   return (
-    <Dialog open onOpenChange={(o) => { if (!o && !completing) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent
         onPaste={(e: React.ClipboardEvent) => {
           const imgs = Array.from(e.clipboardData?.items || []).filter((i) => i.kind === 'file' && i.type.startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean) as File[];
@@ -110,14 +123,24 @@ export function CompletionDialog({ task, notes, onNotesChange, files, onFilesCha
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success" /> Complete task</DialogTitle>
-          <DialogDescription className="line-clamp-2">“{task?.title}” — add a short note or a photo as proof.</DialogDescription>
+          <DialogDescription className="line-clamp-2">“{task?.title}” — {hint}</DialogDescription>
         </DialogHeader>
+        {aiQuestion && (
+          <div role="alert" className="flex gap-2 rounded-lg border border-accent/40 bg-accent/10 p-3 text-sm">
+            <Sparkles className="size-4 shrink-0 text-accent" />
+            <p><span className="font-medium">Bruno:</span> {aiQuestion}</p>
+          </div>
+        )}
         <div className="grid gap-2">
           <Label htmlFor="complete-notes">What was done?</Label>
-          <Textarea id="complete-notes" autoFocus value={notes} onChange={(e) => onNotesChange(e.target.value)} placeholder="e.g. Mounted both hooks, tested a full climb." />
+          <Textarea id="complete-notes" autoFocus={!aiQuestion} value={notes} onChange={(e) => onNotesChange(e.target.value)} placeholder="e.g. Mounted both hooks, tested a full climb." />
         </div>
         <div className="grid gap-2">
-          <Label>Photos <span className="font-normal text-muted-foreground">(up to {MAX_FILES}, paste or pick)</span></Label>
+          <Label htmlFor="complete-link">Link <span className="font-normal text-muted-foreground">(optional — GitHub, Onshape, docs…)</span></Label>
+          <Input id="complete-link" type="url" value={link} onChange={(e) => onLinkChange(e.target.value)} placeholder="https://…" />
+        </div>
+        <div className="grid gap-2">
+          <Label>Photos <span className="font-normal text-muted-foreground">(up to {MAX_FILES} — paste, pick, or take)</span></Label>
           <div className="flex flex-wrap gap-2">
             {previews.map((p, i) => (
               <div key={p.url} className="relative size-16 overflow-hidden rounded-lg border border-border">
@@ -127,16 +150,22 @@ export function CompletionDialog({ task, notes, onNotesChange, files, onFilesCha
               </div>
             ))}
             {files.length < MAX_FILES && (
-              <label className="flex size-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:bg-muted">
-                <ImagePlus className="size-4" /> Add
-                <input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
-              </label>
+              <>
+                <label className="flex size-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:bg-muted">
+                  <ImagePlus className="size-4" /> Add
+                  <input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+                </label>
+                <label className="flex size-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:bg-muted">
+                  <Camera className="size-4" /> Take photo
+                  <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+                </label>
+              </>
             )}
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={completing}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={!valid || completing}>{completing && <Loader2 className="animate-spin" />} Mark done</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={onSubmit} disabled={!valid || busy}>{busy && <Loader2 className="animate-spin" />} {verifying ? "Bruno is checking…" : "Mark done"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

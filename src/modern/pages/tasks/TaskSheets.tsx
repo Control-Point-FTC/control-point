@@ -9,7 +9,7 @@ import {
   ToggleGroup, ToggleGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
+import { taskAssigneeIds, PROOF_REQUIREMENTS, type useTasksController } from '../../../components/tasks/useTasksController';
 import { AssigneePicker, AvatarStack } from './AssigneePicker';
 import { isTaskOverdue } from '../../../utils/countdown';
 
@@ -187,6 +187,16 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
                 <Label htmlFor="task-due-time">Time <span className="font-normal text-muted-foreground">(optional)</span></Label>
                 <Input id="task-due-time" type="time" disabled={!f.due_date} value={f.due_time || ''} onChange={(e) => set({ due_time: e.target.value })} className="w-32" />
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="task-proof">Proof on completion</Label>
+              <Select value={f.proof_requirement || 'auto'} onValueChange={(v) => set({ proof_requirement: v })}>
+                <SelectTrigger id="task-proof"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PROOF_REQUIREMENTS.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Bruno checks submissions against this — "Auto" lets him decide from the task title.</p>
             </div>
             {ctl.isAdmin && (
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">

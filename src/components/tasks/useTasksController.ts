@@ -18,7 +18,18 @@ export interface TaskForm {
   /** Optional HH:MM; empty = end of the due date. */
   due_time: string;
   status: string;
+  /** Proof required on completion: 'auto' lets Bruno AI infer from the title. */
+  proof_requirement: string;
 }
+
+/** Proof types a task can require on completion. */
+export const PROOF_REQUIREMENTS = [
+  { id: 'auto', label: 'Auto (Bruno decides)' },
+  { id: 'photo', label: 'Photo required' },
+  { id: 'link', label: 'Link required' },
+  { id: 'note', label: 'Written note required' },
+  { id: 'none', label: 'No proof needed' },
+] as const;
 
 export function defaultTeamId(teams: any[], currentUser: any): any {
   const tid = currentUser?.team_id;
@@ -36,7 +47,7 @@ export const TASK_COLUMNS = [
   { id: 'done', label: 'Done' },
 ] as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo' };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', proof_requirement: 'auto' };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -137,7 +148,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const openNewTask = (status = 'todo') => {
     bumpGen(EDITOR_GEN);
     setEditingTaskId(null);
-    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status });
+    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status, proof_requirement: 'auto' });
     setIsBoardTask(false);
     resetAiTask();
     setAiTaskOpen(false);
@@ -155,6 +166,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       due_date: task.due_date || '',
       due_time: task.due_time || '',
       status: task.status || 'todo',
+      proof_requirement: task.proof_requirement || 'auto',
     });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
@@ -184,6 +196,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             due_date: newTask.due_date || null,
             due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
             is_board: isBoardTask ? 1 : 0,
+            proof_requirement: newTask.proof_requirement || 'auto',
           }),
         });
         if (res.ok) {
@@ -391,6 +404,24 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     }
   };
 
+  // Review a completed task: approve (stays done) or reject (reopens it).
+  const handleReviewTask = async (id: number, decision: 'approve' | 'reject', note?: string) => {
+    try {
+      const res = await apiFetch(`/api/tasks/${id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, note: note || '' }),
+      });
+      if (!res.ok) throw new Error();
+      refresh.tasks();
+      notify(decision === 'approve' ? 'Completion approved.' : 'Sent back for more work.', 'success');
+      return true;
+    } catch {
+      notify('Could not update the review — try again.', 'error');
+      return false;
+    }
+  };
+
   // Analytics data (all visible-to-Legacy tasks; Modern recomputes for its filters)
   const completionTrends = useMemo(() => completionTrendsOf(tasks), [tasks]);
   const memberCapacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
@@ -410,6 +441,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     // bulk
     showBulk, setShowBulk, bulkText, setBulkText, bulkParsing, bulkPreview, setBulkPreview, bulkRoster, bulkError,
     bulkSaving, handleBulkParse, updateBulkRow, removeBulkRow, handleBulkSave, closeBulkModal,
+    // completion review
+    handleReviewTask,
     // ai quick-add
     aiTaskOpen, setAiTaskOpen, aiTaskText, setAiTaskText, aiTaskBusy, aiTaskNote, setAiTaskNote, aiTaskProposals, setAiTaskProposals,
     resetAiTask, applyAiTaskToForm, handleAiTaskParse,

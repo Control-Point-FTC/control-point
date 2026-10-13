@@ -28,6 +28,93 @@ import { BulkImportDialog } from './TaskDialogs';
 
 type View = 'board' | 'list' | 'insights';
 
+type TasksCtl = ReturnType<typeof useTasksController>;
+
+/** Completions Bruno flagged (or code tasks): managers approve or send back. */
+function ReviewQueue({ ctl, members }: { ctl: TasksCtl; members: any[] }) {
+  const [rejectId, setRejectId] = useState<number | null>(null);
+  const [rejectNote, setRejectNote] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const pending = useMemo(
+    () => (ctl.filteredTasks || []).filter((t: any) => t.status === 'done' && t.completion_review === 'pending'),
+    [ctl.filteredTasks]
+  );
+  if (!ctl.canManageTasks || pending.length === 0) return null;
+  const memberById = new Map(members.map((m: any) => [m.id, m]));
+  const imagesOf = (t: any): string[] => { try { const v = JSON.parse(t.completion_images || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+  const decide = async (t: any, decision: 'approve' | 'reject') => {
+    setBusyId(t.id);
+    const ok = await ctl.handleReviewTask(t.id, decision, decision === 'reject' ? rejectNote : '');
+    setBusyId(null);
+    if (ok) { setRejectId(null); setRejectNote(''); }
+  };
+  return (
+    <div className="rounded-xl border border-accent/40 bg-accent/5 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Sparkles className="size-4 text-accent" />
+        <h3 className="text-sm font-semibold">Needs review <span className="text-muted-foreground">({pending.length})</span></h3>
+      </div>
+      <div className="grid gap-3">
+        {pending.map((t: any) => {
+          const completer = memberById.get(t.completed_by)?.name || 'Someone';
+          const imgs = imagesOf(t);
+          const busy = busyId === t.id;
+          return (
+            <div key={t.id} className="rounded-lg border border-border bg-background p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t.title}</p>
+                  <p className="text-xs text-muted-foreground">completed by {completer}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => { setRejectId(rejectId === t.id ? null : t.id); setRejectNote(''); }}>
+                    Send back
+                  </Button>
+                  <Button size="sm" disabled={busy} onClick={() => void decide(t, 'approve')}>Approve</Button>
+                </div>
+              </div>
+              {t.completion_ai_note && (
+                <p className="mt-2 flex gap-1.5 text-xs text-muted-foreground">
+                  <Sparkles className="size-3.5 shrink-0 text-accent" /><span>{t.completion_ai_note}</span>
+                </p>
+              )}
+              {t.completion_notes && <p className="mt-2 text-sm">“{t.completion_notes}”</p>}
+              {t.completion_link && (
+                <a href={t.completion_link} target="_blank" rel="noreferrer" className="mt-1 block truncate text-sm text-accent underline">
+                  {t.completion_link}
+                </a>
+              )}
+              {imgs.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {imgs.map((u: string, i: number) => (
+                    <a key={i} href={u} target="_blank" rel="noreferrer" className="size-14 overflow-hidden rounded-lg border border-border">
+                      <img src={u} alt={`Proof ${i + 1}`} className="size-full object-cover" />
+                    </a>
+                  ))}
+                </div>
+              )}
+              {rejectId === t.id && (
+                <div className="mt-3 grid gap-2">
+                  <Input
+                    value={rejectNote}
+                    onChange={(e) => setRejectNote(e.target.value)}
+                    placeholder="What should they add? (optional)"
+                    aria-label="Send-back note"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setRejectId(null); setRejectNote(''); }}>Cancel</Button>
+                    <Button size="sm" variant="destructive" disabled={busy} onClick={() => void decide(t, 'reject')}>Send back</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function TasksPage(props: any) {
   const { tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete } = props;
   const ctl = useTasksController({ tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete });
@@ -138,6 +225,8 @@ export function TasksPage(props: any) {
           </ToggleGroup>
         </div>
       </PageHeader>
+
+      <ReviewQueue ctl={ctl} members={members} />
 
       {view === 'board' && (
         <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} />

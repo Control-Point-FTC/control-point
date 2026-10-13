@@ -574,25 +574,40 @@ export default function App() {
   // PATCH transitions to done, so nothing may bypass it.
   const [completingTask, setCompletingTask] = useState<any | null>(null);
   const [completionNotes, setCompletionNotes] = useState('');
+  const [completionLink, setCompletionLink] = useState('');
   const [completionFiles, setCompletionFiles] = useState<File[]>([]);
   const [completing, setCompleting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState<string | null>(null);
+  // Bruno follow-up rounds: {q, a} pairs sent back to the AI for context.
+  const verifyFollowups = useRef<{ q: string; a: string }[]>([]);
   const openCompleteDialog = (task: any) => {
     if (!task || task.status === 'done') return;
     setCompletingTask(task);
     setCompletionNotes('');
+    setCompletionLink('');
     setCompletionFiles([]);
+    setAiQuestion(null);
+    verifyFollowups.current = [];
   };
   const closeCompleteDialog = () => {
     setCompletingTask(null);
     setCompletionNotes('');
+    setCompletionLink('');
     setCompletionFiles([]);
+    setAiQuestion(null);
+    verifyFollowups.current = [];
   };
-  const handleCompleteTask = async () => {
-    if (!completingTask || completing) return;
+  const submitCompletion = async (verify: { verified: string; required: string | null; aiNote: string | null }) => {
+    if (!completingTask) return;
     setCompleting(true);
     try {
       const form = new FormData();
       form.append('notes', completionNotes.trim());
+      form.append('link', completionLink.trim());
+      form.append('verified', verify.verified);
+      if (verify.required) form.append('required', verify.required);
+      if (verify.aiNote) form.append('aiNote', verify.aiNote);
       for (const f of completionFiles.slice(0, 5)) form.append('images', f);
       const res = await apiFetch(`/api/tasks/${completingTask.id}/complete`, {
         method: 'POST',
@@ -606,12 +621,54 @@ export default function App() {
       } else {
         refresh.tasks();
       }
-      notify('Task marked done.', 'success');
+      notify(d.task?.completion_review === 'pending' ? 'Submitted — a manager will review it.' : 'Task marked done.', 'success');
       closeCompleteDialog();
     } catch (e: any) {
       notify(e?.message || 'Could not complete task.', 'error');
     } finally {
       setCompleting(false);
+    }
+  };
+  const handleCompleteTask = async () => {
+    if (!completingTask || completing || verifying) return;
+    const notes = completionNotes.trim();
+    const link = completionLink.trim();
+    // Cheap local guard: obvious junk never reaches the AI.
+    if (notes.length < 2 && !link && completionFiles.length === 0) {
+      setAiQuestion("That looks a bit thin — what did you actually do? Add a sentence or two.");
+      return;
+    }
+    // Answering Bruno's follow-up: record it for the AI's context.
+    if (aiQuestion) {
+      verifyFollowups.current.push({ q: aiQuestion, a: notes });
+      setAiQuestion(null);
+    }
+    setVerifying(true);
+    try {
+      const vres = await apiFetch(`/api/tasks/${completingTask.id}/verify-proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, link, imageCount: completionFiles.length, followups: verifyFollowups.current }),
+      });
+      const v = await vres.json().catch(() => ({}));
+      if (vres.status === 503 || (v as any).aiUnavailable) {
+        // AI down: fail open — submit flagged for admin review (today's behavior).
+        await submitCompletion({ verified: 'flag', required: null, aiNote: 'AI verification unavailable — needs manager review.' });
+        return;
+      }
+      if (!vres.ok) throw new Error((v as any).error || 'Could not verify proof');
+      if ((v as any).verdict === 'pass') {
+        await submitCompletion({ verified: 'pass', required: (v as any).required || null, aiNote: (v as any).message || null });
+      } else if ((v as any).verdict === 'followup' && verifyFollowups.current.length < 2) {
+        setAiQuestion((v as any).message || "Can you say a bit more about what you actually did?");
+      } else {
+        // Flagged, or follow-ups exhausted: submit for manager review.
+        await submitCompletion({ verified: 'flag', required: (v as any).required || null, aiNote: (v as any).message || null });
+      }
+    } catch (e: any) {
+      notify(e?.message || 'Could not verify proof.', 'error');
+    } finally {
+      setVerifying(false);
     }
   };
   const [budget, setBudget] = useState<BudgetItem[]>([]);
@@ -2409,9 +2466,13 @@ export default function App() {
           task={completingTask}
           notes={completionNotes}
           onNotesChange={setCompletionNotes}
+          link={completionLink}
+          onLinkChange={setCompletionLink}
           files={completionFiles}
           onFilesChange={setCompletionFiles}
           completing={completing}
+          verifying={verifying}
+          aiQuestion={aiQuestion}
           onSubmit={handleCompleteTask}
           onClose={closeCompleteDialog}
         />
