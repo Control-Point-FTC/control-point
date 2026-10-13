@@ -26,7 +26,7 @@ if (process.argv.includes("--from-tuned")) {
   const { a, b, preExtra, noiseFit: _nf, ...rating } = JSON.parse(readFileSync(`.cache/predict/tuned-${tuneSeason}.json`, "utf8")).best;
   params = rating; noise = { a, b, preExtra };
 } else {
-  const M = JSON.parse(readFileSync("server/predict/model.json", "utf8"));
+  const M = JSON.parse(readFileSync("node_modules/@control-scout/predict-engine/dist/model.json", "utf8"));
   params = M.rating; noise = M.noise;
 }
 const seasons = [2022, 2023, tuneSeason, testSeason].filter((s, i, a) => a.indexOf(s) === i).sort();

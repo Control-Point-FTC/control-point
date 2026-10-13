@@ -8,20 +8,19 @@
 //   match(red, blue)  win probability + expected scores
 // Live event data (schedule, played results, ranks, alliances) comes from the
 // same FtcEventFull payload Team Stats uses (FIRST Events primary).
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { RatingBook } from "./rating.js";
 import { indexAwards, MODELLED_AWARDS, type AwardRecord } from "./awards.js";
 import type { PredictStore } from "./store.js";
 import type { EventRecord } from "./types.js";
 import { Forecaster, normType, type AdvancementRecord, type PredictModel } from "./forecast.js";
 import type { OfflinePredict } from "../../src/types/offlinePack.js";
+import { FITTED_MODEL } from "@control-scout/predict-engine";
 
 export * from "./forecast.js";
 
-// Fitted model (scripts/predict/export-model.mts), read at runtime.
-// Path relative to the server's working directory (the repo / app root).
-const M = JSON.parse(readFileSync(join(process.cwd(), "server", "predict", "model.json"), "utf8")) as PredictModel;
+// Fitted model: ships inside the shared engine package (one model for both
+// apps). Refit with scripts/predict/* and release a new engine version.
+const M: PredictModel = FITTED_MODEL;
 
 const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
 

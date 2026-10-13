@@ -1,7 +1,9 @@
 // Predict research — export the fitted model for the server.
 //
 // Reads the research outputs in .cache/predict/ and writes
-// server/predict/model.json (committed): rating settings, score noise, the
+// .cache/predict/model.json, a candidate model for the shared engine
+// (@control-scout/predict-engine; its src/model.json lives in the Control
+// Scout repo, and a new model ships as a new engine version): rating settings, score noise, the
 // pick, bonus-RP and award models, plus the accuracy summary the Predict tab
 // shows. Run after the back-tests (see docs/predict/backtest-report.md).
 //
@@ -22,7 +24,7 @@ const matches = read("final-test.json").result;
 // fitted with (live odds depend on rating, a and b), so a fit for different
 // settings is refused. Without a fit, keep the shipped one rather than
 // silently dropping it.
-let calibration = JSON.parse(readFileSync("server/predict/model.json", "utf8")).calibration;
+let calibration = JSON.parse(readFileSync("node_modules/@control-scout/predict-engine/dist/model.json", "utf8")).calibration;
 if (existsSync(`${C}/platt-2024.json`)) {
   const platt = read("platt-2024.json");
   if (!platt.rating || !sameRatingParams(platt.rating, rating) || platt.noise?.a !== a || platt.noise?.b !== b) {
@@ -66,5 +68,5 @@ const model = {
   },
   ...(calibration ? { calibration } : {}),
 };
-writeFileSync("server/predict/model.json", JSON.stringify(model, null, 1) + "\n");
-console.log("wrote server/predict/model.json");
+writeFileSync(`${C}/model.json`, JSON.stringify(model, null, 1) + "\n");
+console.log(`wrote ${C}/model.json — copy it to the engine package (Control Scout: packages/predict-engine/src/model.json) and release a new engine version`);

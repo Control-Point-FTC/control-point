@@ -95,7 +95,7 @@ npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards n
 python scripts/predict/report.py                                       # 9. this report
 ```
 
-Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 4b–8 read it. Then `npx tsx scripts/predict/export-model.mts` writes `server/predict/model.json`. It refuses a `platt-2024.json` fitted for other settings than `tuned-2024.json`, and without one it keeps the shipped calibration.
+Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 4b–8 read it. Then `npx tsx scripts/predict/export-model.mts` writes `.cache/predict/model.json`, a candidate model for the shared engine package (`@control-scout/predict-engine`, whose `src/model.json` lives in the Control Scout repo); a new model ships as a new engine version. It refuses a `platt-2024.json` fitted for other settings than `tuned-2024.json`, and without one it keeps the shipped calibration.
 
 ## 8. Known limits
 
