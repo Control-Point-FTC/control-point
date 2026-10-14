@@ -3446,6 +3446,11 @@ async function startServer() {
     return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
   }
 
+  // Tests only: send the OAuth providers' API calls to a local fake. Honoured only for a
+  // loopback address, so no setting can point a real server's sign-in at another host.
+  const OAUTH_PROVIDER_STUB = /^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(process.env.OAUTH_PROVIDER_STUB || "") ? process.env.OAUTH_PROVIDER_STUB! : null;
+  const providerUrl = (real: string) => (OAUTH_PROVIDER_STUB ? OAUTH_PROVIDER_STUB + new URL(real).pathname : real);
+
   const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number; scoutState?: string }>(); // state -> {expiry, intent, provider}
   // OAuth state is bound to the browser that started the flow (a short-lived
   // HttpOnly cookie), so a victim can't be fed someone else's callback URL
@@ -3836,7 +3841,7 @@ async function startServer() {
       if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'discord') {
         return res.redirect("/?oauth_error=invalid_state");
       }
-      const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+      const tokenRes = await fetch(providerUrl("https://discord.com/api/oauth2/token"), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -3849,7 +3854,7 @@ async function startServer() {
       });
       if (!tokenRes.ok) throw new Error("Token exchange failed");
       const { access_token } = (await tokenRes.json()) as any;
-      const meRes = await fetch("https://discord.com/api/users/@me", {
+      const meRes = await fetch(providerUrl("https://discord.com/api/users/@me"), {
         headers: { Authorization: `Bearer ${access_token}` },
       });
       if (!meRes.ok) throw new Error("Failed to fetch Discord profile");
@@ -3902,7 +3907,7 @@ async function startServer() {
       if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'github') {
         return res.redirect("/?oauth_error=invalid_state");
       }
-      const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      const tokenRes = await fetch(providerUrl("https://github.com/login/oauth/access_token"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify({
@@ -3916,10 +3921,10 @@ async function startServer() {
       const { access_token, error: tokenError } = (await tokenRes.json()) as any;
       if (!access_token || tokenError) throw new Error("Token exchange failed");
       const ghHeaders = { Authorization: `Bearer ${access_token}`, "User-Agent": "Control-Point" };
-      const userRes = await fetch("https://api.github.com/user", { headers: ghHeaders });
+      const userRes = await fetch(providerUrl("https://api.github.com/user"), { headers: ghHeaders });
       if (!userRes.ok) throw new Error("Failed to fetch GitHub profile");
       const ghUser = (await userRes.json()) as any;
-      const emailsRes = await fetch("https://api.github.com/user/emails", { headers: ghHeaders });
+      const emailsRes = await fetch(providerUrl("https://api.github.com/user/emails"), { headers: ghHeaders });
       if (!emailsRes.ok) throw new Error("Failed to fetch GitHub emails");
       const emails = (await emailsRes.json()) as any[];
       const primary = Array.isArray(emails)
@@ -3953,7 +3958,7 @@ async function startServer() {
       }
       const intent = pending.intent || 'login';
       // Exchange the authorization code for tokens
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      const tokenRes = await fetch(providerUrl("https://oauth2.googleapis.com/token"), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -3967,7 +3972,7 @@ async function startServer() {
       if (!tokenRes.ok) throw new Error("Token exchange failed");
       const { access_token } = (await tokenRes.json()) as any;
       // Fetch the Google profile directly from Google (token came from Google over TLS)
-      const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      const profileRes = await fetch(providerUrl("https://www.googleapis.com/oauth2/v3/userinfo"), {
         headers: { Authorization: `Bearer ${access_token}` },
       });
       if (!profileRes.ok) throw new Error("Failed to fetch Google profile");

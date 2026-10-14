@@ -139,12 +139,13 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
       String(row.email),
     );
     // Each workspace's shortlist for its latest season (the shortlist is shared by a workspace, per season).
+    // The latest season counts even if every entry in it was removed: a cleared shortlist is empty, not last year's.
     const ids = teams.map((t: any) => Number(t.id)).filter((x: number) => Number.isInteger(x));
     const shortlistRows = ids.length ? await deps.dbAll(
       `SELECT DISTINCT s.team_number AS n
          FROM scouting_shortlist s
         WHERE s.team_id IN (${ids.map(() => "?").join(",")}) AND COALESCE(s.deleted, 0) = 0
-          AND s.season = (SELECT MAX(s2.season) FROM scouting_shortlist s2 WHERE s2.team_id = s.team_id AND COALESCE(s2.deleted, 0) = 0)
+          AND s.season = (SELECT MAX(s2.season) FROM scouting_shortlist s2 WHERE s2.team_id = s.team_id)
         ORDER BY s.team_number LIMIT ${MAX_SHORTLIST}`,
       ...ids,
     ) : [];
