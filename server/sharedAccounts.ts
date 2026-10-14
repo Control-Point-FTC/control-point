@@ -36,8 +36,19 @@ export interface SharedAccount {
   email: string;
   displayName: string | null;
   createdAt: string;
-  controlPoint: { member: boolean; teams: { teamNumber: number | null; name: string }[] };
+  controlPoint: {
+    member: boolean;
+    teams: { teamNumber: number | null; name: string }[];
+    /** FTC team numbers on the shortlist of the member's workspaces (each workspace's latest season), for Scout to merge in. */
+    shortlist: number[];
+  };
 }
+
+/** Sign-in providers a Scout visitor can start with (Control Point runs the OAuth; Scout never sees provider tokens). */
+export const SCOUT_VIA = ["google", "discord", "github"] as const;
+export type ScoutVia = (typeof SCOUT_VIA)[number];
+export const isScoutVia = (v: unknown): v is ScoutVia => typeof v === "string" && (SCOUT_VIA as readonly string[]).includes(v);
+const MAX_SHORTLIST = 200;
 
 export const HANDOFF_TTL_MS = 2 * 60 * 1000;
 export const MIN_INTERNAL_KEY_LENGTH = 32;
@@ -127,6 +138,16 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
         GROUP BY t.id ORDER BY t.id`,
       String(row.email),
     );
+    // Each workspace's shortlist for its latest season (the shortlist is shared by a workspace, per season).
+    const ids = teams.map((t: any) => Number(t.id)).filter((x: number) => Number.isInteger(x));
+    const shortlistRows = ids.length ? await deps.dbAll(
+      `SELECT DISTINCT s.team_number AS n
+         FROM scouting_shortlist s
+        WHERE s.team_id IN (${ids.map(() => "?").join(",")}) AND COALESCE(s.deleted, 0) = 0
+          AND s.season = (SELECT MAX(s2.season) FROM scouting_shortlist s2 WHERE s2.team_id = s.team_id AND COALESCE(s2.deleted, 0) = 0)
+        ORDER BY s.team_number LIMIT ${MAX_SHORTLIST}`,
+      ...ids,
+    ) : [];
     return {
       id: Number(row.id),
       email: String(row.email),
@@ -138,6 +159,7 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
           const n = t.ftc == null ? NaN : Number(t.ftc);
           return { teamNumber: Number.isInteger(n) && n > 0 ? n : null, name: String(t.name ?? "") };
         }),
+        shortlist: shortlistRows.map((r: any) => Number(r.n)).filter((n: number) => Number.isInteger(n) && n > 0 && n <= 999999),
       },
     };
   }
@@ -248,23 +270,44 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
         if (!isHandoffState(state)) return res.status(400).json({ error: "invalid_state" });
         const email = cleanEmail(await deps.sessionEmail(req));
         if (!email) {
+          // "Continue with Google/Discord/GitHub" from Scout: straight into that provider's
+          // sign-in, which comes back through completeOAuthHandoff (no Control Point login needed).
+          if (isScoutVia(req.query.via)) return res.redirect(302, `/api/auth/${req.query.via}?intent=login&scout_state=${encodeURIComponent(state)}`);
           // Relative, same-origin, and built from the validated state only.
           return res.redirect(302, `/?scout_state=${encodeURIComponent(state)}`);
         }
-        const accountId = await upsertAccount(email, "control-point", null);
-        const code = newHandoffCode();
-        const t = now();
-        await deps.dbRun(
-          "INSERT INTO scout_handoff_codes (code_hash, account_id, state, expires_at) VALUES (?, ?, ?, ?)",
-          hashHandoffCode(code), accountId, state, new Date(t + HANDOFF_TTL_MS).toISOString(),
-        );
-        // Old codes are useless after their TTL; keep the table small.
-        await deps.dbRun("DELETE FROM scout_handoff_codes WHERE expires_at < ?", new Date(t - 60 * 60 * 1000).toISOString()).catch(() => {});
-        const qs = new URLSearchParams({ code, state }).toString();
-        res.redirect(302, `${origin}/api/auth/control-point/callback?${qs}`);
+        await issueHandoff(res, origin!, email, "control-point", state);
       },
     );
   }
 
-  return { internalRouter, registerStartRoute, upsertAccount, loadAccount };
+  /** Mint a single-use hand-off code for this account and send the browser to Scout with it. */
+  async function issueHandoff(res: express.Response, origin: string, email: string, verifiedBy: string, state: string) {
+    const accountId = await upsertAccount(email, verifiedBy, null);
+    const code = newHandoffCode();
+    const t = now();
+    await deps.dbRun(
+      "INSERT INTO scout_handoff_codes (code_hash, account_id, state, expires_at) VALUES (?, ?, ?, ?)",
+      hashHandoffCode(code), accountId, state, new Date(t + HANDOFF_TTL_MS).toISOString(),
+    );
+    // Old codes are useless after their TTL; keep the table small.
+    await deps.dbRun("DELETE FROM scout_handoff_codes WHERE expires_at < ?", new Date(t - 60 * 60 * 1000).toISOString()).catch(() => {});
+    const qs = new URLSearchParams({ code, state }).toString();
+    res.redirect(302, `${origin}/api/auth/control-point/callback?${qs}`);
+  }
+
+  /**
+   * The end of an OAuth sign-in that Scout started (`via`): the provider has
+   * verified `email`, so Control Point vouches for it to Scout. No Control
+   * Point session or membership is created or needed: someone who only uses
+   * Scout can still sign in with Google/Discord/GitHub.
+   */
+  async function completeOAuthHandoff(res: express.Response, provider: ScoutVia, rawEmail: string, state: string) {
+    const origin = scoutOriginFrom(env);
+    const email = cleanEmail(rawEmail);
+    if (!origin || !isHandoffState(state) || !email) return res.redirect(302, "/");
+    await issueHandoff(res, origin, email, provider, state);
+  }
+
+  return { internalRouter, registerStartRoute, completeOAuthHandoff, upsertAccount, loadAccount };
 }

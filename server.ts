@@ -78,7 +78,7 @@ import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, on
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
-import { createSharedAccounts } from "./server/sharedAccounts.js";
+import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
@@ -3446,12 +3446,12 @@ async function startServer() {
     return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
   }
 
-  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number }>(); // state -> {expiry, intent, provider}
+  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number; scoutState?: string }>(); // state -> {expiry, intent, provider}
   // OAuth state is bound to the browser that started the flow (a short-lived
   // HttpOnly cookie), so a victim can't be fed someone else's callback URL
   // (login CSRF). Expired entries are swept on every start.
   const OAUTH_STATE_COOKIE = "cp_oauth_state";
-  function startOAuthState(req: any, res: any, state: string, entry: { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number }) {
+  function startOAuthState(req: any, res: any, state: string, entry: { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number; scoutState?: string }) {
     const now = Date.now();
     for (const [k, v] of oauthStates) if (v.expiry < now) oauthStates.delete(k);
     oauthStates.set(state, entry);
@@ -3571,7 +3571,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo, scoutState: scoutStateFrom(req) });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'google'),
@@ -3653,7 +3653,13 @@ async function startServer() {
     }
   }
 
-  async function finishOAuthLogin(provider: string, providerSub: string, rawEmail: string, name: string, avatarUrl: string | null, intent: string, res: any, returnTo?: string) {
+  // A sign-in Control Scout started ("Continue with Google" there): /api/auth/scout/start
+  // passes its validated state along, and the callback hands off to Scout instead of logging in here.
+  const scoutStateFrom = (req: any): string | undefined => (isHandoffState(req.query.scout_state) ? req.query.scout_state : undefined);
+
+  async function finishOAuthLogin(provider: string, providerSub: string, rawEmail: string, name: string, avatarUrl: string | null, intent: string, res: any, returnTo?: string, scoutState?: string) {
+    // Scout's sign-in: the provider verified this email; vouch for it to Scout (no Control Point session).
+    if (scoutState && isScoutVia(provider)) return sharedAccounts.completeOAuthHandoff(res, provider, rawEmail, scoutState);
     const idColumn = OAUTH_PROVIDERS[provider].idColumn;
     // Emails are stored lowercase: one account per address, whatever its casing.
     const email = String(rawEmail || "").trim().toLowerCase();
@@ -3811,7 +3817,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo, scoutState: scoutStateFrom(req) });
     const params = new URLSearchParams({
       client_id: DISCORD_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'discord'),
@@ -3855,7 +3861,7 @@ async function startServer() {
       const avatarUrl = profile.avatar
         ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`
         : null;
-      await finishOAuthLogin('discord', String(profile.id), profile.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo);
+      await finishOAuthLogin('discord', String(profile.id), profile.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo, pending.scoutState);
     } catch (error) {
       console.error("Discord OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -3879,7 +3885,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo, scoutState: scoutStateFrom(req) });
     const params = new URLSearchParams({
       client_id: GITHUB_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'github'),
@@ -3924,7 +3930,7 @@ async function startServer() {
       }
       const name = ghUser.name || ghUser.login || "";
       const avatarUrl = ghUser.avatar_url || null;
-      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo);
+      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo, pending.scoutState);
     } catch (error) {
       console.error("GitHub OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -3973,7 +3979,7 @@ async function startServer() {
         return res.redirect(`${pending.returnTo || ''}/?oauth_error=email_unverified`);
       }
 
-      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res, pending.returnTo);
+      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res, pending.returnTo, pending.scoutState);
     } catch (error) {
       console.error("Google OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");

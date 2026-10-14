@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { withSession } from "./helpers/session";
+import { createSharedAccounts } from "../sharedAccounts";
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -118,6 +119,7 @@ describe("POST /internal/accounts/resolve", () => {
     expect(r.body.account.controlPoint).toEqual({
       member: true,
       teams: [{ teamNumber: 12345, name: "Gear Grinders" }, { teamNumber: null, name: "No Number Yet" }],
+      shortlist: [],
     });
     expect((await on.db.execute("SELECT id, email, password, is_active FROM members ORDER BY id")).rows).toEqual(before.rows);
   });
@@ -237,6 +239,47 @@ describe("Continue with Control Point (hand-off)", () => {
     const got = await redeem(new URL(r.location).searchParams.get("code")!, STATE);
     expect(got.status).toBe(200);
     expect(got.body.account).toMatchObject({ email: "lone@team.test", controlPoint: { member: false, teams: [] } });
+  });
+});
+
+describe("sign-in started from Scout with Google / Discord / GitHub", () => {
+  it("signed out + via → straight into that provider's sign-in, carrying the state; anything else → the app", async () => {
+    const r = await fetch(`${on.base}/api/auth/scout/start?state=${STATE}&via=github`, { redirect: "manual" });
+    expect(r.status).toBe(302);
+    expect(r.headers.get("location")).toBe(`/api/auth/github?intent=login&scout_state=${STATE}`);
+    const bad = await fetch(`${on.base}/api/auth/scout/start?state=${STATE}&via=https://evil.example`, { redirect: "manual" });
+    expect(bad.headers.get("location")).toBe(`/?scout_state=${STATE}`);
+  });
+
+  it("the provider-verified email gets a hand-off code, with no Control Point membership needed", async () => {
+    const shared = createSharedAccounts({
+      dbRun: async (sql: string, ...args: any[]) => on.db.execute({ sql, args }),
+      dbGet: async (sql: string, ...args: any[]) => (await on.db.execute({ sql, args })).rows[0],
+      dbAll: async (sql: string, ...args: any[]) => (await on.db.execute({ sql, args })).rows as any[],
+      sessionEmail: async () => null,
+      env: { CONTROL_SCOUT_URL: SCOUT, CONTROL_SCOUT_INTERNAL_KEY: KEY },
+    } as any);
+    let to = "";
+    await shared.completeOAuthHandoff({ redirect: (_s: number, url: string) => { to = url; } } as any, "discord", "Scout.Only@Example.test", STATE);
+    const u = new URL(to);
+    expect(u.origin + u.pathname).toBe(`${SCOUT}/api/auth/control-point/callback`);
+    const got = await redeem(u.searchParams.get("code")!, STATE);
+    expect(got.status).toBe(200);
+    expect(got.body.account).toMatchObject({ email: "scout.only@example.test", controlPoint: { member: false, teams: [], shortlist: [] } });
+    expect((await on.db.execute({ sql: "SELECT verified_by FROM accounts WHERE email = ?", args: ["scout.only@example.test"] })).rows[0].verified_by).toBe("discord");
+    // A bad state or email never redirects to Scout.
+    let home = "";
+    await shared.completeOAuthHandoff({ redirect: (_s: number, url: string) => { home = url; } } as any, "google", "not-an-email", STATE);
+    expect(home).toBe("/");
+  });
+
+  it("the account carries the workspace shortlist (latest season, live rows only)", async () => {
+    const team = await seedTeam(on.db, "Shortlist Team");
+    await seedMember(on.db, team, "Lister", "lister@team.test");
+    const row = (s: number, n: number, deleted = 0) => on.db.execute({ sql: "INSERT INTO scouting_shortlist (team_id, season, team_number, deleted, updated_at) VALUES (?, ?, ?, ?, ?)", args: [team, s, n, deleted, new Date().toISOString()] });
+    await row(2025, 111); await row(2026, 4215); await row(2026, 18360); await row(2026, 999, 1);
+    const r = await resolve({ email: "lister@team.test", verifiedBy: "scout-email-code" });
+    expect(r.body.account.controlPoint.shortlist).toEqual([4215, 18360]);
   });
 });
 
