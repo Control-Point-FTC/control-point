@@ -1,0 +1,270 @@
+/**
+ * Shared accounts with Control Scout (controlscout.org).
+ *
+ * Contract: control-scout docs/shared-accounts.md. Control Point owns one
+ * small `accounts` table (migration 129), keyed by lower-cased email; its id
+ * is the person's account id in both apps. Control Scout reads and writes it
+ * through the internal API below, and "Continue with Control Point" hands a
+ * signed-in Control Point visitor to Scout with a single-use code.
+ *
+ * Nothing here creates or changes `members`, `verified_emails`,
+ * `proven_passwords` or any password: Control Point membership is only read.
+ *
+ * Env:
+ *   CONTROL_SCOUT_INTERNAL_KEY  shared secret (32+ chars) Scout sends as
+ *                               X-Internal-Key. Unset → /internal/* is 404.
+ *   CONTROL_SCOUT_URL           Scout's origin (e.g. https://controlscout.org).
+ *                               The hand-off only ever redirects there.
+ *                               Unset → /api/auth/scout/start is 404.
+ */
+import crypto from "crypto";
+import express from "express";
+import { RateLimiter, clientIp, limit, normEmail } from "./rateLimit.js";
+
+export interface SharedAccountDeps {
+  dbGet: (sql: string, ...args: any[]) => Promise<any>;
+  dbAll: (sql: string, ...args: any[]) => Promise<any[]>;
+  dbRun: (sql: string, ...args: any[]) => Promise<{ changes: number; lastInsertRowid: number }>;
+  /** The signed-in visitor's email (any valid cp_session, teamless included), or null. */
+  sessionEmail: (req: any) => Promise<string | null>;
+  env?: Record<string, string | undefined>;
+  now?: () => number;
+}
+
+export interface SharedAccount {
+  id: number;
+  email: string;
+  displayName: string | null;
+  createdAt: string;
+  controlPoint: { member: boolean; teams: { teamNumber: number | null; name: string }[] };
+}
+
+export const HANDOFF_TTL_MS = 2 * 60 * 1000;
+export const MIN_INTERNAL_KEY_LENGTH = 32;
+export const MAX_DISPLAY_NAME = 100;
+const SCOUT_VERIFIERS = new Set(["scout-email-code", "google"]);
+const STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
+const CODE_RE = /^cph_[A-Za-z0-9_-]{43}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const isHandoffState = (s: unknown): s is string => typeof s === "string" && STATE_RE.test(s);
+
+/** The internal key, or null when unset or too short to trust. */
+export function internalKeyFrom(env: Record<string, string | undefined>): string | null {
+  const k = env.CONTROL_SCOUT_INTERNAL_KEY || "";
+  return k.length >= MIN_INTERNAL_KEY_LENGTH ? k : null;
+}
+
+/** Scout's exact origin from CONTROL_SCOUT_URL, or null when unset/invalid. */
+export function scoutOriginFrom(env: Record<string, string | undefined>): string | null {
+  const raw = (env.CONTROL_SCOUT_URL || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+/** Constant-time key check; hashing first makes the lengths equal. */
+export function keyMatches(given: unknown, expected: string): boolean {
+  if (typeof given !== "string" || !given) return false;
+  const a = crypto.createHash("sha256").update(given).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+export const hashHandoffCode = (code: string) => crypto.createHash("sha256").update(code).digest("hex");
+export const newHandoffCode = () => "cph_" + crypto.randomBytes(32).toString("base64url");
+
+/** Normalised email if well formed, else null. */
+export function cleanEmail(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const e = normEmail(v);
+  return e.length <= 254 && EMAIL_RE.test(e) ? e : null;
+}
+
+/** displayName: undefined/null/"" → null; too long or not a string → invalid. */
+function cleanDisplayName(v: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (v === undefined || v === null) return { ok: true, value: null };
+  if (typeof v !== "string") return { ok: false };
+  // eslint-disable-next-line no-control-regex
+  const s = v.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (s.length > MAX_DISPLAY_NAME) return { ok: false };
+  return { ok: true, value: s || null };
+}
+
+export function createSharedAccounts(deps: SharedAccountDeps) {
+  const env = deps.env || process.env;
+  const now = deps.now || Date.now;
+  const iso = () => new Date(now()).toISOString();
+
+  /** Insert the account for `email` if missing (first proof wins), touch last_seen_at. */
+  async function upsertAccount(email: string, verifiedBy: string, displayName: string | null): Promise<number> {
+    const t = iso();
+    await deps.dbRun(
+      `INSERT INTO accounts (email, display_name, verified_by, created_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET
+         last_seen_at = excluded.last_seen_at,
+         display_name = COALESCE(accounts.display_name, excluded.display_name)`,
+      email, displayName, verifiedBy, t, t,
+    );
+    const row = await deps.dbGet("SELECT id FROM accounts WHERE email = ?", email);
+    return Number(row.id);
+  }
+
+  async function loadAccount(id: number): Promise<SharedAccount | null> {
+    const row = await deps.dbGet("SELECT id, email, display_name, created_at FROM accounts WHERE id = ?", id);
+    if (!row) return null;
+    // Read-only view of Control Point membership: active rows with this email.
+    const teams = await deps.dbAll(
+      `SELECT t.id AS id, t.name AS name, t.ftc_team_number AS ftc
+         FROM members m JOIN teams t ON t.id = m.team_id
+        WHERE LOWER(TRIM(m.email)) = ? AND COALESCE(m.is_active, 1) = 1
+        GROUP BY t.id ORDER BY t.id`,
+      String(row.email),
+    );
+    return {
+      id: Number(row.id),
+      email: String(row.email),
+      displayName: row.display_name == null ? null : String(row.display_name),
+      createdAt: String(row.created_at),
+      controlPoint: {
+        member: teams.length > 0,
+        teams: teams.map((t: any) => {
+          const n = t.ftc == null ? NaN : Number(t.ftc);
+          return { teamNumber: Number.isInteger(n) && n > 0 ? n : null, name: String(t.name ?? "") };
+        }),
+      },
+    };
+  }
+
+  /** The /internal/* router (mount before the /api CSRF middleware). */
+  function internalRouter() {
+    const key = internalKeyFrom(env);
+    const router = express.Router();
+    if (env.CONTROL_SCOUT_INTERNAL_KEY && !key) {
+      console.warn(`[shared-accounts] CONTROL_SCOUT_INTERNAL_KEY is shorter than ${MIN_INTERNAL_KEY_LENGTH} characters; /internal is off`);
+    }
+    // Feature off: every internal route is indistinguishable from no route.
+    router.use((_req, res, next) => (key ? next() : res.status(404).json({ error: "Not found" })));
+
+    // Wrong keys are counted per IP; Scout's calls (right key) never are.
+    const failures = new Map<string, { count: number; resetAt: number }>();
+    const FAIL_MAX = 20;
+    const FAIL_WINDOW = 15 * 60 * 1000;
+    setInterval(() => {
+      const t = now();
+      for (const [k, v] of failures) if (v.resetAt <= t) failures.delete(k);
+    }, 10 * 60 * 1000).unref();
+    router.use((req, res, next) => {
+      const ip = clientIp(req);
+      const t = now();
+      let f = failures.get(ip);
+      if (f && f.resetAt <= t) { failures.delete(ip); f = undefined; }
+      // The right key always passes (a fixed config must work at once); only wrong keys are locked out.
+      if (keyMatches(req.headers["x-internal-key"], key!)) return next();
+      if (f && f.count >= FAIL_MAX) return res.status(429).json({ error: "Too many attempts" });
+      if (!f) { f = { count: 0, resetAt: t + FAIL_WINDOW }; failures.set(ip, f); }
+      f.count++;
+      return res.status(401).json({ error: "Unauthorized" });
+    });
+    router.use(express.json({ limit: "16kb" }));
+    router.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
+
+    router.post("/accounts/resolve", async (req, res) => {
+      const body = req.body || {};
+      const email = cleanEmail(body.email);
+      if (!email) return res.status(400).json({ error: "invalid_email" });
+      if (typeof body.verifiedBy !== "string" || !SCOUT_VERIFIERS.has(body.verifiedBy)) {
+        return res.status(400).json({ error: "invalid_verified_by" });
+      }
+      const name = cleanDisplayName(body.displayName);
+      if (!name.ok) return res.status(400).json({ error: "invalid_display_name" });
+      const id = await upsertAccount(email, body.verifiedBy, name.value);
+      res.json({ account: await loadAccount(id) });
+    });
+
+    router.get("/accounts/:id", async (req, res) => {
+      const raw = String(req.params.id || "");
+      const account = /^[1-9]\d{0,14}$/.test(raw) ? await loadAccount(Number(raw)) : null;
+      if (!account) return res.status(404).json({ error: "Not found" });
+      res.json({ account });
+    });
+
+    router.post("/handoff/redeem", async (req, res) => {
+      const { code, state } = req.body || {};
+      if (typeof code !== "string" || !CODE_RE.test(code) || !isHandoffState(state)) {
+        return res.status(400).json({ error: "invalid_code" });
+      }
+      const hash = hashHandoffCode(code);
+      const row = await deps.dbGet("SELECT account_id, state, expires_at FROM scout_handoff_codes WHERE code_hash = ?", hash);
+      if (!row) return res.status(400).json({ error: "invalid_code" });
+      // Any redeem attempt spends the code, so a leaked code without its
+      // state is worthless afterwards. The conditional update is the lock.
+      const t = iso();
+      const spent = await deps.dbRun("UPDATE scout_handoff_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL", t, hash);
+      if (!spent.changes) return res.status(400).json({ error: "code_used" });
+      if (String(row.expires_at) <= t) return res.status(400).json({ error: "code_expired" });
+      if (String(row.state) !== state) return res.status(400).json({ error: "state_mismatch" });
+      await deps.dbRun("UPDATE accounts SET last_seen_at = ? WHERE id = ?", t, row.account_id);
+      const account = await loadAccount(Number(row.account_id));
+      if (!account) return res.status(400).json({ error: "invalid_code" });
+      res.json({ account });
+    });
+
+    router.use((_req, res) => res.status(404).json({ error: "Not found" }));
+    // Malformed JSON and the like: JSON error, never the HTML error page.
+    router.use((err: any, _req: any, res: any, _next: any) => {
+      const status = Number(err?.status) >= 400 && Number(err?.status) < 500 ? Number(err.status) : 500;
+      if (status === 500) console.error("[shared-accounts] internal route failed:", err);
+      res.status(status).json({ error: status === 500 ? "Server error" : "Bad request" });
+    });
+    return router;
+  }
+
+  /**
+   * GET /api/auth/scout/start?state=…: hand a signed-in visitor to Scout.
+   * Signed out → the app's sign-in (`/?scout_state=…`), which comes back here.
+   * With the hand-off off (no CONTROL_SCOUT_URL) it redirects to "/".
+   */
+  function registerStartRoute(app: express.Express) {
+    const origin = scoutOriginFrom(env);
+    if (env.CONTROL_SCOUT_URL && !origin) console.warn("[shared-accounts] CONTROL_SCOUT_URL is not a valid http(s) URL; the Scout hand-off is off");
+    const limiter = new RateLimiter(now);
+    setInterval(() => limiter.sweep(), 10 * 60 * 1000).unref();
+    app.get(
+      "/api/auth/scout/start",
+      // Hand-off off: this is a browser route, so send people into the app rather than to a JSON error
+      // (e.g. a remembered /?scout_state=… that comes back here after sign-in).
+      (_req, res, next) => (origin ? next() : res.redirect(302, "/")),
+      limit(limiter, "scoutstart", [{ rule: { max: 30, windowMs: 15 * 60 * 1000 }, key: (req: any) => clientIp(req) }]),
+      async (req, res) => {
+        res.setHeader("Cache-Control", "no-store");
+        const state = req.query.state;
+        if (!isHandoffState(state)) return res.status(400).json({ error: "invalid_state" });
+        const email = cleanEmail(await deps.sessionEmail(req));
+        if (!email) {
+          // Relative, same-origin, and built from the validated state only.
+          return res.redirect(302, `/?scout_state=${encodeURIComponent(state)}`);
+        }
+        const accountId = await upsertAccount(email, "control-point", null);
+        const code = newHandoffCode();
+        const t = now();
+        await deps.dbRun(
+          "INSERT INTO scout_handoff_codes (code_hash, account_id, state, expires_at) VALUES (?, ?, ?, ?)",
+          hashHandoffCode(code), accountId, state, new Date(t + HANDOFF_TTL_MS).toISOString(),
+        );
+        // Old codes are useless after their TTL; keep the table small.
+        await deps.dbRun("DELETE FROM scout_handoff_codes WHERE expires_at < ?", new Date(t - 60 * 60 * 1000).toISOString()).catch(() => {});
+        const qs = new URLSearchParams({ code, state }).toString();
+        res.redirect(302, `${origin}/api/auth/control-point/callback?${qs}`);
+      },
+    );
+  }
+
+  return { internalRouter, registerStartRoute, upsertAccount, loadAccount };
+}

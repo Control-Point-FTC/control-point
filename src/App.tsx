@@ -20,6 +20,7 @@ const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPa
 const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
 const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
 import { forgetRefLink, rememberRefLink, takeRefLink } from './utils/refLinkReturn';
+import { rememberScoutHandoff, takeScoutHandoff } from './utils/scoutHandoff';
 const RefOpen = React.lazy(() => import('./modern/pages/RefOpen').then((m) => ({ default: m.RefOpen })));
 const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
 const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
@@ -821,6 +822,9 @@ export default function App() {
       })
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
+    // "Continue with Control Point" from Control Scout while signed out: keep
+    // the hand-off for after sign-in (see utils/scoutHandoff).
+    if (rememberScoutHandoff(window.location.search)) window.history.replaceState({}, '', window.location.pathname);
     // OAuth finished: the server already set the session cookie.
     const oauthDone = params.get('oauth') === 'ok';
     const ge = params.get('oauth_error') || params.get('google_error');
@@ -1925,6 +1929,9 @@ export default function App() {
   // to the check-in page to finish checking in.
   useEffect(() => {
     if (isLoggedIn && typeof sessionStorage !== 'undefined') {
+      // Signed in to continue to Control Scout: finish that hand-off.
+      const scout = takeScoutHandoff();
+      if (scout) { window.location.assign(scout); return; }
       const t = sessionStorage.getItem('pendingCheckinToken');
       if (t) {
         sessionStorage.removeItem('pendingCheckinToken');

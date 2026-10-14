@@ -78,6 +78,7 @@ import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, on
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
+import { createSharedAccounts } from "./server/sharedAccounts.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
@@ -2356,6 +2357,19 @@ async function startServer() {
       } catch { /* best effort */ }
     },
   );
+  // Shared accounts with Control Scout (server/sharedAccounts.ts). The
+  // internal API is server to server (X-Internal-Key, no client header or
+  // cookie), so it sits before the /api session and CSRF guard, like
+  // /api/csp-report. The hand-off start is a top-level GET navigation.
+  const sharedAccounts = createSharedAccounts({
+    dbGet, dbAll, dbRun,
+    sessionEmail: async (req) => {
+      const auth = await getAuth(req);
+      return auth ? (await authEmail(auth)) || null : null;
+    },
+  });
+  app.use("/internal", sharedAccounts.internalRouter());
+  sharedAccounts.registerStartRoute(app);
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
