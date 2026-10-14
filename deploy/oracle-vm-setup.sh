@@ -149,6 +149,12 @@ write_nginx_site() {
     gzip_comp_level 5;
     gzip_types application/json application/manifest+json;
 
+    # Shared accounts' internal API is for Control Scout on this machine only
+    # (it calls 127.0.0.1 directly). From the internet it doesn't exist.
+    # Case-insensitive (~*): Express routes /INTERNAL the same as /internal.
+    # nginx matches the decoded, slash-merged path, so %-encoding and // can't sneak past.
+    location ~* ^/internal(/|\$) { return 404; }
+
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
