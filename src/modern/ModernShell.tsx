@@ -17,8 +17,9 @@ import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, StickyNote, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
-  Sparkles, MessageSquareHeart, Compass, Check, Menu, Layers, Plus, UserPlus, LogIn,
+  Sparkles, MessageSquareHeart, Compass, Check, Menu, Layers, Plus, UserPlus, LogIn, ExternalLink,
 } from 'lucide-react';
+import { CONTROL_SCOUT_ICON, CONTROL_SCOUT_URL } from '../utils/controlScout';
 import { cn } from '../components/cn';
 import { assetUrl } from '../services/api';
 import { useTheme } from '../hooks/useTheme';
@@ -444,10 +445,38 @@ function SidebarContent(props: ModernShellProps & {
         )}
       </nav>
 
+      {/* The sister app: FTC stats and predictions, same account. */}
+      <div className="px-2 pb-1">
+        <ControlScoutRow collapsed={collapsed} />
+      </div>
+
       <div className="border-t border-line p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <UserFooter {...props} />
       </div>
     </div>
+  );
+}
+
+/** "Control Scout" in the sidebar, with its icon; opens controlscout.org in a new tab. */
+function ControlScoutRow({ collapsed }: { collapsed: boolean }) {
+  const link = (
+    <a href={CONTROL_SCOUT_URL} target="_blank" rel="noopener noreferrer" className={rowClass(false, collapsed)} aria-label={collapsed ? 'Control Scout (opens in a new tab)' : undefined}>
+      <img src={CONTROL_SCOUT_ICON} alt="" aria-hidden className="size-4 shrink-0 rounded-[4px]" />
+      {!collapsed && (
+        <>
+          <span className="flex-1 truncate">Control Scout</span>
+          <ExternalLink className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
+          <span className="sr-only"> (opens in a new tab)</span>
+        </>
+      )}
+    </a>
+  );
+  if (!collapsed) return link;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right">Control Scout</TooltipContent>
+    </Tooltip>
   );
 }
 

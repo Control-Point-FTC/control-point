@@ -1,6 +1,7 @@
 // Shared pieces for Modern Team Stats: data-source line, rank medal, season
 // toggle, the per-team actions menu, match rows and the match detail sheet.
 import { Bot, BookmarkCheck, BookmarkPlus, Eye, ListOrdered, MoreHorizontal, Pin, PinOff } from 'lucide-react';
+import { CONTROL_SCOUT_ICON, controlScoutEventUrl, controlScoutTeamUrl } from '../../../utils/controlScout';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Sheet, SheetContent,
@@ -220,27 +221,32 @@ export function MatchDetailSheet({ sel, team, onClose, actions }: { sel: { m: Ft
 }
 
 /** Deep links to the official pages the data came from, so anyone can check
- *  the numbers (and still get them when our feeds are down). Not used on
- *  Predict: forecasts are computed here, so an outside page can't verify them. */
-export function officialTeamLinks(team: number, season: number) {
+ *  the numbers (and still get them when our feeds are down), plus the same
+ *  team or event on Control Scout, the sister app. Not used on Predict:
+ *  forecasts are computed here, so an outside page can't verify them. */
+export interface SourceLink { label: string; href: string; icon?: string }
+export function officialTeamLinks(team: number, season: number): SourceLink[] {
   return [
     { label: 'FIRST Events', href: `https://ftc-events.firstinspires.org/${season}/team/${team}` },
     { label: 'FTC Scout', href: `https://ftcscout.org/teams/${team}?season=${season}` },
+    { label: 'Control Scout', href: controlScoutTeamUrl(team, season), icon: CONTROL_SCOUT_ICON },
   ];
 }
-export function officialEventLinks(code: string, season: number) {
+export function officialEventLinks(code: string, season: number): SourceLink[] {
   const c = encodeURIComponent(code);
   return [
     { label: 'FIRST Events', href: `https://ftc-events.firstinspires.org/${season}/${c}` },
     { label: 'FTC Scout', href: `https://ftcscout.org/events/${season}/${c}` },
+    { label: 'Control Scout', href: controlScoutEventUrl(code, season), icon: CONTROL_SCOUT_ICON },
   ];
 }
-export function OfficialSourceLinks({ links, className, prefix = 'View on' }: { links: { label: string; href: string }[]; className?: string; prefix?: string }) {
+export function OfficialSourceLinks({ links, className, prefix = 'View on' }: { links: SourceLink[]; className?: string; prefix?: string }) {
   return (
     <span className={cn('inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground', className)}>
       <span>{prefix}</span>
       {links.map((l, i) => (
-        <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
+        <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline">
+          {l.icon && <img src={l.icon} alt="" aria-hidden className="size-3.5 rounded-[3px]" />}
           {l.label}{i < links.length - 1 ? ' ·' : ''}<span className="sr-only"> (opens in a new tab)</span>
         </a>
       ))}
