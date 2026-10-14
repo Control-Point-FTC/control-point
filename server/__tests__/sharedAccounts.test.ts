@@ -54,8 +54,10 @@ describe("feature off (env unset)", () => {
     expect((await internal(off, "/internal/accounts/1")).status).toBe(404);
     expect((await internal(off, "/internal/handoff/redeem", { code: "x", state: "y" }, null)).status).toBe(404);
   });
-  it("the hand-off start is 404", async () => {
-    expect((await start(off, STATE)).status).toBe(404);
+  it("the hand-off start sends the browser home (no JSON error after sign-in)", async () => {
+    const r = await start(off, STATE);
+    expect(r.status).toBe(302);
+    expect(r.location).toBe("/");
   });
 });
 
@@ -235,5 +237,17 @@ describe("Continue with Control Point (hand-off)", () => {
     const got = await redeem(new URL(r.location).searchParams.get("code")!, STATE);
     expect(got.status).toBe(200);
     expect(got.body.account).toMatchObject({ email: "lone@team.test", controlPoint: { member: false, teams: [] } });
+  });
+});
+
+// Last: it locks this IP out of wrong keys for the rest of the file.
+describe("wrong-key lockout", () => {
+  it("after 20 wrong keys, wrong keys get 429 but the right key still works", async () => {
+    // Earlier tests already spent some of this IP's 20 wrong tries; keep going until the lockout.
+    let status = 0;
+    for (let i = 0; i < 21 && status !== 429; i++) status = (await internal(on, "/internal/accounts/1", undefined, "wrong-key")).status;
+    expect(status).toBe(429);
+    expect((await internal(on, "/internal/accounts/1", undefined, "wrong-key")).status).toBe(429);
+    expect((await internal(on, "/internal/accounts/999999")).status).toBe(404);
   });
 });

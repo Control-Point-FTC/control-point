@@ -165,8 +165,9 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
       const t = now();
       let f = failures.get(ip);
       if (f && f.resetAt <= t) { failures.delete(ip); f = undefined; }
-      if (f && f.count >= FAIL_MAX) return res.status(429).json({ error: "Too many attempts" });
+      // The right key always passes (a fixed config must work at once); only wrong keys are locked out.
       if (keyMatches(req.headers["x-internal-key"], key!)) return next();
+      if (f && f.count >= FAIL_MAX) return res.status(429).json({ error: "Too many attempts" });
       if (!f) { f = { count: 0, resetAt: t + FAIL_WINDOW }; failures.set(ip, f); }
       f.count++;
       return res.status(401).json({ error: "Unauthorized" });
@@ -228,6 +229,7 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
   /**
    * GET /api/auth/scout/start?state=…: hand a signed-in visitor to Scout.
    * Signed out → the app's sign-in (`/?scout_state=…`), which comes back here.
+   * With the hand-off off (no CONTROL_SCOUT_URL) it redirects to "/".
    */
   function registerStartRoute(app: express.Express) {
     const origin = scoutOriginFrom(env);
@@ -236,7 +238,9 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
     setInterval(() => limiter.sweep(), 10 * 60 * 1000).unref();
     app.get(
       "/api/auth/scout/start",
-      (_req, res, next) => (origin ? next() : res.status(404).json({ error: "Not found" })),
+      // Hand-off off: this is a browser route, so send people into the app rather than to a JSON error
+      // (e.g. a remembered /?scout_state=… that comes back here after sign-in).
+      (_req, res, next) => (origin ? next() : res.redirect(302, "/")),
       limit(limiter, "scoutstart", [{ rule: { max: 30, windowMs: 15 * 60 * 1000 }, key: (req: any) => clientIp(req) }]),
       async (req, res) => {
         res.setHeader("Cache-Control", "no-store");
