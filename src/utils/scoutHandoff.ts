@@ -15,6 +15,11 @@ export function rememberScoutHandoff(search: string): boolean {
   return true;
 }
 
+/** Is a hand-off to Control Scout waiting for sign-in? (Read only: doesn't consume it.) */
+export function scoutHandoffPending(): boolean {
+  try { return isScoutState(sessionStorage.getItem(KEY)); } catch { return false; }
+}
+
 /** Where to go after sign-in to finish the hand-off, once. */
 export function takeScoutHandoff(): string | null {
   try {

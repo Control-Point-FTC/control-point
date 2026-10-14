@@ -6,6 +6,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, CalendarCheck, CheckSquare, LineChart, Pause, Play, Wallet } from 'lucide-react';
+import { scoutHandoffPending } from '../../../utils/scoutHandoff';
+import { CONTROL_SCOUT_ICON } from '../../../utils/controlScout';
 import { Button } from '../../../components/ui-kit';
 import { BrandLogo } from '../../../components/BrandMark';
 import { SignedOutModern } from '../../signedOut';
@@ -154,6 +156,7 @@ export function AuthLayout({ children, onBack, backLabel = 'Back', wide }: {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.36, ease: [0.2, 0.8, 0.2, 1] }}
             >
+              <ScoutHandoffNote />
               {children}
             </motion.div>
           </div>
@@ -164,6 +167,20 @@ export function AuthLayout({ children, onBack, backLabel = 'Back', wide }: {
         </main>
       </div>
     </SignedOutModern>
+  );
+}
+
+/** Signing in to continue to Control Scout ("Continue with Control Point" there): say so, with Scout's icon. */
+function ScoutHandoffNote() {
+  if (!scoutHandoffPending()) return null;
+  return (
+    <div role="status" className="mb-6 flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
+      <img src={CONTROL_SCOUT_ICON} alt="" aria-hidden className="size-8 shrink-0 rounded-lg" />
+      <span className="min-w-0">
+        <span className="block font-medium text-foreground">Continuing to Control Scout</span>
+        <span className="block text-xs text-muted-foreground">Sign in and you'll go straight back. It's the same account.</span>
+      </span>
+    </div>
   );
 }
 

@@ -824,7 +824,8 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     // "Continue with Control Point" from Control Scout while signed out: keep
     // the hand-off for after sign-in (see utils/scoutHandoff).
-    if (rememberScoutHandoff(window.location.search)) window.history.replaceState({}, '', window.location.pathname);
+    // They came to sign in, so open the sign-in screen rather than the landing page.
+    if (rememberScoutHandoff(window.location.search)) { window.history.replaceState({}, '', window.location.pathname); setAuthScreen('login'); }
     // OAuth finished: the server already set the session cookie.
     const oauthDone = params.get('oauth') === 'ok';
     const ge = params.get('oauth_error') || params.get('google_error');
