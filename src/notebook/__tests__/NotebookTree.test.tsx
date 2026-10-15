@@ -1,12 +1,14 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import * as Y from 'yjs';
 import { encodeBytes, decodeBytes } from '../NotebookSync';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookPage } from '../NotebookPage';
 import { rowMenuTrigger } from '../../components/contextmenu/ContextMenuProvider';
 import { apiJson } from '../../services/api';
+import { findNotebookSession } from '../notebookRuntime';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
 const viewport=vi.hoisted(()=>({mobile:false}));
@@ -116,22 +118,33 @@ describe('notebook hierarchy controls', () => {
     expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true');
   });
   it('retains the mobile rename and draft after failure, then closes it after retry', async () => {
-    viewport.mobile = true; mount(); await within(screen.getByRole('banner')).findByRole('button', { name: 'New page' });
+    const user = userEvent.setup();
+    viewport.mobile = true; const tree = mount(); await within(screen.getByRole('banner')).findByRole('button', { name: 'New page' });
     const original = vi.mocked(apiJson).getMockImplementation()!;
     let fail = true;
     vi.mocked(apiJson).mockImplementation(async (path, options) => {
       if (path.endsWith('/sync') && JSON.parse(String(options?.body ?? '{}')).update && fail) throw new Error('rename save failed');
       return original(path, options);
     });
-    fireEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: 'New page' }));
+    // Await creation and the drawer's focus effects before interacting with its input.
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'New page' }));
     const input = await screen.findByRole('textbox', { name: 'Rename page' });
-    fireEvent.change(input, { target: { value: 'Retry this title' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    // Rendering the input does not mean navigation has installed the new sync session.
+    await waitFor(() => expect(findNotebookSession(902, { memberId: 10, teamId: 20 })?.data).toBeTruthy());
+    await user.clear(input);
+    await user.type(input, 'Retry this title');
+    await user.keyboard('{Enter}');
     await screen.findByText('Title has not reached the server.');
     expect(screen.getByRole('textbox', { name: 'Rename page' })).toHaveValue('Retry this title');
-    fail = false; fireEvent.keyDown(input, { key: 'Enter' });
+    expect(input).toHaveFocus();
+    fail = false;
+    await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Notebooks' })).toBeNull();
+    expect(tree.pages.find(p => p.id === 902)?.title).toBe('Retry this title');
   });
   it('waits for the initial CRDT document before saving an instant page title', async () => {
+    const user = userEvent.setup();
     const tree = mount(); await screen.findByRole('button', { name: 'Build' });
     const original = vi.mocked(apiJson).getMockImplementation()!;
     let release!: () => void; const joining = new Promise<void>(resolve => { release = resolve; });
@@ -140,10 +153,14 @@ describe('notebook hierarchy controls', () => {
       if (path === '/api/notebook/pages/902/sync' && !joined) { await joining; joined = true; }
       return original(path, options);
     });
-    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    await user.click(screen.getByRole('button', { name: 'New page' }));
     const input = await screen.findByRole('textbox', { name: 'Rename page' });
-    fireEvent.change(input, { target: { value: 'Named before join' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    // Wait for navigation to start joining, but keep the initial document blocked.
     await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p]) => p === '/api/notebook/pages/902/sync')).toBe(true));
+    expect(findNotebookSession(902, { memberId: 10, teamId: 20 })?.data).toBeNull();
+    await user.clear(input);
+    await user.type(input, 'Named before join');
+    await user.keyboard('{Enter}');
     expect(tree.pages.find(p => p.id === 902)?.title).toBe('Untitled');
     await act(async () => { release(); });
     await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named before join'));
