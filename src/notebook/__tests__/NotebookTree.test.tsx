@@ -158,21 +158,22 @@ describe('notebook hierarchy controls', () => {
     await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named before join'));
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
   });
-  it('names a new page in its own CRDT session while the navigation to it is still pending', async () => {
+  it("offers a new page's rename box once the page is open, so the title goes through its CRDT session", async () => {
     const tree = mount(); await landed();
-    const current = () => document.querySelector('[aria-current="page"]')?.textContent;
     let release!: () => void; navigation.page = '902'; navigation.hold = new Promise<void>(resolve => { release = resolve; });
     fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    // Created and listed, but the router has not moved off Drive yet: no rename box.
+    await screen.findByRole('button', { name: 'Untitled' });
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('Drive');
+    expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull();
+    await act(async () => { release(); });
     const input = await screen.findByRole('textbox', { name: 'Rename page' });
-    // The rename box is up, but the router has not moved off Drive yet.
-    expect(current()).toContain('Drive');
-    fireEvent.change(input, { target: { value: 'Named mid-navigation' } }); fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named mid-navigation'));
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: 'Named once open' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named once open'));
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
     // Saved through the page's sync, not renamed around it.
     expect(vi.mocked(apiJson).mock.calls.some(([p]) => p === '/api/notebook/pages/902')).toBe(false);
-    await act(async () => { release(); });
-    await waitFor(() => expect(current()).toContain('Named mid-navigation'));
   });
   it('does not steal focus on resize after writing focus has ended',async()=>{
     mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
