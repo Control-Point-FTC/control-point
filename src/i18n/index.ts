@@ -47,6 +47,8 @@ const resources = {
         appearanceHint: "Light or dark theme",
         notifications: "Notifications",
         notificationsHint: "Team updates, digests, @everyone",
+        reactions: "Reactions",
+        reactionsHint: "Upload your own custom reactions",
         calls: "Calls & sounds",
         callsHint: "Devices, camera, chimes",
         bruno: "Bruno AI",
