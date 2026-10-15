@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { withSession } from "./helpers/session";
-import { createSharedAccounts } from "../sharedAccounts";
+import { createSharedAccounts, parsePermissions, workspaceAdmin } from "../sharedAccounts";
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -121,7 +121,101 @@ describe("POST /internal/accounts/resolve", () => {
       teams: [{ teamNumber: 12345, name: "Gear Grinders" }, { teamNumber: null, name: "No Number Yet" }],
       shortlist: [],
     });
+    expect(r.body.account.workspaces).toEqual([
+      { id: String(t1), name: "Gear Grinders", role: "member" },
+      { id: String(t2), name: "No Number Yet", role: "member" },
+    ]);
     expect((await on.db.execute("SELECT id, email, password, is_active FROM members ORDER BY id")).rows).toEqual(before.rows);
+  });
+});
+
+describe("workspaces on the account payload", () => {
+  /** A role on `teamId` with these permissions, held by `memberId`. */
+  async function grantRole(teamId: number, memberId: number, permissions: string) {
+    const role = Number((await on.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Test role', ?)", args: [teamId, permissions] })).lastInsertRowid);
+    await on.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [memberId, role] });
+  }
+
+  it("0 workspaces: an account with no members rows gets an empty list", async () => {
+    const r = await resolve({ email: "no.workspace@example.test", verifiedBy: "google" });
+    expect(r.status).toBe(200);
+    expect(r.body.account.workspaces).toEqual([]);
+    expect(r.body.account.controlPoint).toEqual({ member: false, teams: [], shortlist: [] });
+  });
+
+  it("1 workspace: one active membership, a plain member", async () => {
+    const t = await seedTeam(on.db, "Solo Squad");
+    await seedMember(on.db, t, "Solo", "solo@ws.test");
+    const r = await resolve({ email: "solo@ws.test", verifiedBy: "google" });
+    expect(r.body.account.workspaces).toEqual([{ id: String(t), name: "Solo Squad", role: "member" }]);
+  });
+
+  it("2 workspaces: admin in one, member in the other; inactive rows excluded", async () => {
+    const a = await seedTeam(on.db, "Admin Here");
+    const b = await seedTeam(on.db, "Member Here");
+    const c = await seedTeam(on.db, "Removed From");
+    await seedMember(on.db, a, "Two", "Two@WS.test", "admin");
+    await seedMember(on.db, b, "Two", "two@ws.test");
+    // Removed (is_active = 0), even as an admin: not a workspace any more.
+    const gone = await seedMember(on.db, c, "Two", "two@ws.test", "admin");
+    await on.db.execute({ sql: "UPDATE members SET is_active = 0 WHERE id = ?", args: [gone] });
+    const r = await resolve({ email: "two@ws.test", verifiedBy: "google" });
+    expect(r.body.account.workspaces).toEqual([
+      { id: String(a), name: "Admin Here", role: "admin" },
+      { id: String(b), name: "Member Here", role: "member" },
+    ]);
+    expect(r.body.account.controlPoint.teams).toEqual([{ teamNumber: null, name: "Admin Here" }, { teamNumber: null, name: "Member Here" }]);
+    // GET by id returns the same workspaces.
+    expect((await internal(on, `/internal/accounts/${r.body.account.id}`)).body.account.workspaces).toEqual(r.body.account.workspaces);
+  });
+
+  it("a role granting * or manage_members makes an admin; other roles, other teams' roles and bad JSON do not", async () => {
+    const star = await seedTeam(on.db, "Star Role");
+    const manage = await seedTeam(on.db, "Manage Role");
+    const other = await seedTeam(on.db, "Other Perms");
+    const elsewhere = await seedTeam(on.db, "Role Elsewhere");
+    const broken = await seedTeam(on.db, "Broken Perms");
+    const email = "roles@ws.test";
+    await grantRole(star, await seedMember(on.db, star, "R", email), JSON.stringify(["*"]));
+    await grantRole(manage, await seedMember(on.db, manage, "R", email), JSON.stringify(["tasks", "manage_members"]));
+    await grantRole(other, await seedMember(on.db, other, "R", email), JSON.stringify(["tasks", "budget"]));
+    // An admin role on a different workspace does not count for this membership.
+    await grantRole(star, await seedMember(on.db, elsewhere, "R", email), JSON.stringify(["*"]));
+    await grantRole(broken, await seedMember(on.db, broken, "R", email), "not json");
+    const r = await resolve({ email, verifiedBy: "google" });
+    expect(r.status).toBe(200);
+    expect(r.body.account.workspaces).toEqual([
+      { id: String(star), name: "Star Role", role: "admin" },
+      { id: String(manage), name: "Manage Role", role: "admin" },
+      { id: String(other), name: "Other Perms", role: "member" },
+      { id: String(elsewhere), name: "Role Elsewhere", role: "member" },
+      { id: String(broken), name: "Broken Perms", role: "member" },
+    ]);
+  });
+
+  it("ids are stable across a workspace rename", async () => {
+    const t = await seedTeam(on.db, "Old Name");
+    await seedMember(on.db, t, "Ren", "rename@ws.test");
+    const before = await resolve({ email: "rename@ws.test", verifiedBy: "google" });
+    await on.db.execute({ sql: "UPDATE teams SET name = 'New Name' WHERE id = ?", args: [t] });
+    const after = await internal(on, `/internal/accounts/${before.body.account.id}`);
+    expect(after.body.account.workspaces).toEqual([{ id: before.body.account.workspaces[0].id, name: "New Name", role: "member" }]);
+  });
+});
+
+describe("workspace admin rule", () => {
+  it("maps account_type and role permissions", () => {
+    expect(workspaceAdmin("admin", [])).toBe(true);
+    expect(workspaceAdmin("student", [])).toBe(false);
+    expect(workspaceAdmin(null, ['["*"]'])).toBe(true);
+    expect(workspaceAdmin("student", ['["tasks"]', '["manage_members"]'])).toBe(true);
+    expect(workspaceAdmin("student", ['["tasks"]', "{bad", null])).toBe(false);
+  });
+  it("parses permissions defensively", () => {
+    expect(parsePermissions('["a", 1, "b"]')).toEqual(["a", "b"]);
+    expect(parsePermissions('{"a":1}')).toEqual([]);
+    expect(parsePermissions("nope")).toEqual([]);
+    expect(parsePermissions(null)).toEqual([]);
   });
 });
 
@@ -140,8 +234,9 @@ describe("GET /internal/accounts/:id", () => {
 describe("Continue with Control Point (hand-off)", () => {
   let session: string;
   let memberEmail: string;
+  let team: number;
   beforeAll(async () => {
-    const team = await seedTeam(on.db, "Hand-off Team");
+    team = await seedTeam(on.db, "Hand-off Team");
     memberEmail = "Hand.Off@Team.test";
     session = await on.session(await seedMember(on.db, team, "Handy", memberEmail));
   });
@@ -166,6 +261,7 @@ describe("Continue with Control Point (hand-off)", () => {
     const r = await redeem(code, STATE);
     expect(r.status).toBe(200);
     expect(r.body.account).toMatchObject({ id: Number(row.id), email: "hand.off@team.test", controlPoint: { member: true, teams: [{ teamNumber: null, name: "Hand-off Team" }] } });
+    expect(r.body.account.workspaces).toEqual([{ id: String(team), name: "Hand-off Team", role: "member" }]);
   });
 
   it("an existing account keeps its id and first proof", async () => {

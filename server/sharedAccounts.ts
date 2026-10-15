@@ -10,6 +10,14 @@
  * Nothing here creates or changes `members`, `verified_emails`,
  * `proven_passwords` or any password: Control Point membership is only read.
  *
+ * Every route that returns `account` includes `workspaces`: one
+ * `{ id, name, role }` per workspace (team) the email has an active
+ * `members` row in (`is_active` 1 or NULL). `id` is `String(teams.id)`, stable
+ * across renames; `name` is `teams.name`. `role` is "admin" when the row has
+ * `account_type = 'admin'` or holds a role on that workspace whose
+ * permissions include "*" or "manage_members" (Control Point's own admin
+ * rule, as in countAdmins); otherwise "member". `controlPoint` is unchanged.
+ *
  * Env:
  *   CONTROL_SCOUT_INTERNAL_KEY  shared secret (32+ chars) Scout sends as
  *                               X-Internal-Key. Unset → /internal/* is 404.
@@ -42,6 +50,42 @@ export interface SharedAccount {
     /** FTC team numbers on the shortlist of the member's workspaces (each workspace's latest season), for Scout to merge in. */
     shortlist: number[];
   };
+  /**
+   * One entry per Control Point workspace (team) the email has an active
+   * `members` row in, ordered by id. `id` is `teams.id` as a string (stable
+   * across renames). `role` is "admin" when that membership is a workspace
+   * admin by Control Point's own rule (see workspaceAdmin), else "member".
+   */
+  workspaces: SharedWorkspace[];
+}
+
+export interface SharedWorkspace {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+}
+
+/** Permission keys that make a role a workspace admin (the same set Control Point's countAdmins uses). */
+const ADMIN_PERMS = new Set(["*", "manage_members"]);
+
+/** A roles.permissions JSON value → its string keys; anything malformed is no permissions. */
+export function parsePermissions(json: unknown): string[] {
+  try {
+    const a = JSON.parse(typeof json === "string" && json ? json : "[]");
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a membership is a workspace admin, by Control Point's existing
+ * rule: `members.account_type = 'admin'` (the legacy flag, kept in sync by
+ * syncAccountType), or a role on that workspace granting "*" or "manage_members".
+ */
+export function workspaceAdmin(accountType: unknown, rolePermissions: unknown[]): boolean {
+  if (accountType === "admin") return true;
+  return rolePermissions.some((p) => parsePermissions(p).some((k) => ADMIN_PERMS.has(k)));
 }
 
 /** Sign-in providers a Scout visitor can start with (Control Point runs the OAuth; Scout never sees provider tokens). */
@@ -149,6 +193,28 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
         ORDER BY s.team_number LIMIT ${MAX_SHORTLIST}`,
       ...ids,
     ) : [];
+    // Workspace roles: the same active rows, plus any roles each membership holds on its own workspace.
+    const memberships = ids.length ? await deps.dbAll(
+      `SELECT m.id AS member_id, m.team_id AS team_id, m.account_type AS account_type
+         FROM members m
+        WHERE LOWER(TRIM(m.email)) = ? AND COALESCE(m.is_active, 1) = 1
+          AND m.team_id IN (${ids.map(() => "?").join(",")})`,
+      String(row.email), ...ids,
+    ) : [];
+    const memberIds = memberships.map((m: any) => Number(m.member_id)).filter((x: number) => Number.isInteger(x));
+    const roleRows = memberIds.length ? await deps.dbAll(
+      `SELECT mr.member_id AS member_id, r.permissions AS permissions
+         FROM member_roles mr
+         JOIN roles r ON r.id = mr.role_id
+         JOIN members m ON m.id = mr.member_id
+        WHERE mr.member_id IN (${memberIds.map(() => "?").join(",")}) AND r.team_id = m.team_id`,
+      ...memberIds,
+    ) : [];
+    const adminTeams = new Set<number>();
+    for (const m of memberships) {
+      const perms = roleRows.filter((r: any) => Number(r.member_id) === Number(m.member_id)).map((r: any) => r.permissions);
+      if (workspaceAdmin(m.account_type, perms)) adminTeams.add(Number(m.team_id));
+    }
     return {
       id: Number(row.id),
       email: String(row.email),
@@ -162,6 +228,11 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
         }),
         shortlist: shortlistRows.map((r: any) => Number(r.n)).filter((n: number) => Number.isInteger(n) && n > 0 && n <= 999999),
       },
+      workspaces: teams.map((t: any) => ({
+        id: String(t.id),
+        name: String(t.name ?? ""),
+        role: adminTeams.has(Number(t.id)) ? "admin" as const : "member" as const,
+      })),
     };
   }
 
