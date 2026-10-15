@@ -10,11 +10,17 @@ import { rowMenuTrigger } from '../../components/contextmenu/ContextMenuProvider
 import { apiJson } from '../../services/api';
 import { findNotebookSession } from '../notebookRuntime';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
-vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
+// A page's editor can suspend while the router's transition to it is open:
+// `navigation.hold` keeps that navigation pending, as a slow editor would.
+const navigation = vi.hoisted(() => ({ hold: null as Promise<void> | null, page: '' }));
+vi.mock('../NotebookEditor', async () => {
+  const { use } = await import('react'), { useLocation } = await import('react-router-dom');
+  return { NotebookEditor: () => { const { search } = useLocation(); if (navigation.hold && new URLSearchParams(search).get('page') === navigation.page) use(navigation.hold); return null; }, downloadNotebookJSON: vi.fn() };
+});
 const viewport=vi.hoisted(()=>({mobile:false}));
 vi.mock('../useNotebookMobile',()=>({useNotebookMobile:()=>viewport.mobile}));
 let view:ReturnType<typeof render>;
-afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.mobile=false; });
+afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.mobile=false;navigation.hold=null; });
 function mount(path = '/notebook', emptySection = false, extraBook = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
   if (extraBook) (tree.notebooks as any[]).push({ id: 2, title: 'Outreach', color: null, sort: 1 });
@@ -48,6 +54,9 @@ function mount(path = '/notebook', emptySection = false, extraBook = false) {
   view=render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
   return tree;
 }
+// The landing page opens in a router transition, after the tree has shown:
+// wait for its session before creating pages, or the two navigations race.
+const landed = () => waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p]) => p === '/api/notebook/pages/2/sync')).toBe(true));
 describe('tabs layout', () => {
   it('polls mentions once per layout and lets you pick an empty notebook to add its first section', async () => {
     localStorage.setItem('cp-notebook-layout:10:20', 'tabs');
@@ -119,7 +128,7 @@ describe('notebook hierarchy controls', () => {
   });
   it('retains the mobile rename and draft after failure, then closes it after retry', async () => {
     const user = userEvent.setup();
-    viewport.mobile = true; const tree = mount(); await within(screen.getByRole('banner')).findByRole('button', { name: 'New page' });
+    viewport.mobile = true; const tree = mount(); await within(screen.getByRole('banner')).findByRole('button', { name: 'New page' }); await landed();
     const original = vi.mocked(apiJson).getMockImplementation()!;
     let fail = true;
     vi.mocked(apiJson).mockImplementation(async (path, options) => {
@@ -129,7 +138,7 @@ describe('notebook hierarchy controls', () => {
     // Await creation and the drawer's focus effects before interacting with its input.
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'New page' }));
     const input = await screen.findByRole('textbox', { name: 'Rename page' });
-    // Rendering the input does not mean navigation has installed the new sync session.
+    // The rename box waits for the new page's session; this test also needs it joined.
     await waitFor(() => expect(findNotebookSession(902, { memberId: 10, teamId: 20 })?.data).toBeTruthy());
     await user.clear(input);
     await user.type(input, 'Retry this title');
@@ -145,7 +154,7 @@ describe('notebook hierarchy controls', () => {
   });
   it('waits for the initial CRDT document before saving an instant page title', async () => {
     const user = userEvent.setup();
-    const tree = mount(); await screen.findByRole('button', { name: 'Build' });
+    const tree = mount(); await screen.findByRole('button', { name: 'Build' }); await landed();
     const original = vi.mocked(apiJson).getMockImplementation()!;
     let release!: () => void; const joining = new Promise<void>(resolve => { release = resolve; });
     let joined = false;
@@ -165,6 +174,23 @@ describe('notebook hierarchy controls', () => {
     await act(async () => { release(); });
     await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named before join'));
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
+  });
+  it("offers a new page's rename box once the page is open, so the title goes through its CRDT session", async () => {
+    const tree = mount(); await landed();
+    let release!: () => void; navigation.page = '902'; navigation.hold = new Promise<void>(resolve => { release = resolve; });
+    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    // Created and listed, but the router has not moved off Drive yet: no rename box.
+    await screen.findByRole('button', { name: 'Untitled' });
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('Drive');
+    expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull();
+    await act(async () => { release(); });
+    const input = await screen.findByRole('textbox', { name: 'Rename page' });
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: 'Named once open' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named once open'));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
+    // Saved through the page's sync, not renamed around it.
+    expect(vi.mocked(apiJson).mock.calls.some(([p]) => p === '/api/notebook/pages/902')).toBe(false);
   });
   it('does not steal focus on resize after writing focus has ended',async()=>{
     mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));

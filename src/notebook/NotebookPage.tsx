@@ -103,7 +103,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const collapsedKey = `cp-notebook-open:${memberId}:${teamId}`;
   const [stars, setStars] = useState(() => readPreference(starKey));
   const [collapsed, setCollapsed] = useState(() => readCollapsed(collapsedKey));
-  const [renaming, setRenaming] = useState<{ kind: Kind; item: Item; title: string } | null>(null);
+  // `opening`: a page created a moment ago whose session has not opened yet.
+  const [renaming, setRenaming] = useState<{ kind: Kind; item: Item; title: string; opening?: boolean } | null>(null);
   const renameSaving = useRef(false);
   const [sync, setSync] = useState<NotebookSync | null>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
@@ -279,7 +280,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
           if (mobile) { setDrawer(true); closeDrawerAfterRename.current = true; } else setDrawer(false);
         }
         setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
-        setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled' });
+        setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled', opening: kind === 'page' });
       } finally {
         creatingRef.current = false;
       }
@@ -424,7 +425,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const toggleStar = (id: number) => { const value = stars.includes(id) ? stars.filter(n => n !== id) : [...stars, id]; setStars(value); savePreference(starKey, value); };
   const isCollapsed = (kind: Kind, id: number) => collapsed.includes(`${kind}:${id}`);
   const toggleCollapse = (kind: Kind, id: number) => { const key = `${kind}:${id}`; const value = collapsed.includes(key) ? collapsed.filter(n => n !== key) : [...collapsed, key]; setCollapsed(value); savePreference(collapsedKey, value); };
-  const renameInput = (kind: Kind, item: Item) => renaming?.kind === kind && renaming.item.id === item.id ? <Input autoFocus aria-label={`Rename ${kind}`} className="nb-inline-rename" maxLength={200} value={renaming.title} onChange={e => setRenaming({ ...renaming, title: e.target.value })} onBlur={() => { void finishRename(); }} onKeyDown={e => {
+  // A new page's rename box waits for the page's session: the router opens the
+  // page in a transition, and a title typed before then would miss its CRDT
+  // document. The session ref is set before `sync`, so it is ready by then.
+  useEffect(() => { if (renaming?.opening && sync?.pageId === renaming.item.id) setRenaming({ ...renaming, opening: false }); }, [renaming, sync]);
+  const renameInput = (kind: Kind, item: Item) => renaming?.kind === kind && renaming.item.id === item.id && !(renaming.opening && sync?.pageId !== item.id) ? <Input autoFocus aria-label={`Rename ${kind}`} className="nb-inline-rename" maxLength={200} value={renaming.title} onChange={e => setRenaming({ ...renaming, title: e.target.value })} onBlur={() => { void finishRename(); }} onKeyDown={e => {
     e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); endRename(); } if (e.key === 'Enter') { e.preventDefault(); void finishRename(); }
   }} /> : null;
   // Ends inline rename; on mobile after instant creation, also closes the drawer we kept open for the rename box.
