@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, BellRing, Bot, Building2, HardDriveDownload, KeyRound, Palette, ShieldCheck, ShieldHalf, Sparkles, UserRound, Users } from 'lucide-react';
+import { Bell, BellRing, Bot, Building2, HardDriveDownload, KeyRound, Palette, ShieldCheck, ShieldHalf, SmilePlus, Sparkles, UserRound, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Page, PageHeader } from '../../ui/page';
 import { ProfileSection } from './ProfileSection';
@@ -21,11 +21,12 @@ import { AdminSection } from './AdminSection';
 import { MembersSection, RolesSection } from './PeopleSections';
 import { NotificationsSection } from './NotificationsSection';
 import { OfflineSection } from './OfflineSection';
+import { ReactionsSection } from './ReactionsSection';
 import { WhatsNewDialog } from '../WhatsNewDialog';
 import { hasUnseenUpdate } from '../../../components/WhatsNewModal';
 import { useChangelog } from '../../../utils/changelogStore';
 
-export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'offline' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
+export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'reactions' | 'calls' | 'bruno' | 'offline' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
 interface SectionDef { id: SettingsSectionId; label: string; hint: string; icon: ComponentType<{ className?: string }>; group: 'You' | 'Workspace' }
 
@@ -42,6 +43,7 @@ export function SettingsPage(props: any) {
     { id: 'profile', label: k('profile'), hint: k('profileHint'), icon: UserRound, group: 'You' },
     { id: 'appearance', label: k('appearance'), hint: k('appearanceHint'), icon: Palette, group: 'You' },
     { id: 'notifications', label: k('notifications'), hint: k('notificationsHint'), icon: BellRing, group: 'You' },
+    { id: 'reactions', label: k('reactions'), hint: k('reactionsHint'), icon: SmilePlus, group: 'You' },
     { id: 'calls', label: k('calls'), hint: k('callsHint'), icon: Bell, group: 'You' },
     { id: 'bruno', label: k('bruno'), hint: k('brunoHint'), icon: Bot, group: 'You' },
     { id: 'offline', label: k('offline'), hint: k('offlineHint'), icon: HardDriveDownload, group: 'You' },
@@ -151,6 +153,7 @@ export function SettingsPage(props: any) {
               {active === 'profile' && <ProfileSection {...props} />}
               {active === 'appearance' && <AppearanceSection {...props} />}
               {active === 'notifications' && <NotificationsSection />}
+              {active === 'reactions' && <ReactionsSection />}
               {active === 'calls' && <CallsSection />}
               {active === 'bruno' && <BrunoSection {...props} />}
               {active === 'offline' && <OfflineSection />}

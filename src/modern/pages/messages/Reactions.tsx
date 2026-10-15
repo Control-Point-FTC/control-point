@@ -2,6 +2,7 @@
 // picker, over the shared useReactionToggle / useEmojiPicker (same optimistic
 // toggle, rollback, search, categories and custom reactions as Classic).
 import { useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { Search, SmilePlus, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
@@ -158,7 +159,9 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">You have no custom reactions yet.</p>
+          <p className="text-xs text-muted-foreground">
+            No custom reactions yet. <Link to="/settings?section=reactions" onClick={onClose} className="font-medium text-foreground underline-offset-4 hover:underline">Upload your own in Settings → Reactions</Link>
+          </p>
         )}
       </div>
     </motion.div>
