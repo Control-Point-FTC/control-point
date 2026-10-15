@@ -117,6 +117,50 @@ describe('Settings → Reactions', () => {
     expect(screen.getByText('1 slot left.')).toBeInTheDocument();
   });
 
+  it('a failed load is an error with Try again, not an empty list, and uploads wait for it', async () => {
+    let fail = true;
+    api.apiFetch.mockImplementation(() => (fail ? Promise.reject(new Error('Network down')) : json([emoji(1)])));
+    render(<ReactionsSection />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network down');
+    expect(screen.queryByText(/No custom reactions yet/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Choose reaction image' })).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toBeDisabled();
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
+    expect(await screen.findByAltText('r1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Choose reaction image' })).toBeEnabled();
+  });
+
+  it('a non-OK list response is an error too', async () => {
+    api.apiFetch.mockImplementation(() => json({ error: 'Invalid session' }, false));
+    render(<ReactionsSection />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid session');
+  });
+
+  it('locks the draft while the list loads and during an upload', async () => {
+    let finishList!: (v: unknown) => void;
+    let finishUpload!: (v: unknown) => void;
+    api.apiFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Promise((r) => { finishUpload = r; });
+      return new Promise((r) => { finishList = r; });
+    });
+    render(<ReactionsSection />);
+    expect(screen.getByRole('button', { name: 'Choose reaction image' })).toBeDisabled();
+    expect(screen.getByLabelText('Name')).toBeDisabled();
+    finishList({ ok: true, json: async () => [] });
+    await screen.findByText(/No custom reactions yet/);
+    fireEvent.change(screen.getByTestId('reaction-file'), { target: { files: [png()] } });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'first' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload reaction' }));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Change reaction image' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Uploading/ })).toBeDisabled();
+    finishUpload({ ok: true, json: async () => ({ ok: true, id: 2, name: 'first', image_url: '/api/files/2' }) });
+    expect(await screen.findByAltText('first')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toBeEnabled();
+    expect(calls('POST')).toHaveLength(1);
+  });
+
   it('deletes with DELETE /api/chat/custom-emoji/:id after confirming', async () => {
     list = [emoji(4), emoji(5)];
     render(<ReactionsSection />);

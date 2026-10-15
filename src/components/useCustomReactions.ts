@@ -22,28 +22,38 @@ export function useCustomReactions() {
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadTry, setLoadTry] = useState(0);
 
+  // The list (again on Try again). A failed load is an error, not an empty
+  // list, and uploads wait for it so a late snapshot can't drop a new card.
   useEffect(() => {
     let live = true;
+    setLoading(true);
+    setLoadError(null);
     (async () => {
       try {
         const res = await apiFetch('/api/chat/custom-emoji');
-        const rows = await res.json().catch(() => []);
-        if (live && res.ok && Array.isArray(rows)) setItems(rows);
-      } catch {
-        /* leave the list empty */
+        const rows = await res.json().catch(() => null);
+        if (!res.ok || !Array.isArray(rows)) throw new Error(rows?.error || 'Could not load your reactions.');
+        if (live) setItems(rows);
+      } catch (e: any) {
+        if (live) setLoadError(e?.message || 'Could not load your reactions.');
       } finally {
         if (live) setLoading(false);
       }
     })();
     return () => { live = false; };
-  }, []);
+  }, [loadTry]);
+  const reload = () => setLoadTry((n) => n + 1);
+  /** The list is in: uploads and the draft controls are usable. */
+  const ready = !loading && !loadError;
 
   // Revoke the preview's object URL when it changes or on unmount.
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const pickFile = (f: File | null) => {
-    if (!f) return;
+    if (!f || uploading) return;
     if (!f.type.startsWith('image/')) {
       notify('Pick an image file (PNG, JPG, GIF, WebP).', 'error');
       return;
@@ -60,6 +70,7 @@ export function useCustomReactions() {
   const atLimit = items.length >= MAX_CUSTOM_REACTIONS;
 
   const upload = async () => {
+    if (!ready || uploading) return;
     if (atLimit) {
       notify(`You have ${MAX_CUSTOM_REACTIONS} custom reactions — delete one to add another.`, 'error');
       return;
@@ -118,7 +129,7 @@ export function useCustomReactions() {
   };
 
   return {
-    items, loading, name, setName, file, preview, uploading, deletingId,
+    items, loading, loadError, reload, ready, name, setName, file, preview, uploading, deletingId,
     atLimit, slotsLeft: Math.max(0, MAX_CUSTOM_REACTIONS - items.length), max: MAX_CUSTOM_REACTIONS,
     pickFile, clearFile, upload, remove,
   };

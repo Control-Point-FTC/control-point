@@ -2,7 +2,7 @@
 // (max 25), over the shared useCustomReactions controller. Only you can
 // react with them; everyone else sees them on messages.
 import { useRef } from 'react';
-import { ImagePlus, Loader2, SmilePlus, Trash2, X } from 'lucide-react';
+import { ImagePlus, Loader2, RefreshCw, SmilePlus, Trash2, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Button, Input, Label, Skeleton } from '../../../components/ui-kit';
 import { assetUrl } from '../../../services/api';
@@ -12,6 +12,9 @@ import { SettingsGroup } from './SettingsPage';
 export function ReactionsSection() {
   const r = useCustomReactions();
   const fileRef = useRef<HTMLInputElement>(null);
+  // The draft (image + name) is locked until the list is in, during an
+  // upload, and at the limit.
+  const locked = !r.ready || r.uploading || r.atLimit;
 
   return (
     <>
@@ -22,6 +25,11 @@ export function ReactionsSection() {
         {r.loading ? (
           <div className="grid grid-cols-3 gap-2 p-4 sm:grid-cols-5" aria-label="Loading your reactions">
             {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-24 rounded-lg" />)}
+          </div>
+        ) : r.loadError ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
+            <p role="alert" className="text-sm text-muted-foreground">{r.loadError}</p>
+            <Button variant="outline" size="sm" onClick={r.reload} className="max-sm:h-11"><RefreshCw /> Try again</Button>
           </div>
         ) : r.items.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
@@ -57,7 +65,7 @@ export function ReactionsSection() {
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              disabled={r.atLimit}
+              disabled={locked}
               aria-label={r.preview ? 'Change reaction image' : 'Choose reaction image'}
               className={cn(
                 'flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border-2 border-dashed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
@@ -76,12 +84,12 @@ export function ReactionsSection() {
             />
             <div className="min-w-0 flex-1 space-y-1.5">
               <Label htmlFor="reaction-name">Name</Label>
-              <Input id="reaction-name" value={r.name} onChange={(e) => r.setName(e.target.value)} placeholder="e.g. zog_hype" maxLength={32} disabled={r.atLimit} />
+              <Input id="reaction-name" value={r.name} onChange={(e) => r.setName(e.target.value)} placeholder="e.g. zog_hype" maxLength={32} disabled={locked} />
               <p className="text-xs text-muted-foreground">
                 {r.file ? (
                   <span className="inline-flex items-center gap-1">
                     <span className="truncate">{r.file.name}</span>
-                    <button type="button" onClick={r.clearFile} aria-label="Remove chosen image" className="rounded text-muted-foreground hover:text-foreground"><X className="size-3.5" /></button>
+                    <button type="button" onClick={r.clearFile} disabled={r.uploading} aria-label="Remove chosen image" className="rounded text-muted-foreground hover:text-foreground"><X className="size-3.5" /></button>
                   </span>
                 ) : (
                   `${r.slotsLeft} slot${r.slotsLeft === 1 ? '' : 's'} left.`
@@ -89,7 +97,7 @@ export function ReactionsSection() {
               </p>
             </div>
           </div>
-          <Button onClick={() => void r.upload()} disabled={r.uploading || !r.file || r.atLimit} className="w-full max-sm:h-11 sm:w-auto sm:self-end">
+          <Button onClick={() => void r.upload()} disabled={!r.ready || r.uploading || !r.file || r.atLimit} className="w-full max-sm:h-11 sm:w-auto sm:self-end">
             {r.uploading ? <><Loader2 className="animate-spin motion-reduce:animate-none" /> Uploading…</> : r.atLimit ? `Limit reached (${r.max}): delete one first` : 'Upload reaction'}
           </Button>
         </div>
