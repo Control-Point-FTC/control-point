@@ -179,16 +179,26 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     window.addEventListener('bruno-data-changed', onBruno);
     return () => { mounted.current = false; clearInterval(timer); window.removeEventListener('bruno-data-changed', onBruno); void syncRef.current?.release(); syncRef.current = null; };
   }, [loadTree, teamId]);
+  const openSession = (id: number) => {
+    void syncRef.current?.release();
+    const scope = memberId && teamId ? { memberId, teamId } : undefined;
+    const retained = findNotebookSession(id, scope);
+    const next = retained ?? new NotebookSync(id, scope);
+    syncRef.current = next; setSync(next);
+    if (retained) retained.resume(); else void next.start();
+  };
+  // Set when a page is opened before its navigation lands (instant creation):
+  // the page selected at that moment. The router commits navigation in a
+  // transition, so `selected` can still name it for a few renders; keep the
+  // new page's session instead of switching back.
+  const openedAhead = useRef<{ from: number | null } | null>(null);
   useEffect(() => {
+    if (openedAhead.current && selected === openedAhead.current.from) return;
+    openedAhead.current = null;
     if (!selected) { void syncRef.current?.release(); syncRef.current = null; setSync(null); return; }
     if (!selected || !tree?.pages.some(p => p.id === selected)) return;
     if (syncRef.current?.pageId === selected) return;
-    void syncRef.current?.release();
-    const scope = memberId && teamId ? { memberId, teamId } : undefined;
-    const retained = findNotebookSession(selected, scope);
-    const next = retained ?? new NotebookSync(selected, scope);
-    syncRef.current = next; setSync(next);
-    if (retained) retained.resume(); else void next.start();
+    openSession(selected);
   }, [selected, tree]);
   useEffect(() => {
     if (!query.trim()) { setHits([]); setSearching(false); return; }
@@ -274,6 +284,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         setFilter('all'); setQuery(''); // filtered/search views do not render inline rename
         if (writingFocus) { skipFocusReturn.current = true; setWritingFocus(false); }
         if (kind === 'page') {
+          // Open the page now rather than when the navigation lands: the rename
+          // box below can be answered first, and the title belongs in this
+          // page's CRDT session.
+          openedAhead.current = { from: selectedRef.current };
+          openSession(created);
           setParams({ page: String(created) });
           // On mobile the drawer holds the rename box — keep it open until rename ends.
           if (mobile) { setDrawer(true); closeDrawerAfterRename.current = true; } else setDrawer(false);
