@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
@@ -54,7 +55,7 @@ describe('Modern emoji picker', () => {
   it('quick picks, searches, switches category and offers your custom reactions', async () => {
     api.apiFetch.mockImplementation((url: string) => json(url === '/api/chat/custom-emoji' ? [{ id: 3, name: 'robo', image_url: '/uploads/robo.png' }] : []));
     const onPick = vi.fn();
-    render(<EmojiPicker onPick={onPick} onClose={vi.fn()} />);
+    render(<EmojiPicker onPick={onPick} onClose={vi.fn()} />, { wrapper: MemoryRouter });
     fireEvent.click(screen.getByRole('button', { name: 'React 🔥' }));
     expect(onPick).toHaveBeenLastCalledWith('🔥');
     fireEvent.click(screen.getByRole('tab', { name: 'Hearts' }));
@@ -71,7 +72,7 @@ describe('Modern emoji picker', () => {
   it('Escape or a click outside closes it', () => {
     api.apiFetch.mockImplementation(() => json([]));
     const onClose = vi.fn();
-    render(<div><button>outside</button><EmojiPicker onPick={vi.fn()} onClose={onClose} /></div>);
+    render(<div><button>outside</button><EmojiPicker onPick={vi.fn()} onClose={onClose} /></div>, { wrapper: MemoryRouter });
     fireEvent.keyDown(window, { key: 'Escape' });
     fireEvent.pointerDown(screen.getByText('outside'));
     expect(onClose).toHaveBeenCalledTimes(2);
@@ -80,7 +81,7 @@ describe('Modern emoji picker', () => {
 
   it('focuses search once; a new onClose (parent re-render) does not steal focus back', () => {
     api.apiFetch.mockImplementation(() => json([]));
-    const { rerender } = render(<EmojiPicker onPick={vi.fn()} onClose={() => {}} />);
+    const { rerender } = render(<EmojiPicker onPick={vi.fn()} onClose={() => {}} />, { wrapper: MemoryRouter });
     expect(screen.getByLabelText('Search emojis')).toHaveFocus();
     const hearts = screen.getByRole('tab', { name: 'Hearts' });
     hearts.focus();
