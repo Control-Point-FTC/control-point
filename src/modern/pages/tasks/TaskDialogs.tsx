@@ -151,8 +151,8 @@ export function CompletionDialog({ task, notes, onNotesChange, files, onFilesCha
         className={dragging ? 'ring-2 ring-accent' : undefined}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success" /> Complete task</DialogTitle>
-          <DialogDescription className="line-clamp-2">“{task?.title}” — add a short note or a photo as proof.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success" /> {task?.completion_mode === 'each' && !task?.__whole ? 'Mark your part done' : task?.__whole ? 'Finish for everyone' : 'Complete task'}</DialogTitle>
+          <DialogDescription className="line-clamp-2">“{task?.title}” — add a short note or a photo as proof.{task?.completion_mode === 'each' && !task?.__whole ? ' Everyone assigned does their own; it’s done when all have.' : ''}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
           <Label htmlFor="complete-notes">What was done?</Label>

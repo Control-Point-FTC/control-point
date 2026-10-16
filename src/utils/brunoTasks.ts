@@ -29,6 +29,8 @@ export interface BrunoTaskIn {
   repeat?: unknown;
   /** YYYY-MM-DD the work starts. */
   start_date?: string | null;
+  /** "each": every assignee completes it separately; "shared" (default): one deliverable. */
+  completion_mode?: unknown;
   /** Robot subsystems (the team's names), FTC award ids, labels. */
   subsystems?: unknown;
   awards?: unknown;
@@ -50,6 +52,7 @@ export interface BrunoTask {
   subsystems: string[];
   awards: string[];
   labels: string[];
+  completion_mode: 'each' | null;
 }
 
 /** A team role and who holds it (member names), for assigning by role. */
@@ -153,6 +156,11 @@ export interface NormalizeOptions {
   subsystems?: readonly string[];
 }
 
+/** "each" (any of each / separately / everyone / individual) or null (shared). */
+export function readCompletionMode(v: unknown): 'each' | null {
+  return typeof v === 'string' && /^(each|separate(ly)?|everyone|individual(ly)?)$/i.test(v.trim()) ? 'each' : null;
+}
+
 /** Subsystem tags as they will be saved: the team's names when known. */
 export function taskSubsystems(v: unknown, teamList?: readonly string[]): string[] {
   return teamList ? cleanRecordSubsystems(v, teamList) : cleanSubsystems(v);
@@ -226,6 +234,7 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
   return {
     title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), roles, unmatched, unmatchedRoles,
     start_date, subsystems: taskSubsystems(t.subsystems, opts.subsystems), awards: cleanAwards(t.awards), labels: cleanLabels(t.labels),
+    completion_mode: readCompletionMode(t.completion_mode),
   };
 }
 
@@ -298,6 +307,8 @@ export interface TaskUpdateChanges {
   recurrence?: Recurrence | null;
   /** null clears the start date. */
   start_date?: string | null;
+  /** 'each' = every assignee completes it separately; null = one shared deliverable. */
+  completion_mode?: 'each' | null;
   /** Task links as full new lists of task ids ([] clears). */
   blocked_by?: number[];
   blocks?: number[];
@@ -381,6 +392,7 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
   if (has('subsystems')) changes.subsystems = taskSubsystems(CLEARS(raw.subsystems) ? [] : raw.subsystems, teamSubsystems ?? undefined);
   if (has('awards')) changes.awards = cleanAwards(CLEARS(raw.awards) ? [] : raw.awards);
   if (has('labels')) changes.labels = cleanLabels(CLEARS(raw.labels) ? [] : raw.labels);
+  if (has('completion_mode')) changes.completion_mode = readCompletionMode(raw.completion_mode);
   for (const k of ['blocked_by', 'blocks', 'related'] as const) {
     if (has(k)) changes[k] = cleanTaskIds(CLEARS(raw[k]) ? [] : raw[k], id);
   }

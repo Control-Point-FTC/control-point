@@ -30,6 +30,8 @@ export interface TaskForm {
   repeatRule?: Recurrence | null;
   /** YYYY-MM-DD; '' = none. */
   start_date?: string;
+  /** 'each' = every assignee completes it separately; '' = one shared deliverable. */
+  completion_mode?: string;
   /** Robot subsystems, FTC award ids and labels (src/types/taskTags.ts). */
   subsystems?: string[];
   awards?: string[];
@@ -85,7 +87,7 @@ export const TASK_COLUMNS = [
 /** Cancelled tasks are kept but hidden; the board shows this column on request. */
 export const CANCELLED_COLUMN = { id: 'cancelled', label: 'Cancelled' } as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [] };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [], completion_mode: '' };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -211,6 +213,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       subsystems: parseTagList(task.subsystems),
       awards: parseTagList(task.awards),
       labels: parseTagList(task.labels),
+      completion_mode: task.completion_mode === 'each' ? 'each' : '',
     });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
@@ -247,6 +250,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             subsystems: newTask.subsystems ?? [],
             awards: newTask.awards ?? [],
             labels: newTask.labels ?? [],
+            completion_mode: newTask.completion_mode === 'each' ? 'each' : null,
           }),
         });
         if (res.ok) {
@@ -480,6 +484,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     }
   };
   const addLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, true);
+  /** Finish a task each assignee completes separately, for everyone (managers). */
+  const completeForEveryone = (task: any) => onRequestComplete?.({ ...task, __whole: true });
   const removeLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, false);
 
   const handleDeleteTask = async (id: number) => {
@@ -564,7 +570,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, addLink, removeLink, taskById,
+    isAdmin, canManageTasks, addLink, removeLink, taskById, completeForEveryone,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,

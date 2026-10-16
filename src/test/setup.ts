@@ -10,3 +10,7 @@ if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
   Range.prototype.getClientRects = function () { return [] as unknown as DOMRectList; };
   Range.prototype.getBoundingClientRect = function () { return new DOMRect(); };
 }
+
+// jsdom has no ResizeObserver; Radix controls (Switch, Select…) measure
+// themselves with it. Many files stubbed it one by one; every test gets it.
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;

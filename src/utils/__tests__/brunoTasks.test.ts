@@ -29,7 +29,7 @@ describe('Bruno task fields', () => {
 
   it('uses the fields the model filled in, resolving names to the roster', () => {
     const t = normalizeBrunoTask({ title: 'Charge batteries', due_date: '2026-10-10', due_time: '18:00', priority: 'URGENT', assignees: ['ada', 'Grace Hopper', 'Nobody'], repeat: 'weekly' }, today, roster);
-    expect(t).toEqual({ title: 'Charge batteries', description: '', due_date: '2026-10-10', due_time: '18:00', priority: 'urgent', recurrence: { freq: 'weekly', interval: 1 }, assignees: ['Ada Lovelace', 'Grace Hopper'], unmatched: ['Nobody'], roles: [], unmatchedRoles: [], start_date: null, subsystems: [], awards: [], labels: [] });
+    expect(t).toEqual({ title: 'Charge batteries', description: '', due_date: '2026-10-10', due_time: '18:00', priority: 'urgent', recurrence: { freq: 'weekly', interval: 1 }, assignees: ['Ada Lovelace', 'Grace Hopper'], unmatched: ['Nobody'], roles: [], unmatchedRoles: [], start_date: null, subsystems: [], awards: [], labels: [], completion_mode: null });
   });
 
   it('reads fields the model left in the title', () => {

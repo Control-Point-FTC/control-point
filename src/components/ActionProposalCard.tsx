@@ -28,6 +28,7 @@ function taskSummary(it: any): string {
     t.unmatchedRoles.length ? `no single role named ${t.unmatchedRoles.join(', ')}` : '',
     t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
     ...tagParts(t),
+    t.completion_mode === 'each' ? 'everyone assigned completes it separately' : '',
     t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
   ].filter(Boolean);
   return `${t.title.slice(0, 60)}${parts.length ? ` — ${parts.join(' · ')}` : ''}`;
@@ -54,6 +55,7 @@ function taskUpdateSummary(it: any): string {
     u.unmatchedRoles.length ? `no single role named ${u.unmatchedRoles.join(', ')}` : '',
     c.recurrence !== undefined ? (c.recurrence ? recurrenceLabel(c.recurrence).toLowerCase() : 'stop repeating') : '',
     ...tagParts(c, true),
+    c.completion_mode !== undefined ? (c.completion_mode === 'each' ? 'everyone assigned completes it separately' : 'one shared deliverable') : '',
     ...(['blocked_by', 'blocks', 'related'] as const).map((k) => {
       const ids = c[k];
       if (!ids) return '';
