@@ -11,6 +11,7 @@ import { InterfaceModeProvider } from '../interfaceMode';
 import { TasksPage } from '../pages/tasks/TasksPage';
 import { ContextMenuProvider } from '../../components/contextmenu/ContextMenuProvider';
 import { clearDrafts } from '../drafts';
+import { addDaysISO, teamToday } from '../../utils/dueShortcuts';
 
 afterEach(cleanup);
 beforeEach(() => { api.apiFetch.mockReset(); api.apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) }); clearDrafts(); });
@@ -222,6 +223,30 @@ describe('Modern Tasks', () => {
     fireEvent.click(screen.getByRole('button', { name: /Bruno is tagging/ }));
     finish({ ok: false, json: async () => ({ error: "Bruno isn't set up on this server" }) });
     expect(await screen.findByText("Bruno isn't set up on this server")).toBeInTheDocument();
+  });
+
+  it('editing auto-saves only the fields you changed, then says so', async () => {
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Mount the climber hooks (v2)' } });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })), { timeout: 4000 });
+    const call = api.apiFetch.mock.calls.find((c: any[]) => c[0] === '/api/tasks/1' && c[1]?.method === 'PATCH')!;
+    expect(JSON.parse(call[1].body)).toEqual({ title: 'Mount the climber hooks (v2)' });
+    expect(await screen.findByText('All changes saved')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('due shortcuts in the editor, and "Move to tomorrow" on the sheet', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tomorrow' }));
+    const tomorrow = addDaysISO(teamToday(undefined), 1);
+    expect((screen.getByLabelText('Due date') as HTMLInputElement).value).toBe(tomorrow);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Move to tomorrow' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ due_date: tomorrow }) })));
   });
 
   it('a late save never wipes a newer draft', async () => {

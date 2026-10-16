@@ -55,6 +55,7 @@ const POOLS: Record<string, StarterPool> = {
       'Which open tasks have no due date?',
       'Suggest subsystem and award tags for this task',
       'Who drew the sketches on this task, and what are they of?',
+      'Move this task to tomorrow',
       'What urgent tasks are left for the intake?',
       'Summarize the discussion on this task',
       'Comment on this task that the parts arrived',
