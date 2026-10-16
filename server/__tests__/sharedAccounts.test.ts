@@ -435,6 +435,137 @@ describe("Scout sign-in through each provider's callback (fake providers on loop
 });
 
 // Last: it locks this IP out of wrong keys for the rest of the file.
+describe("workspace members (Control Scout's Members settings)", () => {
+  const removeUrl = (teamId: number | string) => `/internal/workspaces/${teamId}/members/remove`;
+  const remove = (teamId: number | string, body: any, t = on, key: string | null = KEY) => internal(t, removeUrl(teamId), body, key);
+  const accountFor = async (email: string) => Number((await resolve({ email, verifiedBy: "google" })).body.account.id);
+  const active = async (memberId: number) =>
+    Number((await on.db.execute({ sql: "SELECT COALESCE(is_active, 1) AS a FROM members WHERE id = ?", args: [memberId] })).rows[0].a);
+  async function grant(teamId: number, memberId: number, permissions: string[]) {
+    const role = Number((await on.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Granted', ?)", args: [teamId, JSON.stringify(permissions)] })).lastInsertRowid);
+    await on.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [memberId, role] });
+  }
+  /** A workspace with one admin and one member, both with shared accounts. */
+  async function workspace(tag: string) {
+    const teamId = await seedTeam(on.db, `Members ${tag}`);
+    const adminMember = await seedMember(on.db, teamId, "Ada Admin", `admin.${tag}@ws.test`, "admin");
+    const plainMember = await seedMember(on.db, teamId, "Max Member", `member.${tag}@ws.test`);
+    return {
+      teamId, adminMember, plainMember,
+      admin: await accountFor(`admin.${tag}@ws.test`),
+      member: await accountFor(`member.${tag}@ws.test`),
+    };
+  }
+
+  it("an admin removes a member through Control Point's normal soft remove", async () => {
+    const w = await workspace("ok");
+    await grant(w.teamId, w.plainMember, ["tasks"]);
+    const before = await internal(on, `/internal/accounts/${w.member}`);
+    expect(before.body.account.workspaces.map((x: any) => x.id)).toContain(String(w.teamId));
+    const r = await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin });
+    expect(r).toEqual({ status: 200, body: { ok: true } });
+    // Soft remove, exactly as DELETE /api/members/:id: the row stays (history intact), inactive, roles gone.
+    const row = (await on.db.execute({ sql: "SELECT is_active, account_type, role FROM members WHERE id = ?", args: [w.plainMember] })).rows[0] as any;
+    expect(row).toMatchObject({ is_active: 0, account_type: "student", role: "Member" });
+    expect(await count(on, `SELECT COUNT(*) AS n FROM member_roles WHERE member_id = ${w.plainMember}`)).toBe(0);
+    // The shared account survives; only the workspace is gone from it.
+    const after = await internal(on, `/internal/accounts/${w.member}`);
+    expect(after.status).toBe(200);
+    expect(after.body.account.workspaces.map((x: any) => x.id)).not.toContain(String(w.teamId));
+    expect(await active(w.adminMember)).toBe(1);
+    // A second attempt finds nobody to remove.
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin })).status).toBe(404);
+  });
+
+  it("an admin by role (manage_members or *) can remove too", async () => {
+    const w = await workspace("roleadmin");
+    const third = await seedMember(on.db, w.teamId, "Rita Role", "rita.roleadmin@ws.test");
+    await grant(w.teamId, third, ["manage_members"]);
+    const rita = await accountFor("rita.roleadmin@ws.test");
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: rita })).status).toBe(200);
+    expect(await active(w.plainMember)).toBe(0);
+  });
+
+  it("a non-admin is refused, and so is an admin of another workspace", async () => {
+    const w = await workspace("nonadmin");
+    const r = await remove(w.teamId, { accountId: w.admin, actorAccountId: w.member });
+    expect(r).toEqual({ status: 403, body: { error: "not_admin" } });
+    const other = await workspace("elsewhere");
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: other.admin })).status).toBe(403);
+    // Someone who is only a shared account (no membership anywhere) is not an admin either.
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: await accountFor("stranger@ws.test") })).status).toBe(403);
+    expect(await active(w.adminMember)).toBe(1);
+    expect(await active(w.plainMember)).toBe(1);
+  });
+
+  it("the last admin cannot be removed, by themselves either; with a second admin they can leave", async () => {
+    const w = await workspace("lastadmin");
+    expect(await remove(w.teamId, { accountId: w.admin, actorAccountId: w.admin })).toEqual({ status: 409, body: { error: "last_admin" } });
+    expect(await active(w.adminMember)).toBe(1);
+    // A second admin by role: now the first may leave, and then the second is the last.
+    const second = await seedMember(on.db, w.teamId, "Sam Second", "second.lastadmin@ws.test");
+    await grant(w.teamId, second, ["*"]);
+    const sam = await accountFor("second.lastadmin@ws.test");
+    expect((await remove(w.teamId, { accountId: w.admin, actorAccountId: w.admin })).status).toBe(200);
+    expect(await active(w.adminMember)).toBe(0);
+    expect((await remove(w.teamId, { accountId: sam, actorAccountId: sam })).status).toBe(409);
+  });
+
+  it("a member can be removed while admins remain (removing a plain member is never a last-admin case)", async () => {
+    const w = await workspace("plainself");
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin })).status).toBe(200);
+  });
+
+  it("a target who is not a member is 404", async () => {
+    const w = await workspace("notfound");
+    const outsider = await accountFor("outsider.notfound@ws.test");
+    expect(await remove(w.teamId, { accountId: outsider, actorAccountId: w.admin })).toEqual({ status: 404, body: { error: "not_member" } });
+    expect((await remove(w.teamId, { accountId: 99999999, actorAccountId: w.admin })).status).toBe(404);
+  });
+
+  it("bad input is 400", async () => {
+    const w = await workspace("badinput");
+    for (const body of [{}, { accountId: w.member }, { accountId: "x", actorAccountId: w.admin }, { accountId: 0, actorAccountId: w.admin },
+      { accountId: -1, actorAccountId: w.admin }, { accountId: 1.5, actorAccountId: w.admin }, { accountId: w.member, actorAccountId: [w.admin] }]) {
+      expect((await remove(w.teamId, body)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect((await remove("abc", { accountId: w.member, actorAccountId: w.admin })).status).toBe(400);
+    expect(await active(w.plainMember)).toBe(1);
+  });
+
+  it("the internal key is required (and the feature off is 404)", async () => {
+    const w = await workspace("key");
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin }, on, null)).status).toBe(401);
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin }, on, "wrong")).status).toBe(401);
+    expect((await internal(on, `/internal/workspaces/${w.teamId}/members`, undefined, null)).status).toBe(401);
+    expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin }, off)).status).toBe(404);
+    expect((await internal(off, `/internal/workspaces/${w.teamId}/members`)).status).toBe(404);
+    expect(await active(w.plainMember)).toBe(1);
+  });
+
+  it("lists everyone active, one entry per email, admins first, with accountId only for shared accounts", async () => {
+    const w = await workspace("list");
+    const noScout = await seedMember(on.db, w.teamId, "Bea Builder", "bea.list@ws.test");
+    await grant(w.teamId, noScout, ["*"]);
+    // A duplicate row for the same person counts once.
+    await seedMember(on.db, w.teamId, "Max Member", "MEMBER.list@ws.test ");
+    const gone = await seedMember(on.db, w.teamId, "Gone Person", "gone.list@ws.test");
+    await on.db.execute({ sql: "UPDATE members SET is_active = 0 WHERE id = ?", args: [gone] });
+    const r = await internal(on, `/internal/workspaces/${w.teamId}/members`);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      workspace: { id: String(w.teamId), name: "Members list" },
+      members: [
+        { accountId: w.admin, name: "Ada Admin", role: "admin" },
+        { accountId: null, name: "Bea Builder", role: "admin" },
+        { accountId: w.member, name: "Max Member", role: "member" },
+      ],
+    });
+    expect((await internal(on, "/internal/workspaces/99999999/members")).status).toBe(404);
+    expect((await internal(on, "/internal/workspaces/0/members")).status).toBe(400);
+  });
+});
+
 describe("wrong-key lockout", () => {
   it("after 20 wrong keys, wrong keys get 429 but the right key still works", async () => {
     // Earlier tests already spent some of this IP's 20 wrong tries; keep going until the lockout.

@@ -7,8 +7,11 @@
  * through the internal API below, and "Continue with Control Point" hands a
  * signed-in Control Point visitor to Scout with a single-use code.
  *
- * Nothing here creates or changes `members`, `verified_emails`,
- * `proven_passwords` or any password: Control Point membership is only read.
+ * Nothing here creates `members` rows or touches `verified_emails`,
+ * `proven_passwords` or any password. The one write to membership is the
+ * members/remove route below, which goes through Control Point's own
+ * removal path (removeMembership in server.ts, the same soft remove as an
+ * admin's DELETE /api/members/:id).
  *
  * Every route that returns `account` includes `workspaces`: one
  * `{ id, name, role }` per workspace (team) the email has an active
@@ -17,6 +20,31 @@
  * `account_type = 'admin'` or holds a role on that workspace whose
  * permissions include "*" or "manage_members" (Control Point's own admin
  * rule, as in countAdmins); otherwise "member". `controlPoint` is unchanged.
+ *
+ * Workspace members (Control Scout's Settings → Workspace → Members):
+ *
+ *   GET /internal/workspaces/:workspaceId/members
+ *     200 { workspace: { id, name }, members: [{ accountId, name, role }] }
+ *       Everyone with an active `members` row on that team, one entry per
+ *       email (rows without an email are listed on their own). `accountId`
+ *       is the shared `accounts.id` for that email, or null when the person
+ *       has never used Control Scout. `role` is "admin" | "member" by the
+ *       rule above. Admins first, then by name.
+ *     400 { error: "invalid_workspace" }   404 { error: "not_found" } (no such team)
+ *
+ *   POST /internal/workspaces/:workspaceId/members/remove
+ *     body { accountId, actorAccountId }   (shared accounts.id values)
+ *     Both ids resolve to emails, then to active `members` rows on that team.
+ *     200 { ok: true }  the target's rows are removed with Control Point's
+ *                       normal soft remove (is_active = 0, roles, sessions,
+ *                       sticky notes and live sockets dropped; history kept).
+ *     400 { error: "invalid_input" }  ids are not positive integers
+ *     403 { error: "not_admin" }      the actor is not an admin of that workspace
+ *     404 { error: "not_member" }     the target has no active row there
+ *     409 { error: "last_admin" }     the target is the workspace's last admin
+ *     Removing yourself is allowed unless you are the last admin. Each
+ *     removal is logged ("[shared-accounts] member removed …", ids only):
+ *     Control Point has no audit table, and Scout records its own audit.
  *
  * Env:
  *   CONTROL_SCOUT_INTERNAL_KEY  shared secret (32+ chars) Scout sends as
@@ -35,6 +63,10 @@ export interface SharedAccountDeps {
   dbRun: (sql: string, ...args: any[]) => Promise<{ changes: number; lastInsertRowid: number }>;
   /** The signed-in visitor's email (any valid cp_session, teamless included), or null. */
   sessionEmail: (req: any) => Promise<string | null>;
+  /** Control Point's countAdmins: active admins of a team, by the workspace admin rule. */
+  countAdmins: (teamId: number) => Promise<number>;
+  /** Control Point's one member removal path (the soft remove behind DELETE /api/members/:id). */
+  removeMembership: (teamId: number, memberId: number) => Promise<void>;
   env?: Record<string, string | undefined>;
   now?: () => number;
 }
@@ -101,6 +133,13 @@ const SCOUT_VERIFIERS = new Set(["scout-email-code", "google"]);
 const STATE_RE = /^[A-Za-z0-9_-]{16,128}$/;
 const CODE_RE = /^cph_[A-Za-z0-9_-]{43}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ID_RE = /^[1-9]\d{0,14}$/;
+
+/** A positive integer id from a path segment or JSON value, else null. */
+export function cleanId(v: unknown): number | null {
+  const s = typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
+  return ID_RE.test(s) ? Number(s) : null;
+}
 
 export const isHandoffState = (s: unknown): s is string => typeof s === "string" && STATE_RE.test(s);
 
@@ -236,6 +275,68 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
     };
   }
 
+  /** Role permissions JSON of each listed membership, from roles on its own workspace. */
+  async function rolePermissionsByMember(teamId: number, memberIds: number[]): Promise<Map<number, unknown[]>> {
+    const out = new Map<number, unknown[]>();
+    if (!memberIds.length) return out;
+    const rows = await deps.dbAll(
+      `SELECT mr.member_id AS member_id, r.permissions AS permissions
+         FROM member_roles mr JOIN roles r ON r.id = mr.role_id
+        WHERE mr.member_id IN (${memberIds.map(() => "?").join(",")}) AND r.team_id = ?`,
+      ...memberIds, teamId,
+    );
+    for (const r of rows) {
+      const id = Number(r.member_id);
+      out.set(id, [...(out.get(id) || []), r.permissions]);
+    }
+    return out;
+  }
+
+  /** The active `members` rows on `teamId` for shared account `accountId` (by its email), each marked admin or not. */
+  async function membershipsOf(teamId: number, accountId: number): Promise<{ id: number; admin: boolean }[]> {
+    const acc = await deps.dbGet("SELECT email FROM accounts WHERE id = ?", accountId);
+    if (!acc) return [];
+    const rows = await deps.dbAll(
+      `SELECT id, account_type FROM members
+        WHERE team_id = ? AND LOWER(TRIM(email)) = ? AND COALESCE(is_active, 1) = 1 ORDER BY id`,
+      teamId, String(acc.email),
+    );
+    const perms = await rolePermissionsByMember(teamId, rows.map((m: any) => Number(m.id)));
+    return rows.map((m: any) => ({ id: Number(m.id), admin: workspaceAdmin(m.account_type, perms.get(Number(m.id)) || []) }));
+  }
+
+  /** Everyone in a workspace, one entry per email, for Scout's members list. Null when the team does not exist. */
+  async function workspaceMembers(teamId: number) {
+    const team = await deps.dbGet("SELECT id, name FROM teams WHERE id = ?", teamId);
+    if (!team) return null;
+    const rows = await deps.dbAll(
+      `SELECT m.id AS id, m.name AS name, LOWER(TRIM(m.email)) AS email, m.account_type AS account_type, a.id AS account_id
+         FROM members m LEFT JOIN accounts a ON a.email = LOWER(TRIM(m.email))
+        WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1
+        ORDER BY m.id`,
+      teamId,
+    );
+    const perms = await rolePermissionsByMember(teamId, rows.map((m: any) => Number(m.id)));
+    const byPerson = new Map<string, { accountId: number | null; name: string; role: "admin" | "member" }>();
+    for (const m of rows) {
+      const key = m.email ? `e:${m.email}` : `m:${m.id}`;
+      const admin = workspaceAdmin(m.account_type, perms.get(Number(m.id)) || []);
+      const prev = byPerson.get(key);
+      if (prev) {
+        if (admin) prev.role = "admin";
+        continue;
+      }
+      byPerson.set(key, {
+        accountId: m.account_id == null ? null : Number(m.account_id),
+        name: String(m.name ?? "").trim() || "Member",
+        role: admin ? "admin" : "member",
+      });
+    }
+    const members = [...byPerson.values()].sort((a, b) =>
+      (a.role === b.role ? 0 : a.role === "admin" ? -1 : 1) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return { workspace: { id: String(team.id), name: String(team.name ?? "") }, members };
+  }
+
   /** The /internal/* router (mount before the /api CSRF middleware). */
   function internalRouter() {
     const key = internalKeyFrom(env);
@@ -308,6 +409,36 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
       const account = await loadAccount(Number(row.account_id));
       if (!account) return res.status(400).json({ error: "invalid_code" });
       res.json({ account });
+    });
+
+    router.get("/workspaces/:workspaceId/members", async (req, res) => {
+      const teamId = cleanId(req.params.workspaceId);
+      if (!teamId) return res.status(400).json({ error: "invalid_workspace" });
+      const out = await workspaceMembers(teamId);
+      if (!out) return res.status(404).json({ error: "not_found" });
+      res.json(out);
+    });
+
+    // Scout's Remove button: an admin of the workspace removes someone (or themselves).
+    router.post("/workspaces/:workspaceId/members/remove", async (req, res) => {
+      const body = req.body || {};
+      const teamId = cleanId(req.params.workspaceId);
+      const accountId = cleanId(body.accountId);
+      const actorAccountId = cleanId(body.actorAccountId);
+      if (!teamId || !accountId || !actorAccountId) return res.status(400).json({ error: "invalid_input" });
+      const actor = await membershipsOf(teamId, actorAccountId);
+      if (!actor.some((m) => m.admin)) return res.status(403).json({ error: "not_admin" });
+      const target = await membershipsOf(teamId, accountId);
+      if (!target.length) return res.status(404).json({ error: "not_member" });
+      // Never strand a workspace without an admin (the rule Control Point's own routes keep).
+      const targetAdmins = target.filter((m) => m.admin).length;
+      if (targetAdmins && (await deps.countAdmins(teamId)) - targetAdmins < 1) {
+        return res.status(409).json({ error: "last_admin" });
+      }
+      for (const m of target) await deps.removeMembership(teamId, m.id);
+      // Control Point has no audit table: a log line with ids only (Scout keeps the full audit).
+      console.info(`[shared-accounts] member removed from workspace ${teamId} by Control Scout: account ${accountId} (members ${target.map((m) => m.id).join(",")}) by account ${actorAccountId} at ${iso()}`);
+      res.json({ ok: true });
     });
 
     router.use((_req, res) => res.status(404).json({ error: "Not found" }));
