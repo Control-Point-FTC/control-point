@@ -13607,16 +13607,29 @@ Rules:
           }
           applied.budget = (applied.budget || 0) + entries.length;
         } else if (kind === "workspace") {
-          // One settings change per card (the last item wins if several came).
-          const change = parseWorkspaceChange(items[items.length - 1]);
-          if (!change) continue;
-          const team: any = await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", auth.teamId);
-          const off = nextDisabledModules(parseDisabledModules(team?.disabled_modules), change);
-          const sets = ["disabled_modules = ?"];
-          const vals: any[] = [off.length ? JSON.stringify(off) : null];
-          if (change.subsystems) { sets.push("subsystems = ?"); vals.push(JSON.stringify(change.subsystems)); }
-          await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals, auth.teamId);
-          applied.workspace = 1;
+          // Every change the card showed, in order (a later subsystem list wins).
+          const changes = items.map(parseWorkspaceChange).filter((c: any): c is NonNullable<typeof c> => !!c);
+          if (!changes.length) continue;
+          const toggles = changes.some((c: any) => c.disable.length || c.enable.length);
+          const subsystems = [...changes].reverse().find((c: any) => c.subsystems)?.subsystems;
+          if (toggles) {
+            // Compare-and-set, so two admins confirming at once can't undo each other.
+            let saved = false;
+            for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+              const team: any = await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", auth.teamId);
+              const before = team?.disabled_modules ?? null;
+              const off = changes.reduce((acc: string[], c: any) => nextDisabledModules(acc, c), parseDisabledModules(before));
+              const r: any = await dbRun(
+                "UPDATE teams SET disabled_modules = ? WHERE id = ? AND disabled_modules IS ?",
+                off.length ? JSON.stringify(off) : null, auth.teamId, before,
+              );
+              saved = Number(r?.changes ?? r?.rowsAffected ?? 0) > 0;
+            }
+            // Still racing after five tries: leave it unapplied (never half-applied).
+            if (!saved) continue;
+          }
+          if (subsystems) await dbRun("UPDATE teams SET subsystems = ? WHERE id = ?", JSON.stringify(subsystems), auth.teamId);
+          applied.workspace = changes.length;
         }
       }
       if (!Object.keys(applied).length) {

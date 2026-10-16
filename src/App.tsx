@@ -1891,7 +1891,8 @@ export default function App() {
     if (isLoggedIn && activeTab !== 'bruno' && !allVisibleTabIds.has(activeTab)) {
       navigate('/dashboard', { replace: true });
     }
-  }, [isLoggedIn, currentUser, activeTab, ownerChecked, isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
+  // allVisibleTabIds: a module switched off while its page is open sends the viewer home.
+  }, [isLoggedIn, currentUser, activeTab, ownerChecked, isOwner, allVisibleTabIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Owner status drives the Owner tab; only Sushil's email(s) qualify
   useEffect(() => {

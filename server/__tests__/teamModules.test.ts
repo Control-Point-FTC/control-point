@@ -10,7 +10,9 @@ import { loadWorkspaceFacts, formatWorkspaceFacts } from "../workspaceFacts";
 import { nextDisabledModules, parseWorkspaceChange } from "../brunoWorkspace";
 import { DEFAULT_SUBSYSTEMS, cleanSubsystems, isNavIdDisabled, parseDisabledModules, parseSubsystems } from "../../src/types/teamModules";
 
-vi.setConfig({ testTimeout: 30_000 });
+// 60 s: on Windows the harness fetch can stall ~25 s on a reused socket
+// (the server answers in ms; brunoApply.test.ts flakes the same way on main).
+vi.setConfig({ testTimeout: 60_000 });
 
 describe("teamModules helpers", () => {
   it("parses stored switches, ignoring unknown ids and bad JSON", () => {
@@ -87,6 +89,29 @@ describe("Bruno: workspace settings", () => {
     const row = await dbGet("SELECT disabled_modules, subsystems FROM teams WHERE id = ?", team);
     expect(parseDisabledModules(row.disabled_modules)).toEqual(["code"]);
     expect(JSON.parse(row.subsystems)).toEqual(["Drivetrain", "Lift"]);
+  });
+
+  it("applies every change the card showed, and a subsystem-only change leaves the switches alone", async () => {
+    await t.patch(`/api/teams/${team}`, { disabled_modules: ["code"] }, admin);
+    let r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ disable: ["predict"] }, { disable: ["budget"] }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(parseDisabledModules((await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", team)).disabled_modules).sort()).toEqual(["budget", "code", "predict"]);
+    await t.patch(`/api/teams/${team}`, { disabled_modules: ["code"] }, admin);
+    const before = (await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", team)).disabled_modules;
+    r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ subsystems: ["Drivetrain", "Lift"] }] }] }, admin);
+    expect(r.status).toBe(200);
+    expect((await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", team)).disabled_modules).toBe(before);
+  });
+
+  it("two admins confirming at once both land", async () => {
+    await t.patch(`/api/teams/${team}`, { disabled_modules: ["code"] }, admin);
+    const [a, b] = await Promise.all([
+      t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ disable: ["predict"] }] }] }, admin),
+      t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ disable: ["budget"] }] }] }, admin),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(parseDisabledModules((await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", team)).disabled_modules).sort()).toEqual(["budget", "code", "predict"]);
+    await t.patch(`/api/teams/${team}`, { disabled_modules: ["code"] }, admin);
   });
 
   it("a member without admin rights is refused and nothing changes", async () => {
