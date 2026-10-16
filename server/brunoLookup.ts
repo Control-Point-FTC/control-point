@@ -192,8 +192,12 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')", "COALESCE(t.subsystems, '')", "COALESCE(t.awards, '')", "COALESCE(t.labels, '')"]);
     const args: any[] = [teamId, ...w.args];
     let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at, t.start_date, t.subsystems, t.awards, t.labels, t.completion_mode,
-      (SELECT COUNT(*) FROM task_assignees ta WHERE ta.task_id = t.id) AS assignee_n,
-      (SELECT COUNT(*) FROM task_assignee_done d JOIN task_assignees ta ON ta.task_id = d.task_id AND ta.member_id = d.member_id WHERE d.task_id = t.id) AS done_n,
+      CASE WHEN EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)
+        THEN (SELECT COUNT(*) FROM task_assignees ta WHERE ta.task_id = t.id)
+        ELSE (CASE WHEN t.assigned_to IS NULL THEN 0 ELSE 1 END) END AS assignee_n,
+      CASE WHEN EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)
+        THEN (SELECT COUNT(*) FROM task_assignee_done d JOIN task_assignees ta ON ta.task_id = d.task_id AND ta.member_id = d.member_id WHERE d.task_id = t.id)
+        ELSE (SELECT COUNT(*) FROM task_assignee_done d WHERE d.task_id = t.id AND d.member_id = t.assigned_to) END AS done_n,
       (SELECT GROUP_CONCAT(b.id) FROM task_links l JOIN tasks b ON b.id = l.from_id
         WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.status NOT IN ('done', 'cancelled')${includeBoard ? "" : " AND COALESCE(b.is_board, 0) = 0"}) AS blockers,
       COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),

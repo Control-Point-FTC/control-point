@@ -75,12 +75,50 @@ describe("everyone completes it separately", () => {
     expect((await dbGet("SELECT status FROM tasks WHERE id = ?", shared)).status).toBe("done");
   });
 
+  it("the last part's proof is recorded once", async () => {
+    const solo = (await t.post("/api/tasks", { title: "Solo each", assignee_ids: [ana], completion_mode: "each" }, admin)).body.id;
+    await complete(solo, anaS, { notes: "All mine" });
+    const row = await dbGet("SELECT status, completion_history FROM tasks WHERE id = ?", solo);
+    expect(row.status).toBe("done");
+    expect(JSON.parse(row.completion_history)).toHaveLength(1);
+  });
+
+  it("removing the last unfinished person closes the task", async () => {
+    const pair = (await t.post("/api/tasks", { title: "Pair each", assignee_ids: [ana, ben], completion_mode: "each" }, admin)).body.id;
+    await complete(pair, anaS);
+    expect((await t.patch(`/api/tasks/${pair}`, { assignee_ids: [ana] }, admin)).status).toBe(200);
+    expect((await dbGet("SELECT status FROM tasks WHERE id = ?", pair)).status).toBe("done");
+  });
+
+  it("deleting a task removes its progress rows", async () => {
+    const gone = (await t.post("/api/tasks", { title: "Gone each", assignee_ids: [ana, ben], completion_mode: "each" }, admin)).body.id;
+    await complete(gone, anaS);
+    expect((await t.api(`/api/tasks/${gone}`, { method: "DELETE", session: admin })).status).toBe(200);
+    expect(await dbAll("SELECT * FROM task_assignee_done WHERE task_id = ?", gone)).toHaveLength(0);
+  });
+
   it("only managers change the mode", async () => {
     expect((await t.patch(`/api/tasks/${id}`, { completion_mode: null }, anaS)).status).toBe(403);
   });
 });
 
 describe("Bruno", () => {
+  it("reopening through a task-update card starts everyone over", async () => {
+    const id = (await t.post("/api/tasks", { title: "Reopen each", assignee_ids: [ana, ben], completion_mode: "each" }, admin)).body.id;
+    await complete(id, anaS);
+    await complete(id, benS);
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id, status: "todo" }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await dbAll("SELECT * FROM task_assignee_done WHERE task_id = ?", id)).toHaveLength(0);
+  });
+
+  it("lookups count a task that only has the legacy assigned_to", async () => {
+    const id = Number((await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, assigned_to, completion_mode) VALUES (?, 'Legacy each', 'todo', ?, 'each')", args: [team, ana] })).lastInsertRowid);
+    const out = await runLookups(dbAll as any, team, "America/New_York", [{ kind: "tasks", query: "Legacy each" } as any]);
+    expect(out).toMatch(/\(0 of 1 done\)/);
+    expect(id).toBeGreaterThan(0);
+  });
+
   it("a tasks card can make a task each-person; lookups show the progress", async () => {
     const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{ title: "Sign the travel form", assignees: ["Ana", "Ben"], completion_mode: "each" }] }] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);

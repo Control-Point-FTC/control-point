@@ -9822,6 +9822,29 @@ Rules:
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
   /** Reopened from done: everyone's part starts over. */
   const clearAssigneeDone = (taskId: number) => dbRun("DELETE FROM task_assignee_done WHERE task_id = ?", taskId);
+  /**
+   * After the people on an open 'each' task change: if everyone still on it
+   * has finished their part, the task is done (each part's proof is already
+   * in its history), with the same review and repeat as a completion.
+   */
+  async function closeIfEveryoneDone(taskId: number, teamId: number, actorId: number, actorManages: boolean): Promise<void> {
+    const task = (await dbGet("SELECT * FROM tasks WHERE id = ? AND team_id = ?", taskId, teamId)) as any;
+    if (!task || task.completion_mode !== "each" || task.status === "done" || task.status === "cancelled") return;
+    const assignees = await getTaskAssigneeIds(taskId);
+    if (!assignees.length) return;
+    const done = (await dbAll("SELECT member_id, completed_at FROM task_assignee_done WHERE task_id = ? ORDER BY completed_at DESC", taskId)) as any[];
+    if (!assignees.every((m) => done.some((d) => Number(d.member_id) === m))) return;
+    const now = new Date().toISOString();
+    const lastBy = Number(done.find((d) => assignees.includes(Number(d.member_id)))?.member_id) || actorId;
+    const r: any = await dbRun(
+      "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled')",
+      now, lastBy, actorManages ? "approved" : "pending", actorManages ? actorId : null, actorManages ? now : null, taskId,
+    );
+    if (!Number(r?.changes ?? 0)) return;
+    try { await spawnNextRecurringTask(task, teamId, actorId); } catch (e) { console.error("recurring task spawn failed:", e); }
+    const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
+    if (updated) { updated.assignee_ids = assignees; void broadcastTask(teamId, "task_updated", updated); }
+  }
 
   app.get("/api/tasks", async (req, res) => {
     try {
@@ -10237,6 +10260,8 @@ Rules:
         (await dbRun(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...vals, req.params.id));
       }
       if (status !== undefined && status !== 'done' && task.status === 'done') await clearAssigneeDone(Number(req.params.id));
+      // People changed (or it became each-person): everyone left may already be done.
+      if (assigned_to !== undefined || assignee_ids !== undefined || completion_mode !== undefined) await closeIfEveryoneDone(Number(req.params.id), auth.teamId!, auth.memberId, canManage);
 
       const notifyIds = await getTaskAssigneeIds(Number(req.params.id));
       for (const mid of notifyIds) {
@@ -10481,13 +10506,15 @@ Rules:
       if (task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done") {
         const at = new Date().toISOString();
         await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
-        await dbRun(
-          "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
-          JSON.stringify({ by: auth.memberId, at, notes: notes || null, images, part: true, review: null }), task.id,
-        );
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
         const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
         if (remaining.length) {
+          // A part: its proof goes in the history now. The last part's proof is
+          // recorded once, by the full completion below.
+          await dbRun(
+            "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
+            JSON.stringify({ by: auth.memberId, at, notes: notes || null, images, part: true, review: null }), task.id,
+          );
           const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
           await withAssignees([partial]);
           void broadcastTask(auth.teamId, "task_updated", partial);
@@ -13827,6 +13854,8 @@ Rules:
               // Reopened: whatever completion and review it had no longer apply.
               sets.push("status = ?", "completed_at = NULL", "review_status = NULL");
               vals.push(c.status);
+              // Everyone's part on an each-person task starts over, as with PATCH.
+              if (task.status === "done") await clearAssigneeDone(u.id);
             }
             if (c.title !== undefined) { sets.push("title = ?"); vals.push(c.title); }
             if (c.description !== undefined) { sets.push("description = ?"); vals.push(c.description); }
@@ -13854,6 +13883,7 @@ Rules:
               for (const mid of valid) if (!before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `New task assigned: ${title}`, "task", { task_id: u.id });
             }
             if (sets.length) await dbRun(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND team_id = ?`, ...vals, u.id, auth.teamId);
+            if (c.assignees !== undefined || c.roles || c.completion_mode !== undefined) await closeIfEveryoneDone(u.id, auth.teamId!, auth.memberId, true);
             const now = await getTaskAssigneeIds(u.id);
             for (const mid of now) if (before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `Task updated: ${c.title ?? task.title}`, "task", { task_id: u.id });
             const updated: any = await dbGet("SELECT * FROM tasks WHERE id = ?", u.id);

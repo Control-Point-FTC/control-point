@@ -4,7 +4,8 @@
 --     (the old behavior, for every existing task).
 --   task_assignee_done: who has finished their part of an 'each' task. Kept
 --     apart from task_assignees (which is rewritten when people change), and
---     cleared when the task is reopened.
+--     cleared when the task is reopened. Rows go with their task or member
+--     (cascading keys, like task_assignees), and so with a deleted workspace.
 
 BEGIN;
 
@@ -14,7 +15,9 @@ CREATE TABLE IF NOT EXISTS task_assignee_done (
   task_id INTEGER NOT NULL,
   member_id INTEGER NOT NULL,
   completed_at TEXT NOT NULL,
-  PRIMARY KEY (task_id, member_id)
+  PRIMARY KEY (task_id, member_id),
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
 );
 
 COMMIT;
