@@ -10896,6 +10896,20 @@ Rules:
     const found = (await dbAll(`SELECT id FROM roles WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`, teamId, ...ids)) as any[];
     return found.length === ids.length ? ids : null;
   }
+  /** Statements that rebuild the RSVP excuses owned by these events from their current dates. */
+  const rsvpExcuseRebuild = (ids: number[]) => {
+    const ph = ids.map(() => "?").join(",");
+    return [
+      { sql: `DELETE FROM attendance WHERE rsvp_event_id IN (${ph})`, args: ids },
+      {
+        sql: `INSERT OR IGNORE INTO attendance (team_id, member_id, date, status, reason, is_excused, rsvp_event_id)
+              SELECT e.team_id, r.member_id, e.date, 'E', 'Can''t make it (RSVP)', 1, e.id
+              FROM event_rsvps r JOIN events e ON e.id = r.event_id
+              WHERE r.event_id IN (${ph}) AND r.status = 'not_going' AND r.reason != ''`,
+        args: ids,
+      },
+    ];
+  };
   /** Who an event is for: the whole team, or members holding one of its roles (active only). */
   async function eventInviteeIds(teamId: number, attendeeRoles: unknown): Promise<number[]> {
     const roles = parseAttendeeRoles(attendeeRoles);
@@ -11215,6 +11229,10 @@ Rules:
       } else if (ruleChange) {
         stmts.push({ sql: "UPDATE events SET recurrence = NULL WHERE id = ?", args: [existing.id] });
       }
+      // RSVP excuses of every moved occurrence, rebuilt once all dates are final (the
+      // per-row trigger can't place one on a date a later occurrence still holds).
+      const movedIds = merged.filter(({ r, next }) => next.date !== r.date).map(({ r }) => Number(r.id));
+      if (movedIds.length) stmts.push(...rsvpExcuseRebuild(movedIds));
       await dbBatchResults(stmts);
       // Linked calendars follow once the database has committed.
       cleanup = removedCopies;
@@ -11232,6 +11250,8 @@ Rules:
         void (async () => { for (const row of fresh) await syncEventToCalendars(row, teamId); })();
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
+      // RSVP excuses may have moved with the events.
+      if (movedIds.length) broadcastToTeam(auth.teamId, { type: "attendance_changed" });
       res.json({ ok: true, updated: merged.length });
       });
       if (cleanup.length) void removeGoogleCopies(cleanup);
@@ -11266,6 +11286,8 @@ Rules:
       ]);
       cleanup = copies;
       broadcastToTeam(auth.teamId, { type: "events_changed" });
+      // Their RSVP excuses went with them (trigger).
+      broadcastToTeam(auth.teamId, { type: "attendance_changed" });
       res.json({ ok: true, deleted: ids.length });
       });
       if (cleanup.length) void removeGoogleCopies(cleanup);
@@ -14449,6 +14471,8 @@ Rules:
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"] || applied["event-rsvp"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
+      // Deleted events take their RSVP excuses with them; RSVPs write them.
+      if (applied["delete-event"] || applied["event-rsvp"]) broadcastToTeam(auth.teamId, { type: "attendance_changed" });
       if (applied.task) void broadcastTaskEvent(auth.teamId, { type: "tasks_changed" });
       if (applied.workspace) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
       res.json({ ok: true, applied, created });

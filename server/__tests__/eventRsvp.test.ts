@@ -81,6 +81,15 @@ describe("RSVP", () => {
     expect((await rows("SELECT status, rsvp_event_id FROM attendance WHERE member_id = ? AND date = '2099-05-08'", anaId))[0]).toMatchObject({ status: "E", rsvp_event_id: null });
   });
 
+  it("moving a whole series by one week keeps every occurrence's excuse", async () => {
+    const head = (await t.post("/api/events", { title: "Weekly sync", date: "2099-06-01", rsvp_mode: "decline_only", repeat: { freq: "weekly", interval: 1, count: 2 } }, admin)).body.id;
+    const occ = (await rows("SELECT id, date FROM events WHERE series_id = ? ORDER BY date", head)).map((r) => Number(r.id));
+    for (const id of occ) await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Away" }, ana);
+    // The first moves onto the second's old date; the second moves a week on.
+    expect((await t.patch(`/api/events/${occ[0]}`, { date: "2099-06-08", scope: "following" }, admin)).status).toBe(200);
+    expect((await rows("SELECT date FROM attendance WHERE member_id = ? AND rsvp_event_id IN (?, ?) ORDER BY date", anaId, occ[0], occ[1])).map((r) => r.date)).toEqual(["2099-06-08", "2099-06-15"]);
+  });
+
   it("answers saved at the same time leave the excuse matching the last one", async () => {
     const id = (await t.post("/api/events", { title: "Race day", date: "2099-05-20", rsvp_mode: "full" }, admin)).body.id;
     await Promise.all([
