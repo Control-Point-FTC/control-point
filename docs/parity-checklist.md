@@ -84,7 +84,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Bruno suggests subsystem / labels / award tags on new tasks, shown as "AI tagged" with an explanation tooltip, one-click undo
 
 ### PR 1.5: Sketchpad on tasks
-- [ ] Reuse the notebook drawing canvas as an attachment on a task
+- [x] Sketches on a task, drawn with the notebook's ink (pen, highlighter, its colours and pressure-shaped strokes); stored as strokes, so they stay editable
 
 ---
 

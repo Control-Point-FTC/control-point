@@ -23,6 +23,7 @@ import { AWARD_OPTIONS, LabelsInput, TaskTagChips, ToggleChips } from './TaskTag
 import { AiTagStrip, useTagSuggest } from './TaskTagSuggest';
 import { TaskLinksSection } from './TaskLinks';
 import { TaskTimeline, useTaskTimeline } from './TaskTimeline';
+import { TaskSketches } from './TaskSketches';
 import { notify } from '../../../components/dialog';
 
 type Ctl = ReturnType<typeof useTasksController>;
@@ -300,6 +301,8 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
                   ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{task.description}</p>
                   : <p className="text-sm text-muted-foreground">No description.</p>}
               </div>
+              <Separator />
+              <TaskSketches taskId={task.id} sketches={timeline?.sketches ?? []} reload={reload} members={members} currentUserId={ctl.currentUserId} canModerate={ctl.canManageTasks} />
               <Separator />
               <TaskTimeline key={task.id} taskId={task.id} timeline={timeline} reload={reload} members={members} currentUserId={ctl.currentUserId} canModerate={ctl.canManageTasks} />
             </div>
