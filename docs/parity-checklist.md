@@ -48,8 +48,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [ ] Custom task statuses per team
 - [~] Priority (have) — make it Low / Med / High / Urgent pills
 - [x] Start date (have due date + due time)
-- [ ] Blocked state + task dependencies ("blocked by an incomplete task" warning)
-- [ ] Linked tasks ("2 linked")
+- [x] Blocked state + task dependencies ("blocked by an incomplete task" warning)
+- [x] Linked tasks ("2 linked")
 - [x] Subsystem tags (uses PR 0.1)
 - [x] Labels
 - [x] Award tags on tasks (uses PR 0.1)

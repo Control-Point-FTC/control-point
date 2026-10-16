@@ -44,7 +44,11 @@ export function parseScreenRequest(raw: unknown): ScreenContextRequest | null {
 }
 
 export interface ScreenLookups {
-  task?: { id: number; title: string; status: string | null; due_date: string | null; description: string | null; assignees: string[]; start_date?: string | null; subsystems?: unknown; awards?: unknown; labels?: unknown } | null;
+  task?: {
+    id: number; title: string; status: string | null; due_date: string | null; description: string | null; assignees: string[];
+    start_date?: string | null; subsystems?: unknown; awards?: unknown; labels?: unknown;
+    blockedBy?: { id: number; open: boolean }[]; blocks?: number[]; related?: number[];
+  } | null;
   event?: { id: number; title: string; date: string; start_time: string | null; end_time: string | null; location: string | null; event_type: string | null; description: string | null } | null;
   channel?: { id: number; name: string; topic: string | null } | null;
   codeFile?: { id: number; file_path: string; language: string | null; file_size: number | null; updated_at: string | null } | null;
@@ -81,6 +85,9 @@ export function formatScreenContext(req: ScreenContextRequest, found: ScreenLook
       subs.length ? `subsystems ${subs.map((s) => q(s, 40)).join(", ")}` : "",
       awards.length ? `${awards.join(", ")} award evidence` : "",
       labels.length ? `labels ${labels.map((s) => q(s, 30)).join(", ")}` : "",
+      t.blockedBy?.length ? `blocked by ${t.blockedBy.map((b) => `task #${b.id}${b.open ? " (still open)" : " (finished)"}`).join(", ")}` : "",
+      t.blocks?.length ? `blocks ${t.blocks.map((n) => `task #${n}`).join(", ")}` : "",
+      t.related?.length ? `related to ${t.related.map((n) => `task #${n}`).join(", ")}` : "",
     ].filter(Boolean);
     lines.push(`- Open task #${t.id}: ${q(t.title, 160)} — ${bits.join(", ")}${t.description?.trim() ? `; description: ${q(t.description, 400)}` : ""}`);
   }

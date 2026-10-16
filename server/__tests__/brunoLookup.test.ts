@@ -48,6 +48,7 @@ describe("runLookups", () => {
       CREATE TABLE chat_channels (id INTEGER PRIMARY KEY, team_id INTEGER, name TEXT);
       CREATE TABLE messages (id INTEGER PRIMARY KEY, team_id INTEGER, sender_id INTEGER, content TEXT, timestamp TEXT, channel_id INTEGER, deleted_at TEXT);
       CREATE TABLE tasks (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, status TEXT, due_date TEXT, due_time TEXT, priority TEXT, created_at TEXT, completed_at TEXT, start_date TEXT, subsystems TEXT, awards TEXT, labels TEXT);
+      CREATE TABLE task_links (team_id INTEGER, from_id INTEGER, to_id INTEGER, kind TEXT, created_at TEXT);
       CREATE TABLE task_assignees (task_id INTEGER, member_id INTEGER);
       CREATE TABLE events (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, date TEXT, start_time TEXT, end_time TEXT, location TEXT, event_type TEXT);
       CREATE TABLE communications (id INTEGER PRIMARY KEY, team_id INTEGER, recipient TEXT, subject TEXT, body TEXT, date TEXT, direction TEXT, parent_id INTEGER);

@@ -54,6 +54,12 @@ function taskUpdateSummary(it: any): string {
     u.unmatchedRoles.length ? `no single role named ${u.unmatchedRoles.join(', ')}` : '',
     c.recurrence !== undefined ? (c.recurrence ? recurrenceLabel(c.recurrence).toLowerCase() : 'stop repeating') : '',
     ...tagParts(c, true),
+    ...(['blocked_by', 'blocks', 'related'] as const).map((k) => {
+      const ids = c[k];
+      if (!ids) return '';
+      const name = k === 'blocked_by' ? 'blocked by' : k === 'blocks' ? 'blocks' : 'related to';
+      return ids.length ? `${name} ${ids.map((i) => `#${i}`).join(', ')}` : `not ${name} anything`;
+    }),
     u.unmatched.length ? `no single team member named ${u.unmatched.join(', ')}` : '',
     u.refused.includes('status') ? 'mark it done from Tasks (it needs proof)' : '',
   ].filter(Boolean);

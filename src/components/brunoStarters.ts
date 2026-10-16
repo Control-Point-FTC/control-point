@@ -50,6 +50,8 @@ const POOLS: Record<string, StarterPool> = {
       'Tag this task as Think award evidence',
       'Which tasks count toward the Reach award?',
       'Which tasks did we cancel this season?',
+      'Which tasks are blocked, and by what?',
+      'Task #12 can’t start until #9 is done',
       'Create a task to pack the pit kit for the qualifier',
       'Add a recurring-style reminder task: weekly team meeting every Tuesday',
       'Create a task to write the judge presentation script',

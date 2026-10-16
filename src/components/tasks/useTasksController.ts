@@ -415,6 +415,9 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     return boardCheck && teamCheck;
   });
 
+  // Every loaded task by id: blockers count even when a filter hides them.
+  const taskById = useMemo(() => new Map<number, any>(tasks.map((t: any) => [Number(t.id), t])), [tasks]);
+
   const updateStatus = async (id: number, status: string) => {
     if (pendingIds.has(id)) return;
     // Cancelling and restoring are a manager's call (the server refuses
@@ -457,6 +460,27 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       markPending(id, false);
     }
   };
+
+  /** Add or remove one link (blocked by / blocks / related); the server refuses loops. */
+  const editLink = async (taskId: number, kind: string, otherId: number, add: boolean): Promise<boolean> => {
+    try {
+      const res = add
+        ? await apiFetch(`/api/tasks/${taskId}/links`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, other_id: otherId }) })
+        : await apiFetch(`/api/tasks/${taskId}/links?kind=${encodeURIComponent(kind)}&other_id=${otherId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data?.error || 'Could not update the link — try again.', 'error');
+        return false;
+      }
+      refresh.tasks();
+      return true;
+    } catch {
+      notify('Could not update the link — try again.', 'error');
+      return false;
+    }
+  };
+  const addLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, true);
+  const removeLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, false);
 
   const handleDeleteTask = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete task', message: 'Delete this task?', confirmLabel: 'Delete', danger: true }))) return false;
@@ -540,7 +564,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks,
+    isAdmin, canManageTasks, addLink, removeLink, taskById,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,
