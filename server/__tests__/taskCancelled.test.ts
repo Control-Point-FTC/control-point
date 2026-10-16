@@ -61,6 +61,12 @@ describe("task API", () => {
     expect((await t.patch(`/api/tasks/${id}`, { status: "archived" }, admin)).status).toBe(400);
   });
 
+  it("an assignee can't finish a cancelled task through the completion route either", async () => {
+    const r = await t.api(`/api/tasks/${id}/complete`, { method: "POST", session: student, body: JSON.stringify({ notes: "Did it anyway" }) });
+    expect(r.status).toBe(403);
+    expect(await dbGet("SELECT status, completion_notes FROM tasks WHERE id = ?", id)).toMatchObject({ status: "cancelled", completion_notes: null });
+  });
+
   it("cancelled tasks aren't open or overdue for Bruno", async () => {
     await t.post("/api/tasks", { title: "Wire the hub", due_date: "2020-01-02" }, admin);
     const facts = await loadWorkspaceFacts({ dbGet, dbAll }, team, "America/New_York");

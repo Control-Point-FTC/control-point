@@ -10308,6 +10308,10 @@ Rules:
       if (!canManage && !isAssignee && (taskAssignees.length > 0 || task.assigned_to)) {
         return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
       }
+      // A cancelled task comes back only through a manager (as PATCH), before any proof is stored.
+      if (task.status === 'cancelled' && !canManage) {
+        return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
+      }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
       // Proof images are persisted in the database so they survive restarts.
       const images: string[] = [];

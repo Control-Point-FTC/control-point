@@ -58,6 +58,10 @@ function completedOrder(tasks: any[], filter: ReviewFilter) {
       : t.status === 'done' && (filter === 'pending' ? t.review_status !== 'approved' : t.review_status === 'approved'))
     .sort((a, b) => lastFinished(b).localeCompare(lastFinished(a)));
 }
+/** Only task managers move a card into or out of Cancelled. */
+function canMoveBetween(from: string | undefined, to: string, canManage: boolean) {
+  return canManage || (from !== 'cancelled' && to !== 'cancelled');
+}
 /** The board's reading order: column by column, cards top to bottom. */
 function boardOrder(tasks: any[], columns: readonly BoardColumn[]) {
   return columns.flatMap((c) => tasks.filter((t) => t.status === c.id));
@@ -374,7 +378,7 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
   };
   if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     const next = columns[col + (e.key === 'ArrowLeft' ? -1 : 1)];
-    if (!next) return;
+    if (!next || !canMoveBetween(task.status, next.id, ctl.canManageTasks)) return;
     e.preventDefault();
     void ctl.updateStatus(task.id, next.id);
     // Follow the card to its new column once it has moved.
@@ -416,14 +420,14 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
             <section
               key={col.id}
               aria-label={`${M.label} (${items.length})`}
-              onDragOver={(e) => { if (dragId != null) { e.preventDefault(); setOverCol(col.id); } }}
+              onDragOver={(e) => { if (dragId != null && canMoveBetween(tasks.find((t) => t.id === dragId)?.status, col.id, ctl.canManageTasks)) { e.preventDefault(); setOverCol(col.id); } }}
               onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
               onDrop={(e) => {
                 e.preventDefault();
                 const id = dragId;
                 setDragId(null); setOverCol(null);
                 const task = tasks.find((t) => t.id === id);
-                if (task && task.status !== col.id) {
+                if (task && task.status !== col.id && canMoveBetween(task.status, col.id, ctl.canManageTasks)) {
                   setMoved((s) => new Set(s).add(task.id));
                   void ctl.updateStatus(task.id, col.id);
                 }
@@ -552,7 +556,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
               <TableCell className="hidden sm:table-cell"><AvatarStack members={assigneesOf(t)} max={4} /></TableCell>
               <TableCell className="hidden sm:table-cell"><DueChip task={t} /></TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
-                <Select value={t.status} onValueChange={(v) => { if (v !== t.status) void ctl.updateStatus(t.id, v); }}>
+                <Select value={t.status} disabled={t.status === 'cancelled' && !ctl.canManageTasks} onValueChange={(v) => { if (v !== t.status) void ctl.updateStatus(t.id, v); }}>
                   <SelectTrigger size="sm" aria-label={`Status of ${t.title}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {(ctl.canManageTasks || t.status === 'cancelled' ? [...TASK_COLUMNS, CANCELLED_COLUMN] : TASK_COLUMNS).map((c) => (

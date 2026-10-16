@@ -417,6 +417,13 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   const updateStatus = async (id: number, status: string) => {
     if (pendingIds.has(id)) return;
+    // Cancelling and restoring are a manager's call (the server refuses
+    // anyone else), so they're never offered as a move that bounces back.
+    const current = tasks.find((t: any) => t.id === id);
+    if (!canManageTasks && (status === 'cancelled' || current?.status === 'cancelled')) {
+      notify('Only team managers can cancel or restore tasks.', 'error');
+      return;
+    }
     // Moving to done requires proof: open the shared completion dialog.
     // (The server rejects direct PATCH transitions to done.)
     if (status === 'done') {
