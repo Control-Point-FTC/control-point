@@ -135,6 +135,16 @@ const CODE_RE = /^cph_[A-Za-z0-9_-]{43}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ID_RE = /^[1-9]\d{0,14}$/;
 
+/**
+ * SQL for "this members row is a workspace admin" (alias `m`), the same rule as workspaceAdmin and
+ * countAdmins: account_type 'admin', or a role on its own team whose permissions JSON holds "*" or
+ * "manage_members".
+ */
+const ADMIN_SQL = (m: string) => `(${m}.account_type = 'admin' OR EXISTS (
+  SELECT 1 FROM member_roles mr JOIN roles r ON r.id = mr.role_id
+   WHERE mr.member_id = ${m}.id AND r.team_id = ${m}.team_id
+     AND (instr(r.permissions, '"*"') > 0 OR instr(r.permissions, '"manage_members"') > 0)))`;
+
 /** A positive integer id from a path segment or JSON value, else null. */
 export function cleanId(v: unknown): number | null {
   const s = typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
@@ -435,7 +445,30 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
       if (targetAdmins && (await deps.countAdmins(teamId)) - targetAdmins < 1) {
         return res.status(409).json({ error: "last_admin" });
       }
-      for (const m of target) await deps.removeMembership(teamId, m.id);
+      // The checks above can be overtaken by a concurrent removal (two admins removing each other at
+      // once), so each row is first deactivated by one guarded statement: only while the actor is
+      // still an active admin and, for an admin target, another active admin remains. SQLite runs
+      // each statement atomically, so two overlapping removals can't both pass.
+      const actorIds = actor.filter((m) => m.admin).map((m) => m.id);
+      for (const m of target) {
+        const r = await deps.dbRun(
+          `UPDATE members SET is_active = 0
+            WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1
+              AND EXISTS (SELECT 1 FROM members a WHERE a.id IN (${actorIds.map(() => "?").join(",")})
+                            AND COALESCE(a.is_active, 1) = 1 AND ${ADMIN_SQL("a")})
+              AND (NOT ${ADMIN_SQL("members")}
+                   OR EXISTS (SELECT 1 FROM members o WHERE o.team_id = ? AND o.id <> ? AND COALESCE(o.is_active, 1) = 1 AND ${ADMIN_SQL("o")}))`,
+          m.id, teamId, ...actorIds, teamId, m.id,
+        );
+        if (!r.changes) {
+          // Lost a race: say why, by what's true now.
+          if (!(await membershipsOf(teamId, actorAccountId)).some((x) => x.admin)) return res.status(403).json({ error: "not_admin" });
+          if (!(await membershipsOf(teamId, accountId)).some((x) => x.id === m.id)) continue; // already removed meanwhile
+          return res.status(409).json({ error: "last_admin" });
+        }
+        // Then Control Point's normal removal (roles, sessions, sticky notes, calendar, sockets).
+        await deps.removeMembership(teamId, m.id);
+      }
       // Control Point has no audit table: a log line with ids only (Scout keeps the full audit).
       console.info(`[shared-accounts] member removed from workspace ${teamId} by Control Scout: account ${accountId} (members ${target.map((m) => m.id).join(",")}) by account ${actorAccountId} at ${iso()}`);
       res.json({ ok: true });

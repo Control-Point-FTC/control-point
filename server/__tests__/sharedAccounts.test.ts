@@ -511,6 +511,23 @@ describe("workspace members (Control Scout's Members settings)", () => {
     expect((await remove(w.teamId, { accountId: sam, actorAccountId: sam })).status).toBe(409);
   });
 
+  it("two admins removing each other (or themselves) at once: one admin always remains", async () => {
+    for (let round = 0; round < 3; round++) {
+      const w = await workspace(`race${round}`);
+      const second = await seedMember(on.db, w.teamId, "Sam Second", `second.race${round}@ws.test`, "admin");
+      const sam = await accountFor(`second.race${round}@ws.test`);
+      const results = await Promise.all([
+        remove(w.teamId, { accountId: sam, actorAccountId: w.admin }),
+        remove(w.teamId, { accountId: w.admin, actorAccountId: sam }),
+        remove(w.teamId, { accountId: w.admin, actorAccountId: w.admin }),
+        remove(w.teamId, { accountId: sam, actorAccountId: sam }),
+      ]);
+      expect(results.filter((r) => r.status === 200).length, JSON.stringify(results)).toBe(1);
+      for (const r of results) expect([200, 403, 404, 409]).toContain(r.status);
+      expect((await active(w.adminMember)) + (await active(second))).toBe(1);
+    }
+  });
+
   it("a member can be removed while admins remain (removing a plain member is never a last-admin case)", async () => {
     const w = await workspace("plainself");
     expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin })).status).toBe(200);
