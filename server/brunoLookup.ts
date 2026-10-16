@@ -15,6 +15,8 @@
 //
 // "notebook", "notebook_page" and "notebook_outline" read the team notebook
 // through server/brunoNotebook.ts (protected content is never visible there).
+import { awardById, parseTagList } from "../src/types/taskTags.js";
+
 export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes";
 export interface LookupQuery {
   kind: LookupKind;
@@ -186,9 +188,10 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     const rows = c.rows.reverse();
     for (const r of rows) lines.push(`[${when(Date.parse(r.timestamp), tz)}${r.channel ? ` · #${r.channel}` : ""}] ${r.sender}: ${clip(r.content, 300)}`);
   } else if (q.kind === "tasks") {
-    const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')"]);
+    // Tags are searchable too ("intake tasks", "Think evidence").
+    const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')", "COALESCE(t.subsystems, '')", "COALESCE(t.awards, '')", "COALESCE(t.labels, '')"]);
     const args: any[] = [teamId, ...w.args];
-    let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at,
+    let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at, t.start_date, t.subsystems, t.awards, t.labels,
       COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),
         (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
@@ -222,7 +225,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     for (const r of c.rows) {
       const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
       ids.push(`task:${r.id}`);
-      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.start_date ? `, starts ${r.start_date}` : ""}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${taskTagText(r)}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
@@ -465,4 +468,16 @@ export function nothingFoundNote(queries: LookupQuery[], outcome: { rows?: strin
       : "I couldn't find anything current on that. Try asking with more detail, like the exact product, team or event.";
   }
   return "I couldn't find anything for that in the team's data. Try other words, a name or a date range.";
+}
+
+/** ", subsystems Arm, Intake; Think award evidence; labels TeleOp" for a task row (member-written names are clipped). */
+export function taskTagText(r: { subsystems?: unknown; awards?: unknown; labels?: unknown }): string {
+  const parts: string[] = [];
+  const subs = parseTagList(r.subsystems).map((s) => clip(s, 40));
+  if (subs.length) parts.push(`subsystems ${subs.join(", ")}`);
+  const awards = parseTagList(r.awards).map((a) => awardById(a)?.name).filter(Boolean);
+  if (awards.length) parts.push(`${awards.join(", ")} award evidence`);
+  const labels = parseTagList(r.labels).map((s) => clip(s, 30));
+  if (labels.length) parts.push(`labels ${labels.join(", ")}`);
+  return parts.length ? `, ${parts.join("; ")}` : "";
 }

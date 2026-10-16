@@ -9,6 +9,7 @@ import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
+import { parseTagList } from '../../types/taskTags';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 import { recordedCompletions } from '../../utils/taskCompletions';
 
@@ -27,6 +28,12 @@ export interface TaskForm {
   repeat?: string;
   /** The stored rule when it isn't one of the menu's (e.g. every 3 weeks). */
   repeatRule?: Recurrence | null;
+  /** YYYY-MM-DD; '' = none. */
+  start_date?: string;
+  /** Robot subsystems, FTC award ids and labels (src/types/taskTags.ts). */
+  subsystems?: string[];
+  awards?: string[];
+  labels?: string[];
 }
 
 /** Form repeat choice <-> stored rule. */
@@ -76,7 +83,7 @@ export const TASK_COLUMNS = [
   { id: 'done', label: 'Done' },
 ] as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '' };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [] };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -177,7 +184,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const openNewTask = (status = 'todo') => {
     bumpGen(EDITOR_GEN);
     setEditingTaskId(null);
-    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status });
+    setNewTask({ ...EMPTY_FORM, team_id: defaultTeamId(teams, currentUser), status });
     setIsBoardTask(false);
     resetAiTask();
     setAiTaskOpen(false);
@@ -198,6 +205,10 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       priority: task.priority || '',
       repeat: ruleToRepeat(task.recurrence),
       repeatRule: readRecurrence(task.recurrence),
+      start_date: task.start_date || '',
+      subsystems: parseTagList(task.subsystems),
+      awards: parseTagList(task.awards),
+      labels: parseTagList(task.labels),
     });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
@@ -230,6 +241,10 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             is_board: isBoardTask ? 1 : 0,
             priority: newTask.priority || null,
             recurrence: repeatToRule(newTask.repeat, newTask.repeatRule),
+            start_date: newTask.start_date || null,
+            subsystems: newTask.subsystems ?? [],
+            awards: newTask.awards ?? [],
+            labels: newTask.labels ?? [],
           }),
         });
         if (res.ok) {
@@ -244,7 +259,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...newTask, repeat: undefined, repeatRule: undefined, is_board: isBoardTask ? 1 : 0,
+          ...newTask, repeat: undefined, repeatRule: undefined, is_board: isBoardTask ? 1 : 0, start_date: newTask.start_date || null,
           due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
           priority: newTask.priority || null, recurrence: repeatToRule(newTask.repeat, newTask.repeatRule),
         }),

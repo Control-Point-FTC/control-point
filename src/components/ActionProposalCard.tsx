@@ -1,10 +1,22 @@
 import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal } from 'lucide-react';
 import { TEAM_MODULES } from '../types/teamModules';
+import { awardById } from '../types/taskTags';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
 import { recurrenceLabel } from '../utils/quickAdd';
 import { getProposalContext, getTaskIndex, resolveEventItem, resolveTaskItem, resolveTaskUpdate, useProposalContext, useTaskIndex } from '../services/proposalContext';
+
+/** "subsystems Arm, Intake · Think evidence · labels TeleOp" (empty parts skipped). */
+function tagParts(t: { start_date?: string | null; subsystems?: string[]; awards?: string[]; labels?: string[] }, clearing = false): string[] {
+  const list = (name: string, v: string[] | undefined) => (v === undefined ? '' : v.length ? `${name} ${v.join(', ')}` : clearing ? `no ${name}` : '');
+  return [
+    t.start_date !== undefined && (t.start_date || clearing) ? (t.start_date ? `starts ${t.start_date}` : 'no start date') : '',
+    list('subsystems', t.subsystems),
+    t.awards === undefined ? '' : t.awards.length ? `${t.awards.map((a) => awardById(a)?.name ?? a).join(', ')} evidence` : clearing ? 'no award tags' : '',
+    list('labels', t.labels),
+  ];
+}
 
 /** A task exactly as it will be saved: title, due date and time, priority, people, repeat. */
 function taskSummary(it: any): string {
@@ -15,6 +27,7 @@ function taskSummary(it: any): string {
     t.assignees.length || t.roles.length ? `→ ${[...t.assignees, ...t.roles.map((r) => { const who = t.roleMembers[r]; return `everyone in ${r}${!who ? '' : who.length ? ` (${who.join(', ')})` : ' (no one has this role yet)'}`; })].join(', ')}` : '',
     t.unmatchedRoles.length ? `no single role named ${t.unmatchedRoles.join(', ')}` : '',
     t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
+    ...tagParts(t),
     t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
   ].filter(Boolean);
   return `${t.title.slice(0, 60)}${parts.length ? ` — ${parts.join(' · ')}` : ''}`;
@@ -40,6 +53,7 @@ function taskUpdateSummary(it: any): string {
     })].join(', ')}` : 'unassign everyone') : '',
     u.unmatchedRoles.length ? `no single role named ${u.unmatchedRoles.join(', ')}` : '',
     c.recurrence !== undefined ? (c.recurrence ? recurrenceLabel(c.recurrence).toLowerCase() : 'stop repeating') : '',
+    ...tagParts(c, true),
     u.unmatched.length ? `no single team member named ${u.unmatched.join(', ')}` : '',
     u.refused.includes('status') ? 'mark it done from Tasks (it needs proof)' : '',
   ].filter(Boolean);

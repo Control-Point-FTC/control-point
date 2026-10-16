@@ -26,6 +26,7 @@ import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { AnimatedValue } from '../../AnimatedValue';
 import { AvatarStack } from './AssigneePicker';
 import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
+import { TaskTagChips } from './TaskTags';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
@@ -472,6 +473,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                           )}
                         >
                           <p className={cn('line-clamp-2 text-sm font-medium', t.status === 'done' && 'text-muted-foreground line-through')}>{t.title}</p>
+                          <TaskTagChips task={t} className="mt-2" />
                           <div className="mt-2.5 flex flex-wrap items-center gap-2">
                             {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
                             <TaskMarks task={t} />
@@ -532,6 +534,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
                 </button>
                 {t.is_board ? <Badge variant="soft" className="ml-2"><Crown /> Board</Badge> : null}
                 <span className="ml-2 inline-flex flex-wrap items-center gap-1.5 align-middle"><TaskMarks task={t} /></span>
+                <TaskTagChips task={t} className="mt-1" />
                 <span className="mt-0.5 flex items-center gap-2 sm:hidden"><DueChip task={t} /></span>
               </TableCell>
               <TableCell className="hidden sm:table-cell"><AvatarStack members={assigneesOf(t)} max={4} /></TableCell>

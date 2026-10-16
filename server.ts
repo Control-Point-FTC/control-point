@@ -198,8 +198,9 @@ import { googleEventBody, isDeadRefreshToken } from "./server/googleCalendar.js"
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
-import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules } from "./src/types/teamModules.js";
+import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, parseSubsystems } from "./src/types/teamModules.js";
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
+import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -6751,13 +6752,13 @@ async function startServer() {
       found.notebook = await gatedNotebookBrief(access, () => notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId }, req.notebookPageId!, req.notebookBlockIds ?? []));
     }
     if (req.taskId) {
-      const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?" + boardSql(await canSeeBoardTasks(auth.memberId, auth.teamId)), req.taskId, auth.teamId)) as any;
+      const t = (await dbGet("SELECT id, title, status, due_date, description, start_date, subsystems, awards, labels FROM tasks WHERE id = ? AND team_id = ?" + boardSql(await canSeeBoardTasks(auth.memberId, auth.teamId)), req.taskId, auth.teamId)) as any;
       if (t) {
         const who = (await dbAll(
           "SELECT m.name FROM task_assignees ta JOIN members m ON m.id = ta.member_id WHERE ta.task_id = ? AND m.team_id = ? ORDER BY m.name LIMIT 8",
           t.id, auth.teamId
         )) as any[];
-        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean) };
+        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean), start_date: t.start_date ?? null, subsystems: t.subsystems, awards: t.awards, labels: t.labels };
       }
     }
     if (req.eventId) {
@@ -9824,6 +9825,13 @@ Rules:
     return new Date(Date.parse(`${due}T12:00:00Z`) + jump * 86400000).toISOString().slice(0, 10);
   }
 
+  /** The team's robot subsystems (Settings → Workspace), for validating tags. */
+  async function teamSubsystemList(teamId: number | null): Promise<string[]> {
+    if (!teamId) return [];
+    const row = (await dbGet("SELECT subsystems FROM teams WHERE id = ?", teamId)) as any;
+    return parseSubsystems(row?.subsystems);
+  }
+
   async function spawnNextRecurringTask(task: any, teamId: number, actorId: number): Promise<any | null> {
     const rule = readRecurrence(task.recurrence);
     if (!rule) return null;
@@ -9848,8 +9856,9 @@ Rules:
       // the link step always applies to us.
       await dbBatch([
         {
-          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
-          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence],
+          // Tags carry over; a start date belongs to one occurrence, so it doesn't.
+          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, subsystems, awards, labels) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence, task.subsystems ?? null, task.awards ?? null, task.labels ?? null],
         },
         { sql: "UPDATE tasks SET next_task_id = last_insert_rowid() WHERE id = ? AND next_task_id = -1", args: [task.id] },
         ...assignees.map((mid) => ({
@@ -9887,6 +9896,9 @@ Rules:
       // Optional time of day it's due (HH:MM); only meaningful with a date.
       const dueTime = due_date && TASK_TIME_RE.test(String(req.body?.due_time || "")) ? String(req.body.due_time) : null;
       if (req.body?.due_time && !dueTime && due_date) return res.status(400).json({ error: "Use a time like 15:30" });
+      const tags = taskTagColumns(req.body, await teamSubsystemList(auth.teamId));
+      if (tags.error) return res.status(400).json({ error: tags.error });
+      if (startAfterDue(tags.cols.start_date, due_date)) return res.status(400).json({ error: "The start date is after the due date" });
 
       // assignee_ids (array) is preferred; assigned_to (single) for legacy clients
       let targetIds: number[] = [];
@@ -9905,7 +9917,11 @@ Rules:
       }
       const legacyAssignedTo = validIds[0] || null;
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description ?? '', ['todo', 'in-progress', 'done'].includes(status) ? status : 'todo', legacyAssignedTo, due_date || null, dueTime, is_board ? 1 : 0, createdAt, priority, recurrence));
+      const info = (await dbRun(
+        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        auth.teamId, title, description ?? '', ['todo', 'in-progress', 'done'].includes(status) ? status : 'todo', legacyAssignedTo, due_date || null, dueTime, is_board ? 1 : 0, createdAt, priority, recurrence,
+        tags.cols.start_date ?? null, tags.cols.subsystems ?? null, tags.cols.awards ?? null, tags.cols.labels ?? null,
+      ));
 
       const taskId = Number(info.lastInsertRowid);
       await setTaskAssignees(taskId, validIds, auth.teamId);
@@ -10110,10 +10126,17 @@ Rules:
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
       const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined)) {
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       if (title !== undefined && !String(title ?? '').trim()) return res.status(400).json({ error: "Add a title" });
+      const tags = taskTagColumns(req.body, await teamSubsystemList(auth.teamId));
+      if (tags.error) return res.status(400).json({ error: tags.error });
+      {
+        const start = tags.cols.start_date !== undefined ? tags.cols.start_date : task.start_date;
+        const due = due_date !== undefined ? due_date : task.due_date;
+        if (startAfterDue(start, due)) return res.status(400).json({ error: "The start date is after the due date" });
+      }
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
       // Status-only moves keep the old path; field edits update the rest.
@@ -10139,6 +10162,7 @@ Rules:
         sets.push('due_time = ?'); vals.push(resultingDate ? wanted : null);
       }
       if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
+      for (const [col, v] of Object.entries(tags.cols)) { sets.push(`${col} = ?`); vals.push(v); }
       if (assigned_to !== undefined || assignee_ids !== undefined) {
         let newIds: number[] = [];
         if (Array.isArray(assignee_ids)) {
@@ -12457,7 +12481,7 @@ Rules:
   // (a JSON array) when the user confirms task entries. Parse, validate, strip.
   // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
   const TASKS_BLOCK_RE = /```tasks\s*\r?\n([\s\S]*?)\r?\n```/;
-  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; roles?: string[]; repeat?: unknown };
+  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; roles?: string[]; repeat?: unknown; start_date?: string; subsystems?: unknown; awards?: unknown; labels?: unknown };
   function extractTasksBlock(fullText: string): { text: string; tasks: RawBrunoTask[] | null } {
     const src = String(fullText || "");
     const m = src.match(TASKS_BLOCK_RE);
@@ -12485,6 +12509,11 @@ Rules:
             // Roles as written; matched to the team's roles when applied.
             ...(Array.isArray(t.roles) && t.roles.some((r: any) => typeof r === "string" && r.trim()) ? { roles: t.roles.filter((r: any) => typeof r === "string" && r.trim()).map((r: string) => r.trim().slice(0, 60)).slice(0, 10) } : {}),
             ...(t.repeat ? { repeat: typeof t.repeat === "string" ? t.repeat.slice(0, 20) : t.repeat } : {}),
+            // Start date and tags: cleaned by normalizeBrunoTask / taskTagColumns when applied.
+            ...(typeof t.start_date === "string" ? { start_date: t.start_date.slice(0, 10) } : {}),
+            ...(Array.isArray(t.subsystems) ? { subsystems: t.subsystems.slice(0, 20) } : {}),
+            ...(Array.isArray(t.awards) ? { awards: t.awards.slice(0, 8) } : {}),
+            ...(Array.isArray(t.labels) ? { labels: t.labels.slice(0, 10) } : {}),
           };
         }).filter((t): t is RawBrunoTask => !!t);
         if (valid.length) tasks = valid;
@@ -13355,7 +13384,11 @@ Rules:
       if (!auth) return;
       const roster = (await dbAll("SELECT name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
       const roles = await teamRolesWithMembers(auth.teamId);
-      res.json({ today: todayIn(await teamTimeZone(auth.teamId, req.query.tz)), roster: roster.map((m: any) => String(m.name)), roles: roles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })) });
+      res.json({
+        today: todayIn(await teamTimeZone(auth.teamId, req.query.tz)), roster: roster.map((m: any) => String(m.name)),
+        roles: roles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })),
+        subsystems: await teamSubsystemList(auth.teamId),
+      });
     } catch (error) {
       console.error("proposal-context error:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -13519,14 +13552,17 @@ Rules:
           const todayISO = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
           const names = roster.map((m: any) => String(m.name));
           const teamRoles = await teamRolesWithMembers(auth.teamId);
+          const subsystemList = await teamSubsystemList(auth.teamId);
           for (const raw of tasks) {
-            const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false, roles: teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })) });
+            const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false, roles: teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })), subsystems: subsystemList });
+            const tags = taskTagColumns({ start_date: t.start_date, subsystems: t.subsystems, awards: t.awards, labels: t.labels }, subsystemList).cols;
             const ids = t.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
             // Assigned by role: everyone holding it now.
             for (const role of t.roles) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
             const info = await dbRun(
-              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?)",
+              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
               auth.teamId, t.title, t.description, ids[0] ?? null, t.due_date, t.due_date ? t.due_time : null, createdAt, t.priority, t.recurrence ? JSON.stringify(t.recurrence) : null,
+              tags.start_date ?? null, tags.subsystems ?? null, tags.awards ?? null, tags.labels ?? null,
             );
             const taskId = Number(info.lastInsertRowid);
             made("task", taskId);
@@ -13544,7 +13580,8 @@ Rules:
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const names = roster.map((m: any) => String(m.name));
           const teamRoles = await teamRolesWithMembers(auth.teamId);
-          const parsed = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) }))))
+          const subsystemList = await teamSubsystemList(auth.teamId);
+          const parsed = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })), subsystemList))
             .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0 && updateTargets.has(u.id));
           // Several edits to one task are one edit (later fields win), so a
           // date in one item and a time in the next both land.
@@ -13573,6 +13610,10 @@ Rules:
             if (c.priority !== undefined) { sets.push("priority = ?"); vals.push(c.priority); }
             if (c.recurrence !== undefined) { sets.push("recurrence = ?"); vals.push(c.recurrence ? JSON.stringify(c.recurrence) : null); }
             if (c.due_date !== undefined) { sets.push("due_date = ?"); vals.push(c.due_date); }
+            // Start date and tags, validated as PATCH does (a start after the due date is dropped).
+            const tagCols = taskTagColumns({ start_date: c.start_date, subsystems: c.subsystems, awards: c.awards, labels: c.labels }, subsystemList).cols;
+            if (tagCols.start_date !== undefined && startAfterDue(tagCols.start_date, c.due_date !== undefined ? c.due_date : task.due_date)) delete tagCols.start_date;
+            for (const [col, v] of Object.entries(tagCols)) { sets.push(`${col} = ?`); vals.push(v); }
             if (c.due_time !== undefined || c.due_date !== undefined) {
               // The time belongs to the resulting date (as PATCH): none without one.
               const date = c.due_date !== undefined ? c.due_date : (task.due_date || null);

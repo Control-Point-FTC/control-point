@@ -3,6 +3,7 @@
  * into a short brief for the system prompt. Pure — the server passes in the
  * records it looked up (always scoped to the caller's workspace).
  */
+import { awardById, parseTagList } from "../src/types/taskTags.js";
 import type { ScreenContextRequest } from "../src/types/screenContext.js";
 import { quoteUntrusted } from "./scoutingContext.js";
 
@@ -43,7 +44,7 @@ export function parseScreenRequest(raw: unknown): ScreenContextRequest | null {
 }
 
 export interface ScreenLookups {
-  task?: { id: number; title: string; status: string | null; due_date: string | null; description: string | null; assignees: string[] } | null;
+  task?: { id: number; title: string; status: string | null; due_date: string | null; description: string | null; assignees: string[]; start_date?: string | null; subsystems?: unknown; awards?: unknown; labels?: unknown } | null;
   event?: { id: number; title: string; date: string; start_time: string | null; end_time: string | null; location: string | null; event_type: string | null; description: string | null } | null;
   channel?: { id: number; name: string; topic: string | null } | null;
   codeFile?: { id: number; file_path: string; language: string | null; file_size: number | null; updated_at: string | null } | null;
@@ -71,7 +72,16 @@ export function formatScreenContext(req: ScreenContextRequest, found: ScreenLook
   const q = quoteUntrusted;
   const t = found.task;
   if (t) {
-    const bits = [`status ${q(t.status || "todo", 30)}`, t.due_date ? `due ${q(t.due_date, 30)}` : "", t.assignees.length ? `assigned to ${t.assignees.map((a) => q(a, 60)).join(", ")}` : "unassigned"].filter(Boolean);
+    const subs = parseTagList(t.subsystems);
+    const awards = parseTagList(t.awards).map((a) => awardById(a)?.name).filter(Boolean) as string[];
+    const labels = parseTagList(t.labels);
+    const bits = [
+      `status ${q(t.status || "todo", 30)}`, t.start_date ? `starts ${q(t.start_date, 30)}` : "", t.due_date ? `due ${q(t.due_date, 30)}` : "",
+      t.assignees.length ? `assigned to ${t.assignees.map((a) => q(a, 60)).join(", ")}` : "unassigned",
+      subs.length ? `subsystems ${subs.map((s) => q(s, 40)).join(", ")}` : "",
+      awards.length ? `${awards.join(", ")} award evidence` : "",
+      labels.length ? `labels ${labels.map((s) => q(s, 30)).join(", ")}` : "",
+    ].filter(Boolean);
     lines.push(`- Open task #${t.id}: ${q(t.title, 160)} — ${bits.join(", ")}${t.description?.trim() ? `; description: ${q(t.description, 400)}` : ""}`);
   }
   const e = found.event;

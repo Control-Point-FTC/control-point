@@ -17,6 +17,8 @@ import { Countdown } from '../../ui/Countdown';
 import { AssigneePicker, AvatarStack } from './AssigneePicker';
 import { isTaskOverdue } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
+import { parseSubsystems } from '../../../types/teamModules';
+import { AWARD_OPTIONS, LabelsInput, TaskTagChips, ToggleChips } from './TaskTags';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -184,6 +186,7 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
                 {readRecurrence(task.recurrence) && <Badge variant="outline" className="gap-1"><Repeat className="size-3" />{recurrenceLabel(readRecurrence(task.recurrence))}</Badge>}
               </div>
               <SheetTitle className="text-xl leading-snug">{task.title}</SheetTitle>
+              <TaskTagChips task={task} />
               <SheetDescription>{team ? team.name : 'Task'}{task.created_at ? ` · created ${format(new Date(task.created_at), 'MMM d')}` : ''}</SheetDescription>
             </SheetHeader>
             <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
@@ -214,6 +217,10 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
               <dl className="grid grid-cols-[120px_1fr] gap-y-3 text-sm">
                 <dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Assignees</dt>
                 <dd>{assignees.length ? <span className="flex items-center gap-2"><AvatarStack members={assignees} max={5} /> <span className="truncate">{assignees.map((m) => m.name).join(', ')}</span></span> : <span className="text-muted-foreground">Unassigned</span>}</dd>
+                {task.start_date && (<>
+                  <dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-4" /> Starts</dt>
+                  <dd>{format(new Date(String(task.start_date).slice(0, 10) + 'T12:00:00'), 'EEE, MMM d')}</dd>
+                </>)}
                 <dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-4" /> Due</dt>
                 <dd><DueText task={task} /></dd>
                 {task.completed_at && (<>
@@ -255,6 +262,11 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
   const set = (patch: Partial<typeof f>) => ctl.setNewTask({ ...f, ...patch });
   const editing = !!ctl.editingTaskId;
   const saving = ctl.pendingIds.has(-1);
+  // Subsystems come from the task's team (Settings → Workspace → Robot subsystems).
+  const team = teams.find((t) => String(t.id) === String(f.team_id)) ?? teams[0];
+  const teamSubsystems = parseSubsystems(team?.subsystems);
+  const chosenSubsystems = f.subsystems ?? [];
+  const subsystemOptions = [...teamSubsystems, ...chosenSubsystems.filter((s) => !teamSubsystems.includes(s))].map((s) => ({ value: s, label: s }));
   return (
     <Sheet open={ctl.showAddTask} onOpenChange={(o) => { if (!o) ctl.closeTaskModal(); }}>
       <SheetContent side={side} className={cn('gap-0 p-0', side === 'right' ? 'sm:max-w-lg' : '')}>
@@ -319,6 +331,10 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               <Label htmlFor="task-assignees">Assignees</Label>
               <AssigneePicker id="task-assignees" members={members} selected={f.assignee_ids} onChange={(ids) => set({ assignee_ids: ids })} />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="task-start">Start date <span className="font-normal text-muted-foreground">(optional)</span></Label>
+              <Input id="task-start" type="date" value={f.start_date ? String(f.start_date).slice(0, 10) : ''} max={f.due_date ? String(f.due_date).slice(0, 10) : undefined} onChange={(e) => set({ start_date: e.target.value })} />
+            </div>
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <div className="grid gap-2">
                 <Label htmlFor="task-due">Due date</Label>
@@ -352,6 +368,19 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               </div>
             </div>
             {f.repeat && !f.due_date && <p className="-mt-2 text-xs text-muted-foreground">Repeats start from the day it's finished. Add a due date to set the rhythm.</p>}
+            <div className="grid gap-2">
+              <Label htmlFor="task-subsystems">Subsystems</Label>
+              <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => set({ subsystems: v })} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="task-awards">Award evidence</Label>
+              <ToggleChips id="task-awards" label="Award evidence" options={AWARD_OPTIONS} selected={f.awards ?? []} onChange={(v) => set({ awards: v })} />
+              <p className="text-xs text-muted-foreground">Mark work that shows what judges look for in an award (hover one to see).</p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="task-labels">Labels</Label>
+              <LabelsInput id="task-labels" value={f.labels ?? []} onChange={(v) => set({ labels: v })} />
+            </div>
             {ctl.isAdmin && (
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
                 <span>
