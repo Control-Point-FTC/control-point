@@ -17,6 +17,7 @@ import { quoteUntrusted } from "./scoutingContext.js";
 import { parseDisabledModules, parseSubsystems, TEAM_MODULES } from "../src/types/teamModules.js";
 import { parseTagList } from "../src/types/taskTags.js";
 import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
+import { onTimeStats, onTimePercent, ON_TIME_WINDOW_DAYS } from "../src/utils/taskInsights.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -170,6 +171,10 @@ export interface FactsInput {
   disabledModules?: string[];
   /** The team's robot subsystems (defaults until edited). */
   subsystems?: string[];
+  /** Open tasks with no due date (Insights → Needs attention). */
+  noDueOpenTotal?: number;
+  /** Finished in the last 30 days with a due date: how many on or before it (Insights → On time). */
+  onTime?: { onTime: number; total: number };
   /** Task board column limits and how many open tasks are in each column. */
   wip?: { limits: WipLimits; todo: number; inProgress: number };
 }
@@ -194,6 +199,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     L.push(`- Team roles and how many members hold each (per the roster): ${f.roles.slice(0, 30).map((r) => `${q(r.name, 40)} (${r.count})`).join(", ")}${f.roles.length > 30 ? ", …" : ""}`);
   }
   L.push(`- Open tasks (per the task board): ${f.openTaskTotal} total — ${f.overdueTaskTotal} overdue, ${f.dueThisWeekTotal} due in the next 7 days, ${f.unassignedOpenTotal} unassigned. Completed in the last 7 days: ${f.doneLast7}.`);
+  if (f.noDueOpenTotal !== undefined || f.onTime) {
+    const pct = f.onTime ? onTimePercent(f.onTime) : null;
+    L.push(`- Task insights (per the Insights tab): ${f.noDueOpenTotal ?? 0} open task(s) have no due date; on-time rate ${pct == null ? `not available (no task with a due date was finished in the last ${ON_TIME_WINDOW_DAYS} days)` : `${pct}% (${f.onTime!.onTime} of ${f.onTime!.total} tasks with a due date finished in the last ${ON_TIME_WINDOW_DAYS} days were done on or before their due date)`}.`);
+  }
 
   const { series, rest } = findWeeklySeries(f.upcoming);
   const nowTime = f.nowTime || "00:00";
@@ -280,10 +289,18 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
        SUM(CASE WHEN status NOT IN ('done', 'cancelled') THEN 1 ELSE 0 END) AS open_n,
        SUM(CASE WHEN status NOT IN ('done', 'cancelled') AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS overdue_n,
        SUM(CASE WHEN status NOT IN ('done', 'cancelled') AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS week_n,
-       SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND completed_at >= ? THEN 1 ELSE 0 END) AS done7_n
+       SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND completed_at >= ? THEN 1 ELSE 0 END) AS done7_n,
+       SUM(CASE WHEN status NOT IN ('done', 'cancelled') AND (due_date IS NULL OR due_date = '') THEN 1 ELSE 0 END) AS nodue_n
      FROM tasks WHERE team_id = ?${board}`,
     today, today, weekAhead, weekAgoIso, teamId,
   );
+  // On-time rate: same rule as the Insights tab, in the team's calendar.
+  const since = new Date(now.getTime() - ON_TIME_WINDOW_DAYS * 86400000);
+  const finished = await db.dbAll(
+    `SELECT status, due_date, completed_at FROM tasks WHERE team_id = ? AND status = 'done' AND completed_at >= ? AND due_date IS NOT NULL AND due_date != ''${board}`,
+    teamId, since.toISOString(),
+  ).catch(() => [] as any[]);
+  const onTime = onTimeStats(finished, { since, localDate: (iso) => todayIn(timeZone, new Date(iso)) });
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(
     `SELECT COUNT(*) AS n FROM tasks t
@@ -351,6 +368,8 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     unassignedOpenTotal: Number(unassigned?.n || 0),
     dueThisWeekTotal: Number(counts?.week_n || 0),
     doneLast7: Number(counts?.done7_n || 0),
+    noDueOpenTotal: Number(counts?.nodue_n || 0),
+    onTime,
     messagesLast7: msgs ? Number(msgs.n || 0) : null,
     openTasks: openTasks.map((t: any) => ({ id: t.id, title: String(t.title || ""), status: String(t.status || "todo"), due_date: t.due_date, assignees: assignees.get(t.id) || [], subsystems: parseTagList(t.subsystems), blockedBy: t.blockers ? String(t.blockers).split(",").map(Number).filter((n) => n > 0) : [] })),
     upcoming: upcoming.map((e: any) => ({ id: e.id, title: String(e.title || ""), date: String(e.date).slice(0, 10), start_time: e.start_time || "", end_time: e.end_time || "", location: e.location || "", event_type: e.event_type || "" })),
