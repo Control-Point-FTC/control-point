@@ -3,7 +3,7 @@
 // desktop, bottom on phones). All mutations go through useTasksController.
 import { format } from 'date-fns';
 import { useState } from 'react';
-import { Ban, CalendarDays, Camera, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
+import { Ban, Bell, BellOff, CalendarDays, Camera, Copy, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Link as LinkIcon, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { cn } from '../../../components/cn';
 import {
@@ -21,6 +21,8 @@ import { taskCompletions } from '../../../utils/taskCompletions';
 import { parseSubsystems } from '../../../types/teamModules';
 import { AWARD_OPTIONS, LabelsInput, TaskTagChips, ToggleChips } from './TaskTags';
 import { TaskLinksSection } from './TaskLinks';
+import { TaskTimeline, useTaskTimeline } from './TaskTimeline';
+import { notify } from '../../../components/dialog';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -177,6 +179,17 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
   const side = useSheetSide();
   const assignees = task ? members.filter((m) => taskAssigneeIds(task).includes(m.id)) : [];
   const doneIds: number[] = Array.isArray(task?.done_assignee_ids) ? task.done_assignee_ids : [];
+  // The timeline reloads when the task itself changes (status, people, dates…).
+  const { data: timeline, reload, setData } = useTaskTimeline(task?.id ?? null, task ? `${task.status}|${task.title}|${task.due_date}|${task.priority}|${(task.assignee_ids || []).join(',')}|${task.review_status}` : '');
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(`${window.location.origin}/tasks?task=${task.id}`); notify('Link copied.', 'success'); }
+    catch { notify('Could not copy the link.', 'error'); }
+  };
+  const toggleWatch = async () => {
+    if (!timeline) return;
+    const next = !timeline.watching;
+    if (await ctl.setWatching(task.id, next)) setData({ ...timeline, watching: next });
+  };
   const team = task ? teams.find((t) => String(t.id) === String(task.team_id)) : null;
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -192,6 +205,15 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
                 {readRecurrence(task.recurrence) && <Badge variant="outline" className="gap-1"><Repeat className="size-3" />{recurrenceLabel(readRecurrence(task.recurrence))}</Badge>}
               </div>
               <SheetTitle className="text-xl leading-snug">{task.title}</SheetTitle>
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" variant="outline" className="h-8" disabled={!timeline} onClick={() => void toggleWatch()} aria-pressed={!!timeline?.watching}>
+                  {timeline?.watching ? <><BellOff /> Unwatch</> : <><Bell /> Watch</>}
+                </Button>
+                <Button size="sm" variant="outline" className="h-8" onClick={() => void copyLink()}><LinkIcon /> Copy link</Button>
+                {ctl.canManageTasks && (
+                  <Button size="sm" variant="outline" className="h-8" onClick={async () => { const id = await ctl.duplicateTask(task); if (id) onOpenTask?.(id); }}><Copy /> Duplicate</Button>
+                )}
+              </div>
               <TaskTagChips task={task} />
               <SheetDescription>{team ? team.name : 'Task'}{task.created_at ? ` · created ${format(new Date(task.created_at), 'MMM d')}` : ''}</SheetDescription>
             </SheetHeader>
@@ -277,6 +299,8 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
                   ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{task.description}</p>
                   : <p className="text-sm text-muted-foreground">No description.</p>}
               </div>
+              <Separator />
+              <TaskTimeline key={task.id} taskId={task.id} timeline={timeline} reload={reload} members={members} currentUserId={ctl.currentUserId} canModerate={ctl.canManageTasks} />
             </div>
             {ctl.canManageTasks && (
               <div className="flex items-center gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">

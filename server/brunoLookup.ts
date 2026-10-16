@@ -16,8 +16,9 @@
 // "notebook", "notebook_page" and "notebook_outline" read the team notebook
 // through server/brunoNotebook.ts (protected content is never visible there).
 import { awardById, parseTagList } from "../src/types/taskTags.js";
+import { describeActivity } from "./taskActivity.js";
 
-export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes";
+export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -35,6 +36,8 @@ export interface LookupQuery {
   page?: number;
   /** sticky_notes: one whole note by id (for editing it). */
   note?: number;
+  /** task_activity: the task's id (its comments and history). */
+  task?: number;
 }
 
 /** Runs a notebook lookup for the asking member (Bruno-scoped access). */
@@ -43,7 +46,7 @@ const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_out
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes"];
+const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -65,6 +68,9 @@ export function extractLookupBlocks(text: string): { text: string; queries: Look
       if (q.kind === "notebook" && !str(q.query, 120)) continue;
       const page = Number(q.page);
       if (q.kind === "notebook_page" && !(Number.isSafeInteger(page) && page > 0) && !str(q.query, 120)) continue;
+      // A task's discussion needs the task's id.
+      const taskRef = Number(String(q.task ?? "").replace(/^#/, ""));
+      if (q.kind === "task_activity" && !(Number.isSafeInteger(taskRef) && taskRef > 0)) continue;
       queries.push({
         kind: q.kind,
         ...(str(q.query, q.kind === "web" ? 200 : 120) ? { query: str(q.query, q.kind === "web" ? 200 : 120) } : {}),
@@ -75,6 +81,7 @@ export function extractLookupBlocks(text: string): { text: string; queries: Look
         ...(str(q.status, 20) ? { status: str(q.status, 20).toLowerCase() } : {}),
         ...(q.kind === "notebook_page" && Number.isSafeInteger(page) && page > 0 ? { page } : {}),
         ...(q.kind === "sticky_notes" && Number.isSafeInteger(Number(q.note)) && Number(q.note) > 0 ? { note: Number(q.note) } : {}),
+        ...(q.kind === "task_activity" ? { task: taskRef } : {}),
       });
     }
   }
@@ -235,6 +242,24 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       ids.push(`task:${r.id}`);
       lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.start_date ? `, starts ${r.start_date}` : ""}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.completion_mode === "each" ? `, everyone assigned completes it separately (${Number(r.done_n || 0)} of ${Number(r.assignee_n || 0)} done)` : ""}${r.blockers ? `, blocked by ${String(r.blockers).split(",").map((x) => `task #${x}`).join(", ")} (still open)` : ""}${taskTagText(r)}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
+  } else if (q.kind === "task_activity") {
+    // One task's comments and history, oldest first (board tasks only for viewers who may see them).
+    const task = (await db(`SELECT id, title FROM tasks WHERE id = ? AND team_id = ?${includeBoard ? "" : " AND COALESCE(is_board, 0) = 0"}`, q.task, teamId))[0];
+    if (task) {
+      ids.push(`task:${task.id}`);
+      const names = new Map<number, string>(((await db("SELECT id, name FROM members WHERE team_id = ?", teamId)) as any[]).map((m) => [Number(m.id), String(m.name)]));
+      const nameOf = (id: number | null | undefined) => (id != null && names.get(Number(id))) || "Someone";
+      const comments = await db("SELECT member_id, author_name, body, created_at, edited_at FROM task_comments WHERE task_id = ? AND deleted_at IS NULL ORDER BY created_at, id", task.id);
+      const activity = await db("SELECT member_id, kind, detail, created_at FROM task_activity WHERE task_id = ? ORDER BY created_at, id", task.id);
+      const entries = [
+        ...comments.map((c: any) => ({ at: String(c.created_at), line: `${when(Date.parse(c.created_at), tz)} — ${clip(c.author_name || nameOf(c.member_id), 40)} commented: ${clip(c.body, 400)}${c.edited_at ? " (edited)" : ""}` })),
+        ...activity.map((a: any) => ({ at: String(a.created_at), line: `${when(Date.parse(a.created_at), tz)} — ${clip(describeActivity(a, nameOf), 200)}` })),
+      ].sort((x, y) => x.at.localeCompare(y.at));
+      summary = `task #${task.id} ${clip(task.title, 120)}: ${comments.length} comment${comments.length === 1 ? "" : "s"}, ${activity.length} change${activity.length === 1 ? "" : "s"}`;
+      const shownEntries = entries.slice(-60);
+      more = entries.length > shownEntries.length;
+      for (const e of shownEntries) lines.push(e.line);
+    }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
     const args: any[] = [teamId, ...w.args];
@@ -297,7 +322,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
 }
 
 function describe(q: LookupQuery): string {
-  const bits = [q.page && `page #${q.page}`, q.query && `"${q.query}"`, q.channel && `#${q.channel}`, q.person && `person ${q.person}`, q.status && `status ${q.status}`,
+  const bits = [q.page && `page #${q.page}`, q.task && `task #${q.task}`, q.query && `"${q.query}"`, q.channel && `#${q.channel}`, q.person && `person ${q.person}`, q.status && `status ${q.status}`,
     q.from && q.to ? (q.from === q.to ? `on ${q.from}` : `${q.from} to ${q.to}`) : q.from ? `from ${q.from}` : q.to ? `until ${q.to}` : ""].filter(Boolean);
   return `${q.kind}${bits.length ? ` (${bits.join(", ")})` : ""}`;
 }
@@ -385,7 +410,7 @@ export function saidNothing(answer: string): boolean {
 /** The fenced block kinds the app reads and hides from the member (lookups,
  *  references, memories, scouting, and the action proposals the chat strips).
  *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
-const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace"];
+const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 

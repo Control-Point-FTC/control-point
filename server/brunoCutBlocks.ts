@@ -9,7 +9,7 @@
 // the live reply and the saved one both end with a block the card can read.
 
 /** The fenced blocks the app turns into confirm cards. */
-export const ACTION_FENCES = ["event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "notebook", "workspace"] as const;
+export const ACTION_FENCES = ["event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "notebook", "workspace", "task-comment"] as const;
 
 /** Room for the complete block on the second call (the per-request maximum). */
 export const FINISH_BLOCK_TOKENS = 4096;

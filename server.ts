@@ -203,6 +203,7 @@ import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspa
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import { isTaskStatus } from "./src/types/taskStatus.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
+import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
@@ -2632,6 +2633,24 @@ async function startServer() {
   };
   /** task_created / task_updated: a board task reaches only those who may see
    *  it; everyone else gets task_deleted (it may have just become board-only). */
+  /** "This task's timeline changed": a board task's only reaches members who can see board tasks. */
+  const broadcastTaskTimeline = (teamId: number | null | undefined, taskId: number) => {
+    if (teamId == null) return Promise.resolve();
+    return queueTaskEvent(teamId, async () => {
+      const t = (await dbGet("SELECT is_board FROM tasks WHERE id = ?", taskId)) as any;
+      const msg = { type: "task_timeline", task_id: taskId };
+      if (!t || !Number(t.is_board)) return broadcastToTeam(teamId, msg);
+      const text = JSON.stringify(msg);
+      const seen = new Map<number, boolean>();
+      for (const client of [...clients]) {
+        const c = client as any;
+        if (client.readyState !== WebSocket.OPEN || c.teamId !== teamId) continue;
+        if (!seen.has(c.memberId)) seen.set(c.memberId, await canSeeBoardTasks(c.memberId, teamId).catch(() => false));
+        if (!seen.get(c.memberId)) continue;
+        try { client.send(text); } catch { /* socket closed meanwhile */ }
+      }
+    });
+  };
   const broadcastTask = (teamId: number | null | undefined, type: "task_created" | "task_updated", task: any) => {
     if (teamId == null || !task) return Promise.resolve();
     return queueTaskEvent(teamId, async () => {
@@ -6784,7 +6803,10 @@ async function startServer() {
         const blockedBy = linkRows.filter((r) => r.kind === "blocks" && Number(r.to_id) === t.id).map((r) => ({ id: Number(r.from_id), open: !["done", "cancelled"].includes(String(r.other_status)) }));
         const blocks = linkRows.filter((r) => r.kind === "blocks" && Number(r.from_id) === t.id).map((r) => Number(r.to_id));
         const related = linkRows.filter((r) => r.kind === "relates").map((r) => (Number(r.from_id) === t.id ? Number(r.to_id) : Number(r.from_id)));
-        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean), start_date: t.start_date ?? null, subsystems: t.subsystems, awards: t.awards, labels: t.labels, blockedBy, blocks, related };
+        const recent = (await dbAll(
+          "SELECT author_name, body, created_at FROM task_comments WHERE task_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 3", t.id,
+        )) as any[];
+        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean), start_date: t.start_date ?? null, subsystems: t.subsystems, awards: t.awards, labels: t.labels, blockedBy, blocks, related, recentComments: recent.reverse().map((c) => ({ by: String(c.author_name || "Someone"), body: String(c.body || "") })) };
       }
     }
     if (req.eventId) {
@@ -9820,6 +9842,12 @@ Rules:
     }
     return tasks;
   };
+  /** Record task activity, then tell open timelines of that task to reload. */
+  async function recordActivity(teamId: number | null, taskId: number, memberId: number | null, entries: Parameters<typeof logTaskActivity>[4], via?: "bruno"): Promise<void> {
+    if (!entries.length) return;
+    await logTaskActivity(dbRun, teamId, taskId, memberId, entries, via);
+    void broadcastTaskTimeline(teamId, taskId);
+  }
   /** A known completion mode ('each') or null (one shared deliverable). */
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
   /** Reopened from done: everyone's part starts over. */
@@ -10004,6 +10032,7 @@ Rules:
       const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
       created.assignee_ids = validIds;
       void broadcastTask(auth.teamId, "task_created", created);
+      await recordActivity(auth.teamId, taskId, auth.memberId, [{ kind: "created" }]);
       res.json({ id: taskId });
     } catch (error) {
       console.error("Error creating task:", error);
@@ -10277,6 +10306,7 @@ Rules:
 
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       updated.assignee_ids = notifyIds;
+      await recordActivity(auth.teamId, Number(req.params.id), auth.memberId, taskEditActivity(task, updated, { before: assigneeIds, after: notifyIds }));
       void broadcastTask(auth.teamId, "task_updated", updated);
       res.json({ success: true });
     } catch (error) {
@@ -10341,6 +10371,7 @@ Rules:
       const plan = await planTaskLinks(auth, changes);
       if ("error" in plan) return plan.error;
       await writeTaskLinks(auth.teamId, plan);
+      if (plan.add.length || plan.remove.length) for (const id of new Set(changes.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }]);
       return null;
     });
   }
@@ -10383,6 +10414,132 @@ Rules:
   }
   app.post("/api/tasks/:id/links", editOneLink(true));
   app.delete("/api/tasks/:id/links", editOneLink(false));
+
+  // ---- Task discussion: comments, activity timeline, watchers ----
+  const MAX_COMMENT = 4000;
+  /** A task of this team the member may see (board tasks only for those who can), or null. */
+  async function visibleTask(auth: { teamId: number | null; memberId: number }, id: unknown): Promise<any | null> {
+    const task = (await dbGet("SELECT * FROM tasks WHERE id = ? AND team_id = ?", Number(id), auth.teamId)) as any;
+    if (!task || (await boardTaskHidden(task, auth.memberId, auth.teamId))) return null;
+    return task;
+  }
+  /** Who follows a task: its assignees and anyone who chose Watch, minus anyone who chose Unwatch. */
+  async function taskWatcherIds(taskId: number): Promise<number[]> {
+    const assignees = await getTaskAssigneeIds(taskId);
+    const rows = (await dbAll("SELECT member_id, watching FROM task_watchers WHERE task_id = ?", taskId)) as any[];
+    const on = new Set<number>(assignees);
+    for (const r of rows) { if (Number(r.watching)) on.add(Number(r.member_id)); else on.delete(Number(r.member_id)); }
+    return [...on];
+  }
+  /**
+   * Post a comment (the API and Bruno's task-comment card): mentions
+   * (@[Full Name] or @First) and everyone following the task are notified,
+   * and the author follows it from then on.
+   */
+  async function postTaskComment(auth: { teamId: number | null; memberId: number }, task: any, rawBody: string): Promise<any> {
+    const body = rawBody.trim().slice(0, MAX_COMMENT);
+    const me = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
+    const at = new Date().toISOString();
+    const info: any = await dbRun(
+      "INSERT INTO task_comments (team_id, task_id, member_id, author_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      auth.teamId, task.id, auth.memberId, me?.name || null, body, at,
+    );
+    await dbRun("INSERT OR REPLACE INTO task_watchers (task_id, member_id, watching) VALUES (?, ?, 1)", task.id, auth.memberId);
+    const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+    const mentioned = mentionedMembers(body, roster.map((r) => ({ id: Number(r.id), name: String(r.name) })));
+    const who = me?.name || "A teammate";
+    const snippet = body.length > 120 ? `${body.slice(0, 117)}…` : body;
+    for (const mid of mentioned) if (mid !== auth.memberId) void createNotification(mid, `${who} mentioned you on "${task.title}": ${snippet}`, "task", { task_id: Number(task.id) });
+    for (const mid of await taskWatcherIds(Number(task.id))) {
+      if (mid !== auth.memberId && !mentioned.includes(mid)) void createNotification(mid, `${who} commented on "${task.title}": ${snippet}`, "task", { task_id: Number(task.id) });
+    }
+    void broadcastTaskTimeline(auth.teamId, Number(task.id));
+    return { id: Number(info?.lastInsertRowid), task_id: Number(task.id), member_id: auth.memberId, author_name: me?.name || null, body, created_at: at, edited_at: null };
+  }
+
+  // The task's timeline: comments and activity, oldest first, plus who follows it.
+  app.get("/api/tasks/:id/timeline", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const comments = (await dbAll("SELECT id, member_id, author_name, body, created_at, edited_at, deleted_at FROM task_comments WHERE task_id = ? ORDER BY created_at, id", task.id)) as any[];
+      const activity = (await dbAll("SELECT id, member_id, kind, detail, created_at FROM task_activity WHERE task_id = ? ORDER BY created_at, id", task.id)) as any[];
+      const watchers = await taskWatcherIds(Number(task.id));
+      res.json({
+        comments: comments.map((c) => (c.deleted_at ? { ...c, body: "" } : c)),
+        activity: activity.map((a) => ({ ...a, detail: (() => { try { return a.detail ? JSON.parse(a.detail) : null; } catch { return null; } })() })),
+        watchers, watching: watchers.includes(auth.memberId),
+      });
+    } catch (error) {
+      console.error("Error loading task timeline:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Comment on a task: anyone who can see it.
+  app.post("/api/tasks/:id/comments", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const body = String(req.body?.body ?? "");
+      if (!body.trim()) return res.status(400).json({ error: "Write a comment first" });
+      if (body.length > MAX_COMMENT) return res.status(400).json({ error: `Comments are up to ${MAX_COMMENT} characters` });
+      res.json(await postTaskComment(auth, task, body));
+    } catch (error) {
+      console.error("Error posting comment:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Edit your own comment; delete your own, or any as a task manager (kept as "deleted").
+  const editComment = (remove: boolean) => async (req: any, res: any) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const c = (await dbGet("SELECT * FROM task_comments WHERE id = ? AND task_id = ? AND deleted_at IS NULL", Number(req.params.cid), task.id)) as any;
+      if (!c) return res.status(404).json({ error: "Comment not found" });
+      const mine = Number(c.member_id) === auth.memberId;
+      if (remove ? !(mine || (await hasPerm(auth, "manage_tasks"))) : !mine) return res.status(403).json({ error: remove ? "You can only delete your own comments" : "You can only edit your own comments" });
+      const now = new Date().toISOString();
+      if (remove) await dbRun("UPDATE task_comments SET deleted_at = ? WHERE id = ?", now, c.id);
+      else {
+        const body = String(req.body?.body ?? "").trim();
+        if (!body) return res.status(400).json({ error: "Write a comment first" });
+        if (body.length > MAX_COMMENT) return res.status(400).json({ error: `Comments are up to ${MAX_COMMENT} characters` });
+        await dbRun("UPDATE task_comments SET body = ?, edited_at = ? WHERE id = ?", body, now, c.id);
+      }
+      void broadcastTaskTimeline(auth.teamId, Number(task.id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error editing comment:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+  app.patch("/api/tasks/:id/comments/:cid", editComment(false));
+  app.delete("/api/tasks/:id/comments/:cid", editComment(true));
+
+  // Watch or stop watching a task.
+  app.post("/api/tasks/:id/watch", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const watching = req.body?.watching !== false;
+      await dbRun("INSERT OR REPLACE INTO task_watchers (task_id, member_id, watching) VALUES (?, ?, ?)", task.id, auth.memberId, watching ? 1 : 0);
+      res.json({ success: true, watching });
+    } catch (error) {
+      console.error("Error watching task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
 
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
@@ -10442,6 +10599,7 @@ Rules:
         const r = await dbRun(`UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done' ${SAME_FINISH}`, auth.memberId, now, note || null, reviewEntry("approved"), task.id, seen);
         if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} approved your task: ${task.title}`, "task", { task_id: Number(task.id) });
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "approved" }]);
       } else if (action === "send_back") {
         if (!note) return res.status(400).json({ error: "Say what needs to change" });
         const r = await dbRun(
@@ -10451,6 +10609,7 @@ Rules:
         if (!changed(r)) return reopened();
         await clearAssigneeDone(Number(task.id));
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "sent_back", detail: { note: note.slice(0, 300) } }]);
       } else {
         return res.status(400).json({ error: "Unknown review action" });
       }
@@ -10521,6 +10680,7 @@ Rules:
           const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
           await withAssignees([partial]);
           void broadcastTask(auth.teamId, "task_updated", partial);
+          await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
           return res.json({ success: true, partial: true, done: taskAssignees.length - remaining.length, of: taskAssignees.length, task: partial });
         }
         // Last one in: the task is done (same review and repeat rules as below).
@@ -10553,6 +10713,7 @@ Rules:
         await withAssignees([partial]);
         void broadcastTask(auth.teamId, "task_updated", partial);
         const ids = partial.assignee_ids as number[];
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
         return res.json({ success: true, partial: true, done: (partial.done_assignee_ids || []).length, of: ids.length, task: partial });
       }
       // A repeating task rolls forward the moment it's done.
@@ -10564,6 +10725,7 @@ Rules:
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       void broadcastTask(auth.teamId, "task_updated", updated);
+      await recordActivity(auth.teamId, Number(req.params.id), auth.memberId, [{ kind: "completed" }]);
       res.json({ success: true, task: updated });
     } catch (error) {
       console.error("Error completing task:", error);
@@ -13075,6 +13237,8 @@ Rules:
         t = t.replace(/```task-update\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-update[\s\S]*$/, "");
         // Workspace settings changes too.
         t = t.replace(/```workspace\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```workspace[\s\S]*$/, "");
+        // Task comments too.
+        t = t.replace(/```task-comment\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-comment[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -13712,6 +13876,23 @@ Rules:
         const due = d.due !== undefined ? d.due : task.due_date;
         if (startAfterDue(start, due)) return res.status(400).json({ error: `Task #${id} would be due before it starts — nothing was saved` });
       }
+      // Comments go on tasks this member can see, checked before anything is written.
+      const commentTargets = new Map<number, any>();
+      for (const a of actions) {
+        if (a?.kind !== "task-comment" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          const id = Number(String(it?.id ?? "").replace(/^#/, ""));
+          if (!Number.isSafeInteger(id) || id <= 0 || commentTargets.has(id)) continue;
+          const task = await visibleTask(auth, id);
+          if (!task) return res.status(400).json({ error: `Task #${id} no longer exists — nothing was saved` });
+          commentTargets.set(id, task);
+        }
+        for (const it of a.items) {
+          if (typeof it?.body === "string" && it.body.trim().length > MAX_COMMENT) {
+            return res.status(400).json({ error: `A comment is longer than ${MAX_COMMENT} characters — nothing was saved` });
+          }
+        }
+      }
       // Link changes (blocked by / blocks / related) on the whole card are
       // checked together against the final graph and saved first, in one
       // batch: a loop or an unknown task refuses the card before anything
@@ -13833,6 +14014,7 @@ Rules:
             );
             const taskId = Number(info.lastInsertRowid);
             made("task", taskId);
+            await recordActivity(auth.teamId, taskId, auth.memberId, [{ kind: "created" }], "bruno");
             if (ids.length) {
               await setTaskAssignees(taskId, ids, auth.teamId);
               for (const mid of ids) if (mid !== auth.memberId) void createNotification(mid, `New task assigned: ${t.title}`, "task", { task_id: taskId });
@@ -13905,6 +14087,7 @@ Rules:
             for (const mid of now) if (before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `Task updated: ${c.title ?? task.title}`, "task", { task_id: u.id });
             const updated: any = await dbGet("SELECT * FROM tasks WHERE id = ?", u.id);
             if (updated) { updated.assignee_ids = now; void broadcastTask(auth.teamId, "task_updated", updated); }
+            if (updated) await recordActivity(auth.teamId, u.id, auth.memberId, taskEditActivity(task, updated, { before, after: now }), "bruno");
             made("task-update", u.id);
           }
           applied["task-update"] = (applied["task-update"] || 0) + updates.length;
@@ -13918,6 +14101,18 @@ Rules:
             )) as any)?.lastInsertRowid);
           }
           applied.budget = (applied.budget || 0) + entries.length;
+        } else if (kind === "task-comment") {
+          // Comments on tasks, posted as the confirming member (mentions and followers are notified).
+          let n = 0;
+          for (const it of items) {
+            const task = commentTargets.get(Number(String(it?.id ?? "").replace(/^#/, "")));
+            const body = typeof it?.body === "string" ? it.body.trim() : "";
+            if (!task || !body) continue;
+            const c = await postTaskComment(auth, task, body);
+            made("task-comment", task.id);
+            if (c) n++;
+          }
+          if (n) applied["task-comment"] = (applied["task-comment"] || 0) + n;
         } else if (kind === "workspace") {
           // Every change the card showed, in order (a later subsystem list wins).
           const changes = items.map(parseWorkspaceChange).filter((c: any): c is NonNullable<typeof c> => !!c);
@@ -13947,7 +14142,10 @@ Rules:
       if (!Object.keys(applied).length) {
         return res.status(400).json({ error: "Nothing valid to add — please try again" });
       }
-      if (linkPlan && !("error" in linkPlan)) await writeTaskLinks(auth.teamId, linkPlan);
+      if (linkPlan && !("error" in linkPlan)) {
+        await writeTaskLinks(auth.teamId, linkPlan);
+        if (linkPlan.add.length || linkPlan.remove.length) for (const id of new Set(linkChanges.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }], "bruno");
+      }
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
