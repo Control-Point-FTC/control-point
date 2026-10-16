@@ -11,6 +11,7 @@ import { useDraft, getDraft, newSessionId } from '../../modern/drafts';
 import { eventTimeError } from '../../utils/validation';
 import { readEventRepeat, cleanReminder, DEFAULT_COUNT, type EventRepeat } from '../../utils/eventSeries';
 import { EVENT_TYPE_IDS, EVENT_TYPE_LABELS, cleanEventType } from '../../types/eventTypes';
+import { cleanRsvpMode, parseAttendeeRoles } from '../../types/eventRsvp';
 
 export type RepeatChoice = '' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
 export interface EventForm {
@@ -18,6 +19,10 @@ export interface EventForm {
   location: string; event_type: string; team_id: string;
   /** The event's plan, one item per line (separate from the notes). */
   agenda: string;
+  /** RSVP style: none, can't-make-it only, or full (going / maybe / can't). */
+  rsvp_mode: 'none' | 'decline_only' | 'full';
+  /** Who it's for: role ids; [] is the whole team. */
+  attendee_roles: number[];
   /** A new multi-day event: the other days, each with its own times. */
   extra_days: { date: string; start_time: string; end_time: string }[];
   /** How often it repeats ('' = doesn't). 'custom' keeps a rule set elsewhere (Bruno). */
@@ -34,7 +39,7 @@ export interface EventForm {
 }
 const EMPTY_EVENT: EventForm = {
   title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '',
-  agenda: '', extra_days: [],
+  agenda: '', extra_days: [], rsvp_mode: 'none', attendee_roles: [],
   repeat: '', repeat_rule: null, repeat_end: 'count', repeat_count: String(DEFAULT_COUNT), repeat_until: '', reminder: '', scope: 'one',
 };
 
@@ -224,6 +229,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       location: e.location || '', event_type: e.event_type || 'meeting',
       team_id: e.team_id ? String(e.team_id) : '',
       agenda: e.agenda || '', extra_days: [],
+      rsvp_mode: cleanRsvpMode(e.rsvp_mode) ?? 'none', attendee_roles: parseAttendeeRoles(e.attendee_roles),
       ...repeatFields(readEventRepeat(e.recurrence)),
       reminder: cleanReminder(e.reminder_minutes) != null ? String(e.reminder_minutes) : '',
       scope: 'one',
@@ -258,6 +264,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     const fields = {
       title: form.title, description: form.description, date: form.date, start_time: form.start_time, end_time: form.end_time,
       location: form.location, event_type: form.event_type, agenda: form.agenda,
+      rsvp_mode: form.rsvp_mode, attendee_roles: form.attendee_roles,
       team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id,
       reminder_minutes: cleanReminder(form.reminder),
     };

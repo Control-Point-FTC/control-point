@@ -206,6 +206,7 @@ import { smartGroups } from "./src/utils/assigneeGroups.js";
 import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js";
 import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
+import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -10846,8 +10847,24 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const events = (await dbAll("SELECT * FROM events WHERE team_id = ? ORDER BY date ASC, start_time ASC", auth.teamId));
-      res.json(events);
+      const events = (await dbAll("SELECT * FROM events WHERE team_id = ? ORDER BY date ASC, start_time ASC", auth.teamId)) as any[];
+      // RSVPs: counts for everyone, and this member's own answer and whether they're invited.
+      const rsvps = (await dbAll("SELECT event_id, member_id, status, reason FROM event_rsvps WHERE team_id = ?", auth.teamId)) as any[];
+      const myRoles = new Set(((await dbAll("SELECT mr.role_id FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ?", auth.memberId, auth.teamId)) as any[]).map((r) => Number(r.role_id)));
+      const byEvent = new Map<number, any[]>();
+      for (const r of rsvps) { const l = byEvent.get(Number(r.event_id)) || []; l.push(r); byEvent.set(Number(r.event_id), l); }
+      res.json(events.map((e) => {
+        const list = byEvent.get(Number(e.id)) || [];
+        const mine = list.find((r) => Number(r.member_id) === auth.memberId);
+        const roles = parseAttendeeRoles(e.attendee_roles);
+        return {
+          ...e,
+          attendee_roles: roles,
+          invited: !roles.length || roles.some((id) => myRoles.has(id)),
+          rsvp_counts: { going: list.filter((r) => r.status === "going").length, maybe: list.filter((r) => r.status === "maybe").length, not_going: list.filter((r) => r.status === "not_going").length },
+          my_rsvp: mine ? { status: mine.status, reason: mine.reason || "" } : null,
+        };
+      }));
     } catch (error) {
       console.error("Error fetching events:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -10859,13 +10876,32 @@ Rules:
     title: string; date: string; time?: string; end?: string; notes?: string;
     location?: string; event_type?: string; reminder_minutes?: number | null;
     recurrence?: string | null; series_id?: number | null; agenda?: string;
+    rsvp_mode?: string; attendee_roles?: number[] | null;
   }
   // series_id stays the last column: a series' followers swap its "?" for the head's id.
-  const EVENT_INSERT_SQL = "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, reminder_minutes, recurrence, agenda, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  const EVENT_INSERT_SQL = "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, reminder_minutes, recurrence, agenda, rsvp_mode, attendee_roles, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
   const eventInsertArgs = (teamId: number, memberId: number, e: TeamEventFields) => [
     e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", e.location || "", cleanEventType(e.event_type) || "meeting",
-    teamId, memberId, e.reminder_minutes ?? null, e.recurrence ?? null, cleanAgenda(e.agenda), e.series_id ?? null,
+    teamId, memberId, e.reminder_minutes ?? null, e.recurrence ?? null, cleanAgenda(e.agenda),
+    cleanRsvpMode(e.rsvp_mode) ?? "none", e.attendee_roles?.length ? JSON.stringify(e.attendee_roles) : null, e.series_id ?? null,
   ];
+  /** Submitted attendee roles: [] (whole team) or role ids of this team; null when one isn't. */
+  async function cleanAttendeeRoles(teamId: number, raw: unknown): Promise<number[] | null> {
+    if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) return [];
+    if (!Array.isArray(raw)) return null;
+    const ids = parseAttendeeRoles(raw);
+    if (ids.length !== raw.length) return null;
+    const found = (await dbAll(`SELECT id FROM roles WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`, teamId, ...ids)) as any[];
+    return found.length === ids.length ? ids : null;
+  }
+  /** Who an event is for: the whole team, or members holding one of its roles (active only). */
+  async function eventInviteeIds(teamId: number, attendeeRoles: unknown): Promise<number[]> {
+    const roles = parseAttendeeRoles(attendeeRoles);
+    const rows = roles.length
+      ? await dbAll(`SELECT DISTINCT m.id FROM members m JOIN member_roles mr ON mr.member_id = m.id WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND mr.role_id IN (${roles.map(() => "?").join(",")})`, teamId, ...roles)
+      : await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId);
+    return (rows as any[]).map((r) => Number(r.id));
+  }
   async function insertTeamEvent(teamId: number, memberId: number, e: TeamEventFields) {
     const info = (await dbRun(EVENT_INSERT_SQL, ...eventInsertArgs(teamId, memberId, e))) as any;
     const eventId = info.lastInsertRowid;
@@ -10898,7 +10934,10 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const { title, description, date, start_time, end_time, location, event_type, repeat, reminder_minutes, agenda, extra_days } = req.body;
+      const { title, description, date, start_time, end_time, location, event_type, repeat, reminder_minutes, agenda, extra_days, rsvp_mode, attendee_roles } = req.body;
+      if (rsvp_mode !== undefined && rsvp_mode !== null && !cleanRsvpMode(rsvp_mode)) return res.status(400).json({ error: "Pick how people RSVP" });
+      const attendeeRoles = await cleanAttendeeRoles(auth.teamId, attendee_roles);
+      if (!attendeeRoles) return res.status(400).json({ error: "Pick attendee roles from this team" });
       const invalid = eventError({ title, date, start_time, end_time });
       if (invalid) return res.status(400).json({ error: invalid });
       if (event_type !== undefined && event_type !== null && event_type !== "" && !cleanEventType(event_type)) return res.status(400).json({ error: "Pick a known event type" });
@@ -10922,6 +10961,7 @@ Rules:
         title: String(title).trim(), date, time: start_time, end: end_time, notes: description,
         location: location || "", event_type: cleanEventType(event_type) || "meeting", reminder_minutes: cleanReminder(reminder_minutes),
         recurrence: rep.rule ? JSON.stringify(rep.rule) : null, agenda: cleanAgenda(agenda),
+        rsvp_mode: cleanRsvpMode(rsvp_mode) ?? "none", attendee_roles: attendeeRoles,
       };
       let id: number;
       let count = 1;
@@ -10957,8 +10997,9 @@ Rules:
         id = Number(await insertTeamEvent(auth.teamId, auth.memberId, fields));
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
-      const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
-      void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
+      // Only the people it's for hear about it (the whole team unless roles were picked).
+      const invitees = await eventInviteeIds(auth.teamId, attendeeRoles);
+      void notifyTeamUpdate(auth.teamId!, auth.memberId, invitees, "event",
         extras.length
           ? `New ${count}-day event: ${fields.title}, ${[date, ...extras.map((d) => d.date)].sort().join(", ")}`
           : count > 1
@@ -11002,6 +11043,85 @@ Rules:
     }
   }
 
+  /**
+   * Answer an event's RSVP as yourself (the API and Bruno's RSVP card).
+   * "Can't make it" with a reason excuses you on that day's attendance, unless a
+   * record already exists; changing the answer later takes that excuse back
+   * (only if nobody has changed the record since). Returns an error message or null.
+   */
+  async function setEventRsvp(auth: { teamId: number | null; memberId: number }, event: any, status: unknown, reasonRaw: unknown): Promise<string | null> {
+    const mode = cleanRsvpMode(event.rsvp_mode) ?? "none";
+    if (mode === "none") return "This event doesn't take RSVPs";
+    const invitees = await eventInviteeIds(event.team_id, event.attendee_roles);
+    if (!invitees.includes(auth.memberId)) return "This event is for other roles";
+    const next = status === null ? null : rsvpStatusFor(mode, status);
+    if (status !== null && !next) return mode === "decline_only" ? "This event only asks who can't make it" : "Answer going, maybe or can't make it";
+    const reason = typeof reasonRaw === "string" ? reasonRaw.replace(/\s+/g, " ").trim().slice(0, MAX_RSVP_REASON) : "";
+    const prev = (await dbGet("SELECT * FROM event_rsvps WHERE event_id = ? AND member_id = ?", event.id, auth.memberId)) as any;
+    const stmts: { sql: string; args?: any[] }[] = [];
+    // Take back an excuse this RSVP made, if the record is still the one it wrote.
+    if (prev?.excused_date) {
+      stmts.push({ sql: "DELETE FROM attendance WHERE member_id = ? AND date = ? AND status = 'E' AND COALESCE(reason, '') = ?", args: [auth.memberId, prev.excused_date, `RSVP: ${prev.reason || ""}`] });
+    }
+    let excusedDate: string | null = null;
+    if (next === "not_going" && reason) {
+      const existing = await dbGet("SELECT id, status, reason FROM attendance WHERE member_id = ? AND date = ?", auth.memberId, event.date) as any;
+      const ours = existing && prev?.excused_date === event.date && existing.status === "E" && String(existing.reason || "") === `RSVP: ${prev.reason || ""}`;
+      if (!existing || ours) {
+        excusedDate = event.date;
+        stmts.push({ sql: "INSERT OR IGNORE INTO attendance (team_id, member_id, date, status, reason, is_excused) VALUES (?, ?, ?, 'E', ?, 1)", args: [event.team_id, auth.memberId, event.date, `RSVP: ${reason}`] });
+      }
+    }
+    if (next) {
+      stmts.push({
+        sql: "INSERT INTO event_rsvps (event_id, team_id, member_id, status, reason, excused_date, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_id, member_id) DO UPDATE SET status = excluded.status, reason = excluded.reason, excused_date = excluded.excused_date, updated_at = excluded.updated_at",
+        args: [event.id, event.team_id, auth.memberId, next, reason, excusedDate, new Date().toISOString()],
+      });
+    } else {
+      stmts.push({ sql: "DELETE FROM event_rsvps WHERE event_id = ? AND member_id = ?", args: [event.id, auth.memberId] });
+    }
+    await dbBatchResults(stmts);
+    broadcastToTeam(event.team_id, { type: "events_changed" });
+    if (excusedDate || prev?.excused_date) broadcastToTeam(event.team_id, { type: "attendance_changed" });
+    return null;
+  }
+
+  app.put("/api/events/:id/rsvp", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const event = (await dbGet("SELECT * FROM events WHERE id = ? AND team_id = ?", req.params.id, auth.teamId)) as any;
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const err = await setEventRsvp(auth as any, event, req.body?.status ?? null, req.body?.reason);
+      if (err) return res.status(400).json({ error: err });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error saving RSVP:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Who answered: names and answers for everyone; reasons only for calendar managers (and your own).
+  app.get("/api/events/:id/rsvps", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const event = (await dbGet("SELECT id, team_id, attendee_roles FROM events WHERE id = ? AND team_id = ?", req.params.id, auth.teamId)) as any;
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const manager = await hasPerm(auth, "manage_calendar");
+      const rows = (await dbAll("SELECT r.member_id, m.name, r.status, r.reason FROM event_rsvps r JOIN members m ON m.id = r.member_id WHERE r.event_id = ? ORDER BY m.name", event.id)) as any[];
+      const invitees = await eventInviteeIds(auth.teamId, event.attendee_roles);
+      const answered = new Set(rows.map((r) => Number(r.member_id)));
+      res.json({
+        answers: rows.map((r) => ({ member_id: Number(r.member_id), name: r.name, status: r.status, ...(manager || Number(r.member_id) === auth.memberId ? { reason: r.reason || "" } : {}) })),
+        no_answer: invitees.filter((id) => !answered.has(id)).length,
+      });
+    } catch (error) {
+      console.error("Error loading RSVPs:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // scope "following" (repeating events only) applies the edit to this
   // occurrence and every later one in its series; a date change shifts them
   // all by the same number of days. A changed repeat rule (with "following",
@@ -11016,7 +11136,10 @@ Rules:
       // not hold up the team's other calendar edits).
       let cleanup: { member_id: number; google_event_id: string }[] = [];
       await withCalendarLock(auth.teamId, async () => {
-      const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope, agenda } = req.body;
+      const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope, agenda, rsvp_mode, attendee_roles } = req.body;
+      if (rsvp_mode !== undefined && rsvp_mode !== null && !cleanRsvpMode(rsvp_mode)) return res.status(400).json({ error: "Pick how people RSVP" });
+      const attendeeRoles = attendee_roles !== undefined ? await cleanAttendeeRoles(auth.teamId, attendee_roles) : undefined;
+      if (attendeeRoles === null) return res.status(400).json({ error: "Pick attendee roles from this team" });
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       if (event_type !== undefined && event_type !== null && !cleanEventType(event_type)) return res.status(400).json({ error: "Pick a known event type" });
@@ -11067,6 +11190,8 @@ Rules:
           event_type: cleanEventType(event_type) ?? r.event_type,
           reminder_minutes: reminder !== undefined ? reminder : r.reminder_minutes,
           agenda: agenda !== undefined ? cleanAgenda(agenda) : String(r.agenda ?? ""),
+          rsvp_mode: cleanRsvpMode(rsvp_mode) ?? (cleanRsvpMode(r.rsvp_mode) ?? "none"),
+          attendee_roles: attendeeRoles !== undefined ? attendeeRoles : parseAttendeeRoles(r.attendee_roles),
         },
       }));
       // Each later occurrence keeps its own fields where the edit leaves them
@@ -11079,8 +11204,8 @@ Rules:
         // A new time (or lead time) means the reminder should go out again.
         const retime = next.date !== r.date || (next.start_time || "") !== (r.start_time || "") || (next.reminder_minutes ?? null) !== (r.reminder_minutes ?? null);
         stmts.push({
-          sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?, agenda = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
-          args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, next.agenda, r.id],
+          sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?, agenda = ?, rsvp_mode = ?, attendee_roles = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
+          args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, next.agenda, next.rsvp_mode, next.attendee_roles.length ? JSON.stringify(next.attendee_roles) : null, r.id],
         });
       }
       const seriesId = Number(existing.series_id || existing.id);
@@ -11094,6 +11219,7 @@ Rules:
             args: eventInsertArgs(auth.teamId, existing.created_by ?? auth.memberId, {
               title: head.title, date: d, time: head.start_time, end: head.end_time, notes: head.description,
               location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence, series_id: seriesId, agenda: head.agenda,
+              rsvp_mode: head.rsvp_mode, attendee_roles: head.attendee_roles,
             }),
           });
         }
@@ -13379,6 +13505,8 @@ Rules:
         t = t.replace(/```workspace\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```workspace[\s\S]*$/, "");
         // Task comments too.
         t = t.replace(/```task-comment\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-comment[\s\S]*$/, "");
+        // RSVPs too.
+        t = t.replace(/```event-rsvp\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```event-rsvp[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -14029,6 +14157,22 @@ Rules:
         const due = d.due !== undefined ? d.due : task.due_date;
         if (startAfterDue(start, due)) return res.status(400).json({ error: `Task #${id} would be due before it starts — nothing was saved` });
       }
+      // RSVPs: every event named must be this team's and accept that answer, checked before anything is written.
+      const rsvpTargets = new Map<number, any>();
+      for (const a of actions) {
+        if (a?.kind !== "event-rsvp" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          const id = Number(String(it?.id ?? "").replace(/^#/, ""));
+          if (!Number.isSafeInteger(id) || id <= 0) continue;
+          const event = (await dbGet("SELECT * FROM events WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+          if (!event) return res.status(400).json({ error: `Event #${id} no longer exists — nothing was saved` });
+          const mode = cleanRsvpMode(event.rsvp_mode) ?? "none";
+          if (mode === "none") return res.status(400).json({ error: `"${event.title}" doesn't take RSVPs — nothing was saved` });
+          if (it?.status !== null && !rsvpStatusFor(mode, it?.status)) return res.status(400).json({ error: `"${event.title}" only asks who can't make it — nothing was saved` });
+          if (!(await eventInviteeIds(auth.teamId, event.attendee_roles)).includes(auth.memberId)) return res.status(400).json({ error: `"${event.title}" is for other roles — nothing was saved` });
+          rsvpTargets.set(id, event);
+        }
+      }
       // Comments go on tasks this member can see, checked before anything is written.
       const commentTargets = new Map<number, any>();
       for (const a of actions) {
@@ -14254,6 +14398,16 @@ Rules:
             )) as any)?.lastInsertRowid);
           }
           applied.budget = (applied.budget || 0) + entries.length;
+        } else if (kind === "event-rsvp") {
+          // The confirming member's own answers (anyone invited can RSVP; no calendar access needed).
+          let n = 0;
+          for (const it of items) {
+            const event = rsvpTargets.get(Number(String(it?.id ?? "").replace(/^#/, "")));
+            if (!event) continue;
+            const err = await setEventRsvp(auth as any, event, it?.status ?? null, it?.reason);
+            if (!err) { made("event-rsvp", event.id); n++; }
+          }
+          if (n) applied["event-rsvp"] = (applied["event-rsvp"] || 0) + n;
         } else if (kind === "task-comment") {
           // Comments on tasks, posted as the confirming member (mentions and followers are notified).
           let n = 0;
@@ -14303,7 +14457,7 @@ Rules:
       }
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
-      if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
+      if (applied.event || applied["delete-event"] || applied["event-rsvp"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
       if (applied.task) void broadcastTaskEvent(auth.teamId, { type: "tasks_changed" });
       if (applied.workspace) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
       res.json({ ok: true, applied, created });
