@@ -1,12 +1,12 @@
-# Robolyst parity checklist
+# Feature parity checklist
 
-Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 2026-10-15/16, built from the public robolyst.org site, live demo and changelog). It is not committed here because it profiles a third party; ask the owner for a copy. Compared against the Control Point tree on 2026-10-15.
+Source: the owner's private competitor teardown (2026-10-15/16, built from the competitor's public site, live demo and changelog). It is not committed here because it profiles a third party; ask the owner for a copy. Compared against the Control Point tree on 2026-10-15.
 
 **Legend:** `[x]` already have it · `[~]` partial, needs work (still unchecked until finished) · `[ ]` build it · 🛑 needs the owner's decision before any build.
 
 **Applies to every PR below:** Bruno must be able to answer questions about the feature, act through it (create/edit/query via `/api/ai/apply-actions` proposals) and surface it in page-aware suggestions. Rule 15 still holds. Each PR follows AGENTS.md (screenshots, Greptile 5/5, deploy check, prod verification).
 
-**Where Control Point is already ahead (keep and protect):** Bruno in-app assistant (Robolyst has none), CAD viewer + Onshape reviews, in-app code IDE + GitHub sync, voice/video channels, live team chat with channels, notebook with CRDT live collab, version history, pen/drawing, PDF annotation, match/event prediction + calibration, offline region packs, parts inventory with REV/goBILDA import, Google Calendar outbound sync (CP → Google), light/dark/system theme.
+**Where Control Point is already ahead (keep and protect):** Bruno in-app assistant (the competitor has none), CAD viewer + Onshape reviews, in-app code IDE + GitHub sync, voice/video channels, live team chat with channels, notebook with CRDT live collab, version history, pen/drawing, PDF annotation, match/event prediction + calibration, offline region packs, parts inventory with REV/goBILDA import, Google Calendar outbound sync (CP → Google), light/dark/system theme.
 
 ---
 
@@ -77,7 +77,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Alt/Option + ← → keyboard move between columns (with on-page hint)
 - [ ] Completion animation (reduced-motion variant)
 - [ ] "Notebook entries" counter on each card (did you write it down?)
-- [ ] WIP limits per column (Robolyst lacks this; cheap win)
+- [ ] WIP limits per column (the competitor lacks this; cheap win)
 - [~] Insights tab (have) — add on-time rate, overdue, missing-due-date "needs attention"
 
 ### PR 1.4: AI auto-tagging (Bruno)
@@ -117,7 +117,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Event-type filter toggles in the toolbar
 - [ ] "Unavailable times" per member
 - [ ] Mini-month navigator
-- [ ] High-contrast event blocks (Robolyst's weak point)
+- [ ] High-contrast event blocks (a weak point in the competitor)
 - [ ] FIRST event calendar import (official comps auto-added from FTC Events API)
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
@@ -172,7 +172,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Runs with names, progress ("2 of 24"), item check-off recording who + time
 - [ ] Item assignees
 - [ ] N/A and partial states on items
-- [ ] Finish run; Reset run with confirmation (Robolyst's weak point)
+- [ ] Finish run; Reset run with confirmation (a weak point in the competitor)
 - [ ] Link a run to an event
 - [ ] Run log with Reopen
 - [ ] Offline check-off
@@ -188,8 +188,8 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Printer owner accepts ("Waiting for the printer's owner to accept")
 - [ ] Queue ordering, one-click Mark printing / Mark printed / Failed
 - [ ] "Everything" / "I asked for" filters, last-30-days history
-- [ ] Print-time estimate + filament inventory link to Inventory (Robolyst lacks both)
-- [ ] STL preview using the existing CAD 3D viewer (Robolyst lacks this)
+- [ ] Print-time estimate + filament inventory link to Inventory (the competitor lacks both)
+- [ ] STL preview using the existing CAD 3D viewer (the competitor lacks this)
 
 ---
 
@@ -217,7 +217,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 ## Phase 6: Scouting and event day
 
 ### PR 6.1: Event hub
-- [~] Match scouting templates (have) — wrap them in a per-event hub: This event / Teams / Matches / Strategy / Picklist / Questions / Our robot, with in-page nav (Robolyst's weak point)
+- [~] Match scouting templates (have) — wrap them in a per-event hub: This event / Teams / Matches / Strategy / Picklist / Questions / Our robot, with in-page nav (a weak point in the competitor)
 - [ ] Our next matches, current rank, last match result, "you go back at Q25"
 - [ ] Starred teams / watchlist with private notes ("Only your team sees this")
 - [ ] Privacy labels on every surface (public / team-only / private)
@@ -247,7 +247,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 ### PR 7.1: Awards page
 - [ ] One row per award with what judges look for, season selector
 - [ ] Evidence rollup from tagged tasks, entries, events, outreach, messages, photos
-- [ ] Progress per award + "what to do next" suggestions (Robolyst lacks this; Bruno can drive it)
+- [ ] Progress per award + "what to do next" suggestions (the competitor lacks this; Bruno can drive it)
 - [ ] Honest empty state
 
 ### PR 7.2: Team-health stats
@@ -267,7 +267,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Season budget with category allocations + sub-budgets (Build & Parts → Competition robot / Practice robot / Tools; Travel → Hotels / Food; Outreach; Marketing; Registration; Team ops; Contingency; Other)
 - [ ] Spent-vs-budget per line with progress bars
 - [ ] Team currency setting
-- [ ] Force a category at entry (avoid Robolyst's "Uncategorized" problem); bulk categorize
+- [ ] Force a category at entry (avoid the competitor's "Uncategorized" problem); bulk categorize
 
 ### PR 8.2: Orders pipeline
 - [ ] Order requests: items, vendor, part number, qty, price, budget category, subsystem, due date, priority, requester
@@ -300,11 +300,11 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Donor records with gifts, anonymous donors, Thanked / Thanks pending
 - [ ] Sponsor tiers (priced levels)
 - [ ] Fundraising goals with dates + pipeline Idea → Asked → Committed → Deposited
-- [ ] Donor communication history (link to Communication log; Robolyst lacks it)
+- [ ] Donor communication history (link to Communication log; the competitor lacks it)
 
 ### PR 8.8: Money overview and reports
-- [ ] Overview: balance, spent this season, open orders (committed), needs-attention strip, income shown too (Robolyst is spend-only)
-- [ ] Reports: budget burn, spend by category / month / vendor / member / subsystem, with drill-down (Robolyst's are static)
+- [ ] Overview: balance, spent this season, open orders (committed), needs-attention strip, income shown too (the competitor is spend-only)
+- [ ] Reports: budget burn, spend by category / month / vendor / member / subsystem, with drill-down (the competitor's are static)
 - [ ] Sankey money-flow diagram, export PNG + CSV
 
 ### PR 8.9: Fiscal sponsorship, donation pages, team cards 🛑
@@ -338,7 +338,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 ### PR 9.5: Followers
 - [ ] Follow by email; send match results, reminders, event recaps
 - [ ] Follow page + QR PNG + printable flyer + Instagram post/story images
-- [ ] Follower count/list (Robolyst lacks it)
+- [ ] Follower count/list (the competitor lacks it)
 - [ ] Composer can post to Members or Followers
 
 ### PR 9.6: Contact forms
@@ -367,7 +367,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Files page: name, "Used in", size, added; drag-and-drop upload
 - [ ] Images page: All / Unfiled
 - [ ] Storage meter per team + dedup
-- [ ] Version history on files (Robolyst lacks it)
+- [ ] Version history on files (the competitor lacks it)
 
 ### PR 10.3: Global semantic search
 - [~] CommandMenu searches pages/actions; notebook has its own search — add search across tasks, events, notebook, wiki, messages, files, orders; typo-tolerant, meaning-based (embeddings)
@@ -381,7 +381,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Pinned announcements
 - [ ] Polls
 - [ ] Scheduled posts and silent posts
-- [ ] "Notified: N members" + read receipts (Robolyst lacks receipts)
+- [ ] "Notified: N members" + read receipts (the competitor lacks receipts)
 
 ### PR 11.2: Direct messages
 - [ ] One-to-one and small-group DMs in chat (verify current state first)
@@ -399,7 +399,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Simple (cards) / Advanced (table) toggle
 - [ ] Show past members (with dates) / invitees
 - [ ] Member custom fields editable in-roster
-- [ ] Role legend (Robolyst's weak point)
+- [ ] Role legend (a weak point in the competitor)
 - [ ] Export roster
 
 ### PR 12.2: Placeholder members
@@ -435,7 +435,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Event-day widget (rank, last match, next match), alliance-selection card
 - [ ] Widgets: checklists, watchlist, coming up, print queue, on the field (OPR, W-L-T), next competition (days out, meetings before), team links row, activity heatmap
 - [ ] Stat strip: open tasks, overdue, approvals, days since last entry, next meeting
-- [ ] Hide the hero when nothing needs attention; no truncated labels (Robolyst's weak points)
+- [ ] Hide the hero when nothing needs attention; no truncated labels (weak points in the competitor)
 - [ ] Sidebar badge counts ("2 new")
 
 ---
@@ -460,7 +460,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] MCP server over the Team API so external agents can read/act on team data
 
 ### PR 14.5: Event-staff / region-coordinator tools 🛑
-- [ ] Unknown scope in Robolyst; decide if relevant
+- [ ] Unknown scope in the competitor; decide if relevant
 
 ---
 
