@@ -2,6 +2,7 @@ import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Walle
 import { TEAM_MODULES } from '../types/teamModules';
 import { awardById } from '../types/taskTags';
 import { strictWipLimits } from '../types/taskStatus';
+import { cleanEventType, EVENT_TYPE_LABELS } from '../types/eventTypes';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
@@ -116,7 +117,10 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
     // Show an end only if the server will keep it (valid HH:MM after the start).
     const end = typeof it.end === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(it.end) && it.time && it.end > it.time ? it.end : '';
     const when = it.time ? `${it.date} at ${it.time}${end ? `–${end}` : ''}` : it.date ? `${it.date} (all day)` : '';
-    return `${title}${when ? ` — ${when}` : ''}`;
+    const type = cleanEventType(it.type ?? it.event_type);
+    const where = typeof it.location === 'string' && it.location.trim() ? ` @ ${it.location.trim().slice(0, 60)}` : '';
+    const agenda = typeof it.agenda === 'string' && it.agenda.trim() ? ' · with agenda' : '';
+    return `${title}${when ? ` — ${when}` : ''}${where}${type && type !== 'meeting' ? ` · ${EVENT_TYPE_LABELS[type]}` : ''}${agenda}`;
   }
   if (kind === 'delete-event') {
     return `${title}${it.date ? ` — ${it.date}` : ''}`;
