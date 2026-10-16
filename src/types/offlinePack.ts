@@ -6,6 +6,7 @@
 import type { RatingBookData } from '../../server/predict/rating';
 import type { AdvancementRecord, PredictModel } from '../../server/predict/forecast';
 import type { AwardRecord } from '../../server/predict/awards';
+import type { BonusFlags } from '@control-scout/predict-engine';
 
 /** Bumped when the layout changes; older packs on a device are re-downloaded. */
 export const OFFLINE_PACK_FORMAT = 1;
@@ -66,6 +67,12 @@ export interface OfflinePredict {
   awards: [number, AwardRecord[]][];
   /** Per event, the match keys (`level:series:number`) already folded into `book`. */
   played: Record<string, string[]>;
+  /**
+   * Per event and match key, the recorded bonus RPs ([red, blue]) of stored
+   * results (engine 2.0), so the device keeps official achievements instead of
+   * sampling them. Missing in older packs: those sample, as before.
+   */
+  bonus?: Record<string, Record<string, [BonusFlags | null, BonusFlags | null]>>;
 }
 
 export interface OfflinePack {

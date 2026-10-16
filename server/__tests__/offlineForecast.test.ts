@@ -128,6 +128,25 @@ describe("a rebuild in progress", () => {
   });
 });
 
+describe("offline recorded bonus RPs", () => {
+  it("the pack carries stored bonus flags and the device's forecaster uses them like the server", async () => {
+    const flags = { movement: true, goal: false, pattern: true };
+    hist.USXXQ1.matches[0].blue.bonusRp = flags;
+    try {
+      const e = new PredictEngine(store, [2025]);
+      await e.rebuild();
+      const predict = JSON.parse(JSON.stringify(e.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1"])));
+      expect(predict.bonus.USXXQ1["qual:0:1"]).toEqual([null, flags]);
+      const off = offlineForecaster({ ...pack, predict })!;
+      const recorded = (off as unknown as { recordedBonus(s: number, c: string, k: string, x: "red" | "blue"): unknown }).recordedBonus;
+      expect(recorded.call(off, 2025, "USXXQ1", "qual:0:1", "blue")).toEqual(flags);
+      expect(recorded.call(off, 2025, "USXXQ1", "qual:0:1", "red")).toBeNull();
+      // A pack from before engine 2.0 has no flags: nothing recorded, so they're sampled.
+      expect(recorded.call(offlineForecaster({ ...pack, predict: { ...predict, bonus: undefined } })!, 2025, "USXXQ1", "qual:0:1", "blue")).toBeNull();
+    } finally { delete hist.USXXQ1.matches[0].blue.bonusRp; }
+  });
+});
+
 describe("RatingBook data round trip", () => {
   it("survives JSON, including seasons a team skipped", () => {
     const b = new RatingBook();

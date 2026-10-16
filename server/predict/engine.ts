@@ -114,6 +114,15 @@ export class PredictEngine extends Forecaster {
     return this.stored.get(`${season}|${code}|${key}`)?.[side].bonusRp ?? null;
   }
 
+  /** Recorded bonus RPs of an event's stored matches, by match key ([red, blue]). */
+  private storedBonus(season: number, code: string): Record<string, [BonusFlags | null, BonusFlags | null]> {
+    const out: Record<string, [BonusFlags | null, BonusFlags | null]> = {};
+    for (const m of this.events.get(season)?.find((e) => e.code === code)?.matches ?? []) {
+      if (m.red.bonusRp || m.blue.bonusRp) out[`${m.level}:${m.series}:${m.number}`] = [m.red.bonusRp ?? null, m.blue.bonusRp ?? null];
+    }
+    return out;
+  }
+
   /** Ratings book for a season, with the clock set to now. */
   protected book(season: number): RatingBook | null {
     const b = this.books.get(season) ?? (season > Math.max(0, ...this.books.keys()) ? this.nextSeasonBook(season) : null);
@@ -180,6 +189,8 @@ export class PredictEngine extends Forecaster {
       // (a sync between writing them and the rebuild), and the device folds
       // those in itself.
       played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
+      // Their recorded bonus RPs: the device's live forecast keeps them as facts, like the server's.
+      bonus: Object.fromEntries(codes.map((c) => [c, this.storedBonus(season, c)])),
     };
   }
 }

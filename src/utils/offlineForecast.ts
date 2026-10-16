@@ -39,6 +39,11 @@ export class OfflineForecaster extends Forecaster {
   }
   protected advancementRecords(season: number): AdvancementRecord[] { return this.pack.predict.advancement[season] ?? []; }
   protected regionOf(code: string): string | null { return this.regions.get(code) ?? null; }
+  /** Recorded bonus RPs the pack carries (packs from before engine 2.0 have none: sampled). */
+  protected recordedBonus(season: number, code: string, key: string, side: 'red' | 'blue') {
+    if (season !== this.pack.season) return null;
+    return this.pack.predict.bonus?.[code]?.[key]?.[side === 'red' ? 0 : 1] ?? null;
+  }
   protected awardSlots(_season: number, type: string | null) {
     return this.pack.predict.awardSlots[normType(type)] ?? [{ type: 'Inspire', placement: 1 }, { type: 'Inspire', placement: 2 }];
   }
