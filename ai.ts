@@ -687,6 +687,7 @@ WORKSPACE SETTINGS SKILL:
 \`\`\`
   * "disable" / "enable": module ids to switch off / on.
   * "subsystems": the FULL new list (keep the existing names the user didn't ask to remove), 1 to ${MAX_SUBSYSTEMS} names.
+  * "wip_limits": the task board's column limits, e.g. {"in-progress": 4, "todo": 12} (whole numbers 1–99; {} removes them). The board shows "3 / 4" and flags a column that's over.
 - Only admins can change workspace settings; if the user isn't one, the app tells them when they confirm.
 - IMPORTANT: the block only PROPOSES the change; nothing changes until the user confirms. Never claim it already changed.
 

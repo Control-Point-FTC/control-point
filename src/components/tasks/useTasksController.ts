@@ -550,6 +550,20 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
     return !!res?.ok;
   };
+  /** Set or clear one board column's work-in-progress limit (admins; team setting). */
+  const setWipLimit = async (status: 'todo' | 'in-progress', limit: number | null): Promise<boolean> => {
+    const team = teams.find((t: any) => String(t.id) === String(currentUser?.team_id));
+    if (!team) return false;
+    try {
+      // Only this column: the server merges it, so another column's save isn't undone.
+      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wip_limit: { column: status, limit } }) });
+      if (!res.ok) { notify((await res.json().catch(() => ({})))?.error || 'Could not save the limit.', 'error'); return false; }
+      return true;
+    } catch {
+      notify('Could not save the limit.', 'error');
+      return false;
+    }
+  };
   /** Set one task's priority (the board's Priority columns), optimistic. */
   const setPriority = async (id: number, priority: string | null) => {
     if (!canManageTasks) { notify('Only team managers can change priority.', 'error'); return; }
@@ -612,7 +626,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, setPriority, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
+    isAdmin, canManageTasks, setPriority, setWipLimit, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,

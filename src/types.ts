@@ -13,6 +13,8 @@ export interface Team {
   disabled_modules?: string | null;
   /** JSON array of robot subsystem names; null = the defaults. */
   subsystems?: string | null;
+  /** JSON {"todo": n, "in-progress": n}: task board column limits; null = none. */
+  task_wip_limits?: string | null;
 }
 
 export interface Member {
