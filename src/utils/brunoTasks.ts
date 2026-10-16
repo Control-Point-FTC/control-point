@@ -11,6 +11,7 @@
 import { parseQuickAdd, readRecurrence, type Priority, type Recurrence } from './quickAdd';
 import { cleanAwards, cleanLabels, cleanRecordSubsystems, isRealDate } from '../types/taskTags';
 import { cleanSubsystems } from '../types/teamModules';
+import { cleanTaskIds } from '../types/taskLinks';
 
 /** One task as Bruno's ```tasks block may carry it (all optional but title). */
 export interface BrunoTaskIn {
@@ -297,6 +298,10 @@ export interface TaskUpdateChanges {
   recurrence?: Recurrence | null;
   /** null clears the start date. */
   start_date?: string | null;
+  /** Task links as full new lists of task ids ([] clears). */
+  blocked_by?: number[];
+  blocks?: number[];
+  related?: number[];
   /** The full new lists ([] clears). */
   subsystems?: string[];
   awards?: string[];
@@ -376,6 +381,9 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
   if (has('subsystems')) changes.subsystems = taskSubsystems(CLEARS(raw.subsystems) ? [] : raw.subsystems, teamSubsystems ?? undefined);
   if (has('awards')) changes.awards = cleanAwards(CLEARS(raw.awards) ? [] : raw.awards);
   if (has('labels')) changes.labels = cleanLabels(CLEARS(raw.labels) ? [] : raw.labels);
+  for (const k of ['blocked_by', 'blocks', 'related'] as const) {
+    if (has(k)) changes[k] = cleanTaskIds(CLEARS(raw[k]) ? [] : raw[k], id);
+  }
   if (!Object.keys(changes).length && !refused.length) return null;
   return { id, changes, unmatched, unmatchedRoles, refused };
 }

@@ -192,6 +192,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')", "COALESCE(t.subsystems, '')", "COALESCE(t.awards, '')", "COALESCE(t.labels, '')"]);
     const args: any[] = [teamId, ...w.args];
     let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at, t.start_date, t.subsystems, t.awards, t.labels,
+      (SELECT GROUP_CONCAT(b.id) FROM task_links l JOIN tasks b ON b.id = l.from_id
+        WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.status NOT IN ('done', 'cancelled')${includeBoard ? "" : " AND COALESCE(b.is_board, 0) = 0"}) AS blockers,
       COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),
         (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
@@ -225,7 +227,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     for (const r of c.rows) {
       const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
       ids.push(`task:${r.id}`);
-      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.start_date ? `, starts ${r.start_date}` : ""}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${taskTagText(r)}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.start_date ? `, starts ${r.start_date}` : ""}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.blockers ? `, blocked by ${String(r.blockers).split(",").map((x) => `task #${x}`).join(", ")} (still open)` : ""}${taskTagText(r)}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);

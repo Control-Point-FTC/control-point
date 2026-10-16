@@ -20,6 +20,7 @@ import { isTaskOverdue } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
 import { parseSubsystems } from '../../../types/teamModules';
 import { AWARD_OPTIONS, LabelsInput, TaskTagChips, ToggleChips } from './TaskTags';
+import { TaskLinksSection } from './TaskLinks';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -164,12 +165,14 @@ function useSheetSide() {
 }
 
 /** Read view of one task. Anyone can move its status; managers can edit/delete. */
-export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
+export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenTask }: {
   task: any | null;
   onOpenChange: (open: boolean) => void;
   ctl: Ctl;
   members: any[];
   teams: any[];
+  /** Open another task (a linked one) in this sheet. */
+  onOpenTask?: (id: number) => void;
 }) {
   const side = useSheetSide();
   const assignees = task ? members.filter((m) => taskAssigneeIds(task).includes(m.id)) : [];
@@ -240,6 +243,14 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
                   <dd>{format(new Date(task.completed_at), 'MMM d, h:mm a')}</dd>
                 </>)}
               </dl>
+              <TaskLinksSection
+                task={task}
+                tasks={ctl.filteredTasks}
+                canEdit={ctl.canManageTasks}
+                onOpenTask={onOpenTask}
+                onAdd={(kind, other) => ctl.addLink(task.id, kind, other)}
+                onRemove={(kind, other) => ctl.removeLink(task.id, kind, other)}
+              />
               <Separator />
               <div>
                 <Label className="mb-2 block">Description</Label>

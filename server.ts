@@ -202,6 +202,7 @@ import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, 
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import { isTaskStatus } from "./src/types/taskStatus.js";
+import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkReplace, type LinkKind } from "./server/taskLinks.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -6762,7 +6763,18 @@ async function startServer() {
           "SELECT m.name FROM task_assignees ta JOIN members m ON m.id = ta.member_id WHERE ta.task_id = ? AND m.team_id = ? ORDER BY m.name LIMIT 8",
           t.id, auth.teamId
         )) as any[];
-        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean), start_date: t.start_date ?? null, subsystems: t.subsystems, awards: t.awards, labels: t.labels };
+        // Its links, between tasks this member can see (open blockers flagged).
+        const seesBoardHere = await canSeeBoardTasks(auth.memberId, auth.teamId);
+        const linkRows = (await dbAll(
+          `SELECT l.from_id, l.to_id, l.kind, o.status AS other_status FROM task_links l
+           JOIN tasks o ON o.id = CASE WHEN l.from_id = ? THEN l.to_id ELSE l.from_id END
+           WHERE l.team_id = ? AND (l.from_id = ? OR l.to_id = ?)${seesBoardHere ? "" : " AND COALESCE(o.is_board, 0) = 0"}`,
+          t.id, auth.teamId, t.id, t.id,
+        )) as any[];
+        const blockedBy = linkRows.filter((r) => r.kind === "blocks" && Number(r.to_id) === t.id).map((r) => ({ id: Number(r.from_id), open: !["done", "cancelled"].includes(String(r.other_status)) }));
+        const blocks = linkRows.filter((r) => r.kind === "blocks" && Number(r.from_id) === t.id).map((r) => Number(r.to_id));
+        const related = linkRows.filter((r) => r.kind === "relates").map((r) => (Number(r.from_id) === t.id ? Number(r.to_id) : Number(r.from_id)));
+        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean), start_date: t.start_date ?? null, subsystems: t.subsystems, awards: t.awards, labels: t.labels, blockedBy, blocks, related };
       }
     }
     if (req.eventId) {
@@ -9796,7 +9808,9 @@ Rules:
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?" + boardSql(await canSeeBoardTasks(auth.memberId, auth.teamId)), auth.teamId)) as any[];
-      res.json(await withAssignees(tasks));
+      // Dependencies and related tasks, between tasks this viewer can see.
+      const links = await loadTaskLinks(dbAll as any, auth.teamId!, new Set(tasks.map((t) => Number(t.id))));
+      res.json(attachLinks(await withAssignees(tasks), links));
     } catch (error) {
       console.error("Error fetching tasks:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -10222,6 +10236,67 @@ Rules:
     }
   });
 
+  /**
+   * Replace one of a task's link lists (blocked by / blocks / related) with
+   * `ids`. Links to tasks the member can't see are left alone; a dependency
+   * loop or a task from another team is refused and nothing changes.
+   */
+  async function replaceTaskLinks(auth: { teamId: number | null; memberId: number }, taskId: number, kind: LinkKind, ids: number[], dryRun = false): Promise<string | null> {
+    const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
+    const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
+    if (!visible.has(taskId)) return "Task not found";
+    const rows = (await dbAll("SELECT from_id, to_id, kind FROM task_links WHERE team_id = ?", auth.teamId)) as any[];
+    const plan = planLinkReplace(rows.map((r) => ({ from_id: Number(r.from_id), to_id: Number(r.to_id), kind: String(r.kind) })), taskId, kind, ids, (o) => visible.has(o));
+    if ("error" in plan) return plan.error;
+    if (dryRun || (!plan.remove.length && !plan.add.length)) return null;
+    await dbBatch([
+      ...plan.remove.map((r) => ({ sql: "DELETE FROM task_links WHERE from_id = ? AND to_id = ? AND kind = ?", args: [r.from_id, r.to_id, r.kind] })),
+      ...plan.add.map((r) => ({ sql: "INSERT OR IGNORE INTO task_links (team_id, from_id, to_id, kind) VALUES (?, ?, ?, ?)", args: [auth.teamId, r.from_id, r.to_id, r.kind] })),
+    ]);
+    // Several tasks' lists changed: every open view refetches.
+    void broadcastTaskEvent(auth.teamId, { type: "tasks_changed" });
+    return null;
+  }
+
+  // Add or remove one link: { kind: "blocked_by" | "blocks" | "related", other_id }.
+  const editOneLink = (add: boolean) => async (req: any, res: any) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const taskId = Number(req.params.id);
+      const src = add ? req.body : req.query;
+      const kind = src?.kind as LinkKind;
+      const other = cleanTaskIds([src?.other_id], taskId)[0];
+      if (!(LINK_KINDS as readonly string[]).includes(kind) || !other) return res.status(400).json({ error: "Pick a task to link" });
+      // Only links this member can see; replaceTaskLinks keeps the hidden ones as they are.
+      const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
+      const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
+      const current = (await currentLinkIds(auth.teamId!, taskId, kind)).filter((x) => visible.has(x));
+      const next = add ? [...new Set([...current, other])] : current.filter((x) => x !== other);
+      if (next.length > 20) return res.status(400).json({ error: "Up to 20 links of each kind" });
+      const err = await replaceTaskLinks(auth, taskId, kind, next);
+      if (err) return res.status(err === "Task not found" ? 404 : 400).json({ error: err });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error editing task link:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+  /** A task's current list of one link kind (ids of the other tasks). */
+  async function currentLinkIds(teamId: number, taskId: number, kind: LinkKind): Promise<number[]> {
+    const rows = (await dbAll("SELECT from_id, to_id, kind FROM task_links WHERE team_id = ? AND (from_id = ? OR to_id = ?)", teamId, taskId, taskId)) as any[];
+    const out: number[] = [];
+    for (const r of rows) {
+      const a = Number(r.from_id), b = Number(r.to_id);
+      if (kind === "blocked_by" && r.kind === "blocks" && b === taskId) out.push(a);
+      else if (kind === "blocks" && r.kind === "blocks" && a === taskId) out.push(b);
+      else if (kind === "related" && r.kind === "relates") out.push(a === taskId ? b : a);
+    }
+    return out;
+  }
+  app.post("/api/tasks/:id/links", editOneLink(true));
+  app.delete("/api/tasks/:id/links", editOneLink(false));
+
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_tasks");
@@ -10232,6 +10307,7 @@ Rules:
       }
       if (await boardTaskHidden(task, auth.memberId, auth.teamId)) return res.status(404).json({ error: "Task not found" });
       try { await dbRun("DELETE FROM task_assignees WHERE task_id = ?", req.params.id); } catch { /* table may not exist yet */ }
+      await dbRun("DELETE FROM task_links WHERE from_id = ? OR to_id = ?", req.params.id, req.params.id);
       // Its completion photos go with it: read from the deleted row itself, so
       // a completion saved just before the delete isn't missed.
       const gone = (await dbAll("DELETE FROM tasks WHERE id = ? RETURNING team_id, completion_images, completion_history", req.params.id)) as any[];
@@ -13507,6 +13583,21 @@ Rules:
         const due = d.due !== undefined ? d.due : task.due_date;
         if (startAfterDue(start, due)) return res.status(400).json({ error: `Task #${id} would be due before it starts — nothing was saved` });
       }
+      // Link changes (blocked by / blocks / related) are checked the same way:
+      // an unknown task or a dependency loop refuses the whole card.
+      for (const a of actions) {
+        if (a?.kind !== "task-update" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const raw of a.items) {
+          const u = normalizeTaskUpdate(raw, null);
+          if (!u || !updateTargets.has(u.id)) continue;
+          for (const k of LINK_KINDS) {
+            const ids = u.changes[k];
+            if (!ids) continue;
+            const err = await replaceTaskLinks(auth, u.id, k, ids, true);
+            if (err) return res.status(400).json({ error: `Task #${u.id}: ${err} — nothing was saved` });
+          }
+        }
+      }
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
       const created: Record<string, number[]> = {};
@@ -13664,6 +13755,7 @@ Rules:
               const time = c.due_time !== undefined ? c.due_time : (task.due_time ?? null);
               sets.push("due_time = ?"); vals.push(date ? time : null);
             }
+            for (const k of LINK_KINDS) if (c[k]) await replaceTaskLinks(auth, u.id, k, c[k]!);
             const before = await getTaskAssigneeIds(u.id);
             if (c.assignees !== undefined || c.roles) {
               // The named people plus everyone holding the roles now.

@@ -161,7 +161,7 @@ export interface FactsInput {
   dueThisWeekTotal: number;
   doneLast7: number;
   messagesLast7: number | null;
-  openTasks: { id: number; title: string; status: string; due_date?: string | null; assignees: string[]; subsystems?: string[] }[];
+  openTasks: { id: number; title: string; status: string; due_date?: string | null; assignees: string[]; subsystems?: string[]; blockedBy?: number[] }[];
   upcoming: EventRow[]; // ordered by date, time; from today on
   upcomingTotal: number;
   budget: { income: number; expense: number } | null;
@@ -232,7 +232,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     for (const t of f.openTasks) {
       const d = String(t.due_date || "").slice(0, 10);
       const due = t.due_date ? `, due ${shortDate(d)}${isCalendarDate(d) && d < f.today ? " (overdue)" : ""}` : "";
-      L.push(`  task #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}${t.subsystems?.length ? `, subsystems ${t.subsystems.map((n) => q(n, 40)).join(", ")}` : ""}`);
+      L.push(`  task #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}${t.subsystems?.length ? `, subsystems ${t.subsystems.map((n) => q(n, 40)).join(", ")}` : ""}${t.blockedBy?.length ? `, BLOCKED by ${t.blockedBy.map((n) => `task #${n}`).join(", ")} (still open)` : ""}`);
     }
   }
   if (f.upcoming.length) {
@@ -285,7 +285,10 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamId,
   );
   const openTasks = await db.dbAll(
-    `SELECT t.id, t.title, t.status, t.due_date, t.subsystems FROM tasks t
+    `SELECT t.id, t.title, t.status, t.due_date, t.subsystems,
+       (SELECT GROUP_CONCAT(b.id) FROM task_links l JOIN tasks b ON b.id = l.from_id
+         WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.status NOT IN ('done', 'cancelled')${includeBoard ? "" : " AND COALESCE(b.is_board, 0) = 0"}) AS blockers
+     FROM tasks t
      WHERE t.team_id = ? AND t.status NOT IN ('done', 'cancelled')${tBoard}
      ORDER BY CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END, t.due_date ASC, t.id ASC LIMIT 20`,
     teamId,
@@ -336,7 +339,7 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     dueThisWeekTotal: Number(counts?.week_n || 0),
     doneLast7: Number(counts?.done7_n || 0),
     messagesLast7: msgs ? Number(msgs.n || 0) : null,
-    openTasks: openTasks.map((t: any) => ({ id: t.id, title: String(t.title || ""), status: String(t.status || "todo"), due_date: t.due_date, assignees: assignees.get(t.id) || [], subsystems: parseTagList(t.subsystems) })),
+    openTasks: openTasks.map((t: any) => ({ id: t.id, title: String(t.title || ""), status: String(t.status || "todo"), due_date: t.due_date, assignees: assignees.get(t.id) || [], subsystems: parseTagList(t.subsystems), blockedBy: t.blockers ? String(t.blockers).split(",").map(Number).filter((n) => n > 0) : [] })),
     upcoming: upcoming.map((e: any) => ({ id: e.id, title: String(e.title || ""), date: String(e.date).slice(0, 10), start_time: e.start_time || "", end_time: e.end_time || "", location: e.location || "", event_type: e.event_type || "" })),
     upcomingTotal,
     budget: Number(budgetRow?.n || 0) > 0 ? { income: Number(budgetRow.income || 0), expense: Number(budgetRow.expense || 0) } : null,

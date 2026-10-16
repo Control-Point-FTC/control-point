@@ -28,6 +28,7 @@ import { AnimatedValue } from '../../AnimatedValue';
 import { AvatarStack } from './AssigneePicker';
 import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
 import { TaskTagChips } from './TaskTags';
+import { TaskLinkMarks } from './TaskLinks';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
@@ -278,7 +279,7 @@ export function TasksPage(props: any) {
           { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteTasks(ids.map(Number)) },
         ]}
       />
-      <TaskViewSheet task={viewTask} onOpenChange={(o) => { if (!o) setViewTaskId(null); }} ctl={ctl} members={members} teams={teams} />
+      <TaskViewSheet onOpenTask={setViewTaskId} task={viewTask} onOpenChange={(o) => { if (!o) setViewTaskId(null); }} ctl={ctl} members={members} teams={teams} />
       <TaskEditorSheet ctl={ctl} members={members} teams={teams} />
       <BulkImportDialog ctl={ctl} />
     </Page>
@@ -305,11 +306,12 @@ function DueChip({ task }: { task: any }) {
   );
 }
 
-/** Small markers on a card: priority, repeat, review. */
-function TaskMarks({ task }: { task: any }) {
+/** Small markers on a card: priority, repeat, review, blocked and links. */
+function TaskMarks({ task, byId }: { task: any; byId: Map<number, any> }) {
   const rule = readRecurrence(task.recurrence);
   return (
     <>
+      <TaskLinkMarks task={task} byId={byId} />
       <PriorityBadge value={task.priority} />
       {rule && <span className="inline-flex items-center text-muted-foreground" title={recurrenceLabel(rule)}><Repeat className="size-3.5" /><span className="sr-only">{recurrenceLabel(rule)}</span></span>}
       <ReviewBadge task={task} />
@@ -492,7 +494,7 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
                           <TaskTagChips task={t} className="mt-2" />
                           <div className="mt-2.5 flex flex-wrap items-center gap-2">
                             {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
-                            <TaskMarks task={t} />
+                            <TaskMarks task={t} byId={ctl.taskById} />
                             <DueChip task={t} />
                             <span className="ml-auto"><AvatarStack members={people} /></span>
                           </div>
@@ -549,7 +551,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
                   {t.title}
                 </button>
                 {t.is_board ? <Badge variant="soft" className="ml-2"><Crown /> Board</Badge> : null}
-                <span className="ml-2 inline-flex flex-wrap items-center gap-1.5 align-middle"><TaskMarks task={t} /></span>
+                <span className="ml-2 inline-flex flex-wrap items-center gap-1.5 align-middle"><TaskMarks task={t} byId={ctl.taskById} /></span>
                 <TaskTagChips task={t} className="mt-1" />
                 <span className="mt-0.5 flex items-center gap-2 sm:hidden"><DueChip task={t} /></span>
               </TableCell>
