@@ -99,7 +99,9 @@ export function planLinkChanges(rows: Row[], changes: LinkChange[], canLink: (ot
     const loop = visit(n, []);
     if (loop) {
       const at = loop.indexOf(loop[loop.length - 1]);
-      return { error: `That would make a loop: ${loop.slice(at).map((x) => `#${x}`).join(" → ")}` };
+      const path = loop.slice(at);
+      // A loop through tasks the member can't see is reported without naming them.
+      return { error: path.every(canLink) ? `That would make a loop: ${path.map((x) => `#${x}`).join(" → ")}` : "That would make a loop through tasks you can't see" };
     }
   }
   // At most `max` links of each kind at both ends of every touched task.

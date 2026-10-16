@@ -93,6 +93,23 @@ describe("task API", () => {
     expect(new Map((await list(admin)).map((x) => [x.id, x])).get(cad).related).toEqual([board]);
   });
 
+  it("a loop through a hidden board task is refused without naming it", async () => {
+    // Members who manage tasks but can't see board tasks.
+    const lead = await seedMember(t.db, team, "Lee", "lee@links.test");
+    const role = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions, position) VALUES (?, 'Task lead', '[\"manage_tasks\"]', 9)", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [lead, role] });
+    const leadSession = await t.session(lead);
+    const a = await task("Visible A");
+    const h = await task("Hidden board H", { is_board: 1 });
+    const b = await task("Visible B");
+    await t.post(`/api/tasks/${a}/links`, { kind: "blocks", other_id: h }, admin);
+    await t.post(`/api/tasks/${h}/links`, { kind: "blocks", other_id: b }, admin);
+    const r = await t.post(`/api/tasks/${b}/links`, { kind: "blocks", other_id: a }, leadSession);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/tasks you can't see/);
+    expect(r.body.error).not.toContain(`#${h}`);
+  });
+
   it("deleting a task removes its links", async () => {
     const temp = await task("Temporary");
     await t.post(`/api/tasks/${temp}/links`, { kind: "blocks", other_id: cad }, admin);
@@ -109,6 +126,17 @@ describe("Bruno and task links", () => {
     expect(r.status).toBe(400);
     expect(await dbAll("SELECT * FROM task_links WHERE from_id IN (?, ?) OR to_id IN (?, ?)", x, y, x, y)).toHaveLength(0);
     expect((await dbGet("SELECT title FROM tasks WHERE id = ?", x)).title).toBe("Loop X");
+  });
+
+  it("a card refused by a later action saves none of its links", async () => {
+    const x = await task("Refused X");
+    const y = await task("Refused Y");
+    const r = await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "communication", items: [{ recipient: "REV", subject: "Re: order", parent_id: 999999 }] },
+      { kind: "task-update", items: [{ id: y, blocked_by: [x] }] },
+    ] }, admin);
+    expect(r.status).toBe(400);
+    expect(await dbAll("SELECT * FROM task_links WHERE to_id = ?", y)).toHaveLength(0);
   });
 
   it("two managers adding opposite links at once can't form a loop", async () => {

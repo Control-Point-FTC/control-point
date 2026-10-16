@@ -10240,17 +10240,44 @@ Rules:
   // Link edits for a team run one at a time (read, check, write), so two
   // edits made at once can't each pass the loop check and form a loop together.
   const linkLocks = new Map<number, Promise<void>>();
-  async function withLinkLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+  /** Wait for the team's link lock; the returned function releases it (once). */
+  async function acquireLinkLock(teamId: number): Promise<() => void> {
     const prev = linkLocks.get(teamId) ?? Promise.resolve();
     let release!: () => void;
     const mine = new Promise<void>((r) => { release = r; });
     const tail = prev.then(() => mine);
     linkLocks.set(teamId, tail);
     await prev;
-    try { return await fn(); } finally {
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
       release();
       if (linkLocks.get(teamId) === tail) linkLocks.delete(teamId);
-    }
+    };
+  }
+  async function withLinkLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+    const unlock = await acquireLinkLock(teamId);
+    try { return await fn(); } finally { unlock(); }
+  }
+
+  type LinkPlan = { remove: { from_id: number; to_id: number; kind: string }[]; add: { from_id: number; to_id: number; kind: string }[] };
+  /** Plan link changes against the team's current links (the caller holds the lock). */
+  async function planTaskLinks(auth: { teamId: number | null; memberId: number }, changes: LinkChange[]): Promise<{ error: string } | LinkPlan> {
+    const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
+    const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
+    const rows = (await dbAll("SELECT from_id, to_id, kind FROM task_links WHERE team_id = ?", auth.teamId)) as any[];
+    return planLinkChanges(rows.map((r) => ({ from_id: Number(r.from_id), to_id: Number(r.to_id), kind: String(r.kind) })), changes, (o) => visible.has(o));
+  }
+  /** Write a planned set of link changes in one batch (the caller holds the lock). */
+  async function writeTaskLinks(teamId: number | null, plan: LinkPlan): Promise<void> {
+    if (!plan.remove.length && !plan.add.length) return;
+    await dbBatch([
+      ...plan.remove.map((r) => ({ sql: "DELETE FROM task_links WHERE from_id = ? AND to_id = ? AND kind = ?", args: [r.from_id, r.to_id, r.kind] })),
+      ...plan.add.map((r) => ({ sql: "INSERT OR IGNORE INTO task_links (team_id, from_id, to_id, kind) VALUES (?, ?, ?, ?)", args: [teamId, r.from_id, r.to_id, r.kind] })),
+    ]);
+    // Several tasks' lists changed: every open view refetches.
+    void broadcastTaskEvent(teamId, { type: "tasks_changed" });
   }
 
   /**
@@ -10263,18 +10290,9 @@ Rules:
   async function applyTaskLinkChanges(auth: { teamId: number | null; memberId: number }, changes: LinkChange[]): Promise<string | null> {
     if (!changes.length) return null;
     return withLinkLock(auth.teamId!, async () => {
-      const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
-      const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
-      const rows = (await dbAll("SELECT from_id, to_id, kind FROM task_links WHERE team_id = ?", auth.teamId)) as any[];
-      const plan = planLinkChanges(rows.map((r) => ({ from_id: Number(r.from_id), to_id: Number(r.to_id), kind: String(r.kind) })), changes, (o) => visible.has(o));
+      const plan = await planTaskLinks(auth, changes);
       if ("error" in plan) return plan.error;
-      if (!plan.remove.length && !plan.add.length) return null;
-      await dbBatch([
-        ...plan.remove.map((r) => ({ sql: "DELETE FROM task_links WHERE from_id = ? AND to_id = ? AND kind = ?", args: [r.from_id, r.to_id, r.kind] })),
-        ...plan.add.map((r) => ({ sql: "INSERT OR IGNORE INTO task_links (team_id, from_id, to_id, kind) VALUES (?, ?, ?, ?)", args: [auth.teamId, r.from_id, r.to_id, r.kind] })),
-      ]);
-      // Several tasks' lists changed: every open view refetches.
-      void broadcastTaskEvent(auth.teamId, { type: "tasks_changed" });
+      await writeTaskLinks(auth.teamId, plan);
       return null;
     });
   }
@@ -10328,7 +10346,7 @@ Rules:
       }
       if (await boardTaskHidden(task, auth.memberId, auth.teamId)) return res.status(404).json({ error: "Task not found" });
       try { await dbRun("DELETE FROM task_assignees WHERE task_id = ?", req.params.id); } catch { /* table may not exist yet */ }
-      const links = await dbRun("DELETE FROM task_links WHERE from_id = ? OR to_id = ?", req.params.id, req.params.id);
+      const links = await withLinkLock(auth.teamId!, () => dbRun("DELETE FROM task_links WHERE from_id = ? OR to_id = ?", req.params.id, req.params.id));
       // Its completion photos go with it: read from the deleted row itself, so
       // a completion saved just before the delete isn't missed.
       const gone = (await dbAll("DELETE FROM tasks WHERE id = ? RETURNING team_id, completion_images, completion_history", req.params.id)) as any[];
@@ -13548,6 +13566,7 @@ Rules:
   }));
 
   app.post("/api/ai/apply-actions", async (req, res) => {
+    let unlockLinks: (() => void) | null = null;
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
@@ -13619,8 +13638,11 @@ Rules:
           for (const k of LINK_KINDS) if (u.changes[k]) linkChanges.push({ id: u.id, kind: k, ids: u.changes[k]! });
         }
       }
-      const linkErr = await applyTaskLinkChanges(auth, linkChanges);
-      if (linkErr) return res.status(400).json({ error: `${linkErr} — nothing was saved` });
+      // The plan is made under the team's link lock, held to the end of the
+      // request; the links are written last, only if nothing else refused.
+      unlockLinks = linkChanges.length ? await acquireLinkLock(auth.teamId!) : null;
+      const linkPlan = linkChanges.length ? await planTaskLinks(auth, linkChanges) : null;
+      if (linkPlan && "error" in linkPlan) return res.status(400).json({ error: `${linkPlan.error} — nothing was saved` });
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
       const created: Record<string, number[]> = {};
@@ -13834,6 +13856,7 @@ Rules:
       if (!Object.keys(applied).length) {
         return res.status(400).json({ error: "Nothing valid to add — please try again" });
       }
+      if (linkPlan && !("error" in linkPlan)) await writeTaskLinks(auth.teamId, linkPlan);
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
@@ -13843,6 +13866,8 @@ Rules:
     } catch (error) {
       console.error("AI apply-actions error:", error);
       res.status(500).json({ error: "Couldn't save those — please try again" });
+    } finally {
+      unlockLinks?.();
     }
   });
 
