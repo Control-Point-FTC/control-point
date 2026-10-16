@@ -10,6 +10,7 @@ import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
 import { parseTagList } from '../../types/taskTags';
+import { teamToday } from '../../utils/dueShortcuts';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 import { recordedCompletions } from '../../utils/taskCompletions';
 
@@ -128,6 +129,28 @@ export function avgCompletionDaysOf(tasks: any[]) {
   return (totalTime / completedTasks.length / (1000 * 60 * 60 * 24)).toFixed(1);
 }
 
+/** The PATCH body an edit saves (auto-save diffs it against the task as opened). */
+export function editPayload(f: any, isBoard: boolean): Record<string, unknown> {
+  return {
+    title: f.title,
+    description: f.description,
+    assignee_ids: f.assignee_ids,
+    due_date: f.due_date || null,
+    due_time: f.due_date && f.due_time ? f.due_time : null,
+    is_board: isBoard ? 1 : 0,
+    priority: f.priority || null,
+    recurrence: repeatToRule(f.repeat, f.repeatRule),
+    start_date: f.start_date || null,
+    subsystems: f.subsystems ?? [],
+    awards: f.awards ?? [],
+    labels: f.labels ?? [],
+    completion_mode: f.completion_mode === 'each' ? 'each' : null,
+  };
+}
+
+/** Edit saves run one at a time (module-wide, so a remount keeps the order). */
+let saveChain: Promise<unknown> = Promise.resolve();
+
 export function useTasksController({ tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete }: {
   tasks: any[];
   setTasks: (v: any) => void;
@@ -180,6 +203,10 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     return s;
   });
 
+  // Auto-save of an edit: idle → saving → saved, or error (with the reason).
+  const EDIT_BASE = 'tasks:edit-baseline';
+  const [autoSave, setAutoSave] = useDraft<{ state: 'idle' | 'saving' | 'saved' | 'error'; message?: string }>('tasks:autosave', { state: 'idle' });
+
   const isAdmin = hasScope('admin');
   const canManageTasks = hasScope('tasks');
 
@@ -198,7 +225,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const openEditTask = (task: any) => {
     bumpGen(EDITOR_GEN);
     setEditingTaskId(task.id);
-    setNewTask({
+    const form = {
       team_id: task.team_id?.toString() || '',
       title: task.title || '',
       description: task.description || '',
@@ -214,9 +241,56 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       awards: parseTagList(task.awards),
       labels: parseTagList(task.labels),
       completion_mode: task.completion_mode === 'each' ? 'each' : '',
-    });
+    };
+    setNewTask(form);
+    // What the task was when opened: edits save only the fields that changed from it,
+    // so a teammate's change to another field isn't overwritten.
+    setDraft(EDIT_BASE, editPayload(form, !!task.is_board));
+    setAutoSave({ state: 'idle' });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
+  };
+
+  /**
+   * Save an edit's changed fields (auto-save, Done and closing). Saves run one
+   * after another, and each reads the form as it is when it runs, so a change
+   * made while an earlier save was in flight is never lost. False when it couldn't.
+   */
+  const autosaveEdit = (): Promise<boolean> => {
+    const run = saveChain.then(() => saveEditNow());
+    saveChain = run.catch(() => false);
+    return run;
+  };
+  const saveEditNow = async (): Promise<boolean> => {
+    const id = getDraft<number | null>('tasks:editing-id', null);
+    if (!id) return true;
+    const gen = getDraft<number>(EDITOR_GEN, 0);
+    const base = getDraft<Record<string, unknown> | null>(EDIT_BASE, null) ?? {};
+    const payload = editPayload(getDraft<TaskForm>('tasks:form', EMPTY_FORM), getDraft<boolean>('tasks:is-board', false));
+    const diff = Object.fromEntries(Object.entries(payload).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(base[k])));
+    if (!Object.keys(diff).length) { if (getDraft<number>(EDITOR_GEN, 0) === gen && getDraft<any>('tasks:autosave', null)?.state === 'saving') setAutoSave({ state: 'saved' }); return true; }
+    if ('title' in diff && !String(diff.title || '').trim()) { setAutoSave({ state: 'error', message: 'Add a title to save' }); return false; }
+    // A due time only means something with its date.
+    if ('due_time' in diff || 'due_date' in diff) { diff.due_date = payload.due_date; diff.due_time = payload.due_time; }
+    setAutoSave({ state: 'saving' });
+    try {
+      const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(diff) });
+      if (!res.ok) {
+        const message = (await res.json().catch(() => ({})))?.error || 'Could not save — try again';
+        if (getDraft<number>(EDITOR_GEN, 0) === gen) setAutoSave({ state: 'error', message });
+        return false;
+      }
+      if (getDraft<number>(EDITOR_GEN, 0) === gen) {
+        // The baseline is what the server now has (what was sent), not the form.
+        setDraft(EDIT_BASE, { ...base, ...diff });
+        setAutoSave({ state: 'saved' });
+      }
+      refresh.tasks();
+      return true;
+    } catch {
+      if (getDraft<number>(EDITOR_GEN, 0) === gen) setAutoSave({ state: 'error', message: 'Could not save — check your connection' });
+      return false;
+    }
   };
 
   const closeTaskModal = () => {
@@ -234,31 +308,9 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     const stillCurrent = () => getDraft<number>(EDITOR_GEN, 0) === gen;
     try {
       if (editingTaskId) {
-        const res = await apiFetch(`/api/tasks/${editingTaskId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: newTask.title,
-            description: newTask.description,
-            assignee_ids: newTask.assignee_ids,
-            due_date: newTask.due_date || null,
-            due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
-            is_board: isBoardTask ? 1 : 0,
-            priority: newTask.priority || null,
-            recurrence: repeatToRule(newTask.repeat, newTask.repeatRule),
-            start_date: newTask.start_date || null,
-            subsystems: newTask.subsystems ?? [],
-            awards: newTask.awards ?? [],
-            labels: newTask.labels ?? [],
-            completion_mode: newTask.completion_mode === 'each' ? 'each' : null,
-          }),
-        });
-        if (res.ok) {
-          if (stillCurrent()) closeTaskModal();
-          refresh.tasks();
-        } else {
-          notify('Could not save task — try again.', 'error');
-        }
+        // Done: whatever hasn't auto-saved yet is saved now (only changed fields).
+        if (await autosaveEdit()) { if (stillCurrent()) closeTaskModal(); }
+        else notify('Could not save task — try again.', 'error');
         return;
       }
       const res = await apiFetch('/api/tasks', {
@@ -564,6 +616,19 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       return false;
     }
   };
+  /** The team's today (its timezone), for due-date shortcuts. */
+  const todayForTeam = () => teamToday(teams.find((t: any) => String(t.id) === String(currentUser?.team_id))?.timezone);
+  /** Set one task's due date (the sheet's "Tomorrow"), optimistic; its time is kept. */
+  const setDueDate = async (id: number, due_date: string) => {
+    if (!canManageTasks) { notify('Only team managers can change due dates.', 'error'); return; }
+    const before = tasks.find((t: any) => t.id === id)?.due_date ?? null;
+    setTasks((ts: any[]) => ts.map((t: any) => (t.id === id ? { ...t, due_date } : t)));
+    const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ due_date }) }).catch(() => null);
+    if (!res?.ok) {
+      setTasks((ts: any[]) => ts.map((t: any) => (t.id === id && t.due_date === due_date ? { ...t, due_date: before } : t)));
+      notify((await res?.json().catch(() => ({})))?.error || 'Could not update the due date — try again.', 'error');
+    }
+  };
   /** Set one task's priority (the board's Priority columns), optimistic. */
   const setPriority = async (id: number, priority: string | null) => {
     if (!canManageTasks) { notify('Only team managers can change priority.', 'error'); return; }
@@ -626,10 +691,12 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, setPriority, setWipLimit, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
+    isAdmin, canManageTasks, setPriority, setWipLimit, setDueDate, todayForTeam, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
-    openNewTask, openEditTask, closeTaskModal, handleAddTask,
+    openNewTask, openEditTask, closeTaskModal, handleAddTask, autosaveEdit, autoSave,
+    /** The editor's session: changes whenever it opens or closes (to drop late closes). */
+    editorSession: () => getDraft<number>(EDITOR_GEN, 0),
     // view state
     showAnalytics, setShowAnalytics, filterTeam, setFilterTeam, pendingIds: pendingView, filteredTasks,
     // bulk

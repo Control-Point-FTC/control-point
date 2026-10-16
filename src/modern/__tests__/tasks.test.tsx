@@ -11,6 +11,7 @@ import { InterfaceModeProvider } from '../interfaceMode';
 import { TasksPage } from '../pages/tasks/TasksPage';
 import { ContextMenuProvider } from '../../components/contextmenu/ContextMenuProvider';
 import { clearDrafts } from '../drafts';
+import { addDaysISO, teamToday } from '../../utils/dueShortcuts';
 
 afterEach(cleanup);
 beforeEach(() => { api.apiFetch.mockReset(); api.apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) }); clearDrafts(); });
@@ -222,6 +223,89 @@ describe('Modern Tasks', () => {
     fireEvent.click(screen.getByRole('button', { name: /Bruno is tagging/ }));
     finish({ ok: false, json: async () => ({ error: "Bruno isn't set up on this server" }) });
     expect(await screen.findByText("Bruno isn't set up on this server")).toBeInTheDocument();
+  });
+
+  it('editing auto-saves only the fields you changed, then says so', async () => {
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Mount the climber hooks (v2)' } });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })), { timeout: 4000 });
+    const call = api.apiFetch.mock.calls.find((c: any[]) => c[0] === '/api/tasks/1' && c[1]?.method === 'PATCH')!;
+    expect(JSON.parse(call[1].body)).toEqual({ title: 'Mount the climber hooks (v2)' });
+    expect(await screen.findByText('All changes saved')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('a change made while a save is in flight is saved next (saves run in order)', async () => {
+    const patches: string[] = [];
+    let release!: () => void;
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/tasks/1' && init?.method === 'PATCH') {
+        patches.push(init.body);
+        if (patches.length === 1) await new Promise<void>((r) => { release = r; });
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    const title = screen.getByLabelText(/^Title/);
+    fireEvent.change(title, { target: { value: 'B' } });
+    await waitFor(() => expect(patches).toHaveLength(1), { timeout: 4000 });
+    // Back to the original while the first save is still out.
+    fireEvent.change(title, { target: { value: 'Mount the climber hooks' } });
+    await new Promise((r) => setTimeout(r, 1400));
+    release();
+    await waitFor(() => expect(patches).toHaveLength(2), { timeout: 4000 });
+    expect(JSON.parse(patches[0])).toEqual({ title: 'B' });
+    expect(JSON.parse(patches[1])).toEqual({ title: 'Mount the climber hooks' });
+  }, 15000);
+
+  it('closing with a failed save keeps the editor open with the reason', async () => {
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => (url === '/api/tasks/1' && init?.method === 'PATCH'
+      ? { ok: false, json: async () => ({ error: 'Start date must be on or before the due date' }) }
+      : { ok: true, json: async () => ({}) }));
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Renamed' } });
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    expect(await screen.findByText('Start date must be on or before the due date')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('Renamed');
+  });
+
+  it('a close whose save lands after a new editor opened leaves the new one alone', async () => {
+    let release!: () => void;
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/tasks/1' && init?.method === 'PATCH') await new Promise<void>((r) => { release = r; });
+      return { ok: true, json: async () => ({}) };
+    });
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Renamed' } });
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })));
+    // While that save is out, a new task is started (e.g. from the Dashboard's New task).
+    fireEvent.click(screen.getByRole('button', { name: /New task/, hidden: true }));
+    fireEvent.change(await screen.findByLabelText(/^Title/), { target: { value: 'Fresh idea' } });
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('Fresh idea');
+  });
+
+  it('due shortcuts in the editor, and "Move to tomorrow" on the sheet', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tomorrow' }));
+    const tomorrow = addDaysISO(teamToday(undefined), 1);
+    expect((screen.getByLabelText('Due date') as HTMLInputElement).value).toBe(tomorrow);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Move to tomorrow' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ due_date: tomorrow }) })));
   });
 
   it('a late save never wipes a newer draft', async () => {

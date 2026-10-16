@@ -25,6 +25,7 @@ import { TaskLinksSection } from './TaskLinks';
 import { TaskTimeline, useTaskTimeline } from './TaskTimeline';
 import { TaskSketches } from './TaskSketches';
 import { notify } from '../../../components/dialog';
+import { dueShortcuts, addDaysISO } from '../../../utils/dueShortcuts';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -280,7 +281,14 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
                   <dd>{format(new Date(String(task.start_date).slice(0, 10) + 'T12:00:00'), 'EEE, MMM d')}</dd>
                 </>)}
                 <dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-4" /> Due</dt>
-                <dd><DueText task={task} /></dd>
+                <dd className="flex flex-wrap items-center gap-2">
+                  <DueText task={task} />
+                  {ctl.canManageTasks && isOpenStatus(task.status) && String(task.due_date || '').slice(0, 10) !== addDaysISO(ctl.todayForTeam(), 1) && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => void ctl.setDueDate(task.id, addDaysISO(ctl.todayForTeam(), 1))}>
+                      {task.due_date ? 'Move to tomorrow' : 'Due tomorrow'}
+                    </Button>
+                  )}
+                </dd>
                 {task.completed_at && (<>
                   <dt className="flex items-center gap-2 text-muted-foreground"><CheckCircle2 className="size-4" /> Completed</dt>
                   <dd>{format(new Date(task.completed_at), 'MMM d, h:mm a')}</dd>
@@ -341,6 +349,19 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
     () => ({ title: latest.current.title || '', description: latest.current.description || '', subsystems: latest.current.subsystems ?? [], awards: latest.current.awards ?? [], labels: latest.current.labels ?? [] }),
     (next) => ctl.setNewTask({ ...latest.current, ...next }),
   );
+  // Editing a task: changes save on their own a moment after you stop (only changed fields).
+  useEffect(() => {
+    if (!editing || !ctl.showAddTask) return;
+    const t = window.setTimeout(() => { void ctl.autosaveEdit(); }, 1200);
+    return () => window.clearTimeout(t);
+  }, [f, ctl.isBoardTask, editing, ctl.showAddTask]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Closing an edit saves anything still pending first; if that fails it stays open with the reason. */
+  const closeEditor = async () => {
+    const session = ctl.editorSession();
+    if (editing && !(await ctl.autosaveEdit())) return;
+    // A slow save: if another editor opened meanwhile, it's left alone.
+    if (ctl.editorSession() === session) ctl.closeTaskModal();
+  };
   // A different task (or a fresh draft) starts with no AI tags.
   useEffect(() => { tagSuggest.reset(); }, [ctl.showAddTask, ctl.editingTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
   const saving = ctl.pendingIds.has(-1);
@@ -350,11 +371,11 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
   const chosenSubsystems = f.subsystems ?? [];
   const subsystemOptions = [...teamSubsystems, ...chosenSubsystems.filter((s) => !teamSubsystems.includes(s))].map((s) => ({ value: s, label: s }));
   return (
-    <Sheet open={ctl.showAddTask} onOpenChange={(o) => { if (!o) ctl.closeTaskModal(); }}>
+    <Sheet open={ctl.showAddTask} onOpenChange={(o) => { if (!o) void closeEditor(); }}>
       <SheetContent side={side} className={cn('gap-0 p-0', side === 'right' ? 'sm:max-w-lg' : '')}>
         <SheetHeader className="border-b border-border px-6 py-5 pr-12">
           <SheetTitle>{editing ? 'Edit task' : 'New task'}</SheetTitle>
-          <SheetDescription>{editing ? 'Changes save for everyone on the team.' : 'Describe it to Bruno, or fill in the details.'}</SheetDescription>
+          <SheetDescription>{editing ? 'Changes save on their own, for everyone on the team.' : 'Describe it to Bruno, or fill in the details.'}</SheetDescription>
         </SheetHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -417,12 +438,20 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               <Label htmlFor="task-start">Start date <span className="font-normal text-muted-foreground">(optional)</span></Label>
               <Input id="task-start" type="date" value={f.start_date ? String(f.start_date).slice(0, 10) : ''} max={f.due_date ? String(f.due_date).slice(0, 10) : undefined} onChange={(e) => set({ start_date: e.target.value })} />
             </div>
-            <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div className="grid grid-cols-[1fr_auto] items-start gap-2">
               <div className="grid gap-2">
                 <Label htmlFor="task-due">Due date</Label>
                 <Input id="task-due" type="date" value={f.due_date ? String(f.due_date).slice(0, 10) : ''} onChange={(e) => set({ due_date: e.target.value, ...(e.target.value ? {} : { due_time: '' }) })} />
+                <div className="flex flex-wrap gap-1" role="group" aria-label="Due date shortcuts">
+                  {dueShortcuts(ctl.todayForTeam()).map((d) => (
+                    <button key={d.label} type="button" aria-pressed={String(f.due_date || '').slice(0, 10) === d.date} onClick={() => set({ due_date: d.date })}
+                      className={cn('rounded-full border px-2.5 py-0.5 text-xs', String(f.due_date || '').slice(0, 10) === d.date ? 'border-accent bg-accent/15' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground')}>
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label htmlFor="task-due-time">Time <span className="font-normal text-muted-foreground">(optional)</span></Label>
                 <Input id="task-due-time" type="time" disabled={!f.due_date} value={f.due_time || ''} onChange={(e) => set({ due_time: e.target.value })} className="w-32" />
               </div>
@@ -482,10 +511,15 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
             )}
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-            <Button type="button" variant="outline" onClick={ctl.closeTaskModal}>Cancel</Button>
+            {editing && (
+              <span role="status" aria-live="polite" className={cn('mr-auto text-xs', ctl.autoSave.state === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+                {ctl.autoSave.state === 'saving' ? 'Saving…' : ctl.autoSave.state === 'saved' ? 'All changes saved' : ctl.autoSave.state === 'error' ? ctl.autoSave.message : ''}
+              </span>
+            )}
+            {!editing && <Button type="button" variant="outline" onClick={ctl.closeTaskModal}>Cancel</Button>}
             <Button type="submit" disabled={saving || !f.title.trim()}>
               {saving && <Loader2 className="animate-spin" />}
-              {editing ? 'Save changes' : 'Create task'}
+              {editing ? 'Done' : 'Create task'}
             </Button>
           </div>
         </form>
