@@ -198,6 +198,8 @@ import { googleEventBody, isDeadRefreshToken } from "./server/googleCalendar.js"
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
+import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules } from "./src/types/teamModules.js";
+import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -5105,7 +5107,7 @@ async function startServer() {
     if (parseInt(req.params.id, 10) !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
-    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode, timezone } = req.body;
+    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode, timezone, disabled_modules, subsystems } = req.body;
     // Partial update: only touch columns the caller actually sent, so saving the
     // FTC team number alone can't wipe the workspace name or colors.
     const sets: string[] = [];
@@ -5146,6 +5148,21 @@ async function startServer() {
       }
       sets.push("timezone = ?"); vals.push(tz);
     }
+    if (disabled_modules !== undefined) {
+      // Module switches: [] (or null) turns everything back on.
+      const list = disabled_modules === null ? [] : disabled_modules;
+      if (!Array.isArray(list) || !list.every(isTeamModuleId)) return res.status(400).json({ error: "Unknown module" });
+      sets.push("disabled_modules = ?"); vals.push(list.length ? JSON.stringify([...new Set(list)]) : null);
+    }
+    if (subsystems !== undefined) {
+      // Robot subsystems: null restores the defaults.
+      if (subsystems !== null && (!Array.isArray(subsystems) || subsystems.length > MAX_SUBSYSTEMS)) {
+        return res.status(400).json({ error: `Up to ${MAX_SUBSYSTEMS} subsystems` });
+      }
+      const clean = subsystems === null ? null : cleanSubsystems(subsystems);
+      if (clean && !clean.length) return res.status(400).json({ error: "Add at least one subsystem" });
+      sets.push("subsystems = ?"); vals.push(clean ? JSON.stringify(clean) : null);
+    }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
     if (claimFtc !== null) {
@@ -5160,6 +5177,8 @@ async function startServer() {
     } else {
       (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
     }
+    // Everyone's sidebar follows the module switches live.
+    if (disabled_modules !== undefined || subsystems !== undefined) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
     res.json({ success: true });
   });
 
@@ -12798,6 +12817,8 @@ Rules:
         t = extractBudgetBlock(t).text;
         // Task edits live only on the live confirm card, like notebook proposals.
         t = t.replace(/```task-update\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-update[\s\S]*$/, "");
+        // Workspace settings changes too.
+        t = t.replace(/```workspace\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```workspace[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -13390,6 +13411,7 @@ Rules:
         "outreach": { perm: "manage_outreach", error: "Only members with outreach access can log outreach" },
         "task-update": { perm: "manage_tasks", error: "Only members with task access can edit tasks" },
         "budget": { perm: "manage_budget", error: "Only members with budget access can add budget entries" },
+        "workspace": { perm: "manage_members", error: "Only workspace admins can change modules and subsystems" },
       };
       for (const a of actions) {
         const need = PERM_FOR_KIND[a?.kind];
@@ -13584,6 +13606,17 @@ Rules:
             )) as any)?.lastInsertRowid);
           }
           applied.budget = (applied.budget || 0) + entries.length;
+        } else if (kind === "workspace") {
+          // One settings change per card (the last item wins if several came).
+          const change = parseWorkspaceChange(items[items.length - 1]);
+          if (!change) continue;
+          const team: any = await dbGet("SELECT disabled_modules FROM teams WHERE id = ?", auth.teamId);
+          const off = nextDisabledModules(parseDisabledModules(team?.disabled_modules), change);
+          const sets = ["disabled_modules = ?"];
+          const vals: any[] = [off.length ? JSON.stringify(off) : null];
+          if (change.subsystems) { sets.push("subsystems = ?"); vals.push(JSON.stringify(change.subsystems)); }
+          await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals, auth.teamId);
+          applied.workspace = 1;
         }
       }
       if (!Object.keys(applied).length) {
@@ -13593,6 +13626,7 @@ Rules:
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
       if (applied.task) void broadcastTaskEvent(auth.teamId, { type: "tasks_changed" });
+      if (applied.workspace) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
       res.json({ ok: true, applied, created });
     } catch (error) {
       console.error("AI apply-actions error:", error);

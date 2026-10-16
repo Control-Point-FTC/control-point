@@ -224,6 +224,17 @@ const POOLS: Record<string, StarterPool> = {
       'Did anything change on the calendar this week?',
     ],
   },
+  settings: {
+    greeting: 'Want to tidy up the workspace? I can switch modules on or off and edit your robot subsystems.',
+    prompts: [
+      'Which modules are switched off for our team?',
+      'We never use Predict. Can you hide it?',
+      'Add Lift as a robot subsystem',
+      'What are our robot subsystems?',
+      'Turn every module back on',
+      'What does switching a module off do to its data?',
+    ],
+  },
   dashboard: {
     greeting: DEFAULT_GREETING,
     prompts: [

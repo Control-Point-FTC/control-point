@@ -14,6 +14,7 @@
  * never instructions to the model.
  */
 import { quoteUntrusted } from "./scoutingContext.js";
+import { parseDisabledModules, parseSubsystems, TEAM_MODULES } from "../src/types/teamModules.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -163,6 +164,10 @@ export interface FactsInput {
   upcoming: EventRow[]; // ordered by date, time; from today on
   upcomingTotal: number;
   budget: { income: number; expense: number } | null;
+  /** Module ids the team switched off (Settings → Workspace → Modules). */
+  disabledModules?: string[];
+  /** The team's robot subsystems (defaults until edited). */
+  subsystems?: string[];
 }
 
 const money = (n: number) => `$${(Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -213,6 +218,14 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     L.push(`- Budget (per the budget log): income ${money(f.budget.income)}, expenses ${money(f.budget.expense)}, net ${money(f.budget.income - f.budget.expense)}`);
   }
 
+  if (f.subsystems?.length) {
+    L.push(`- Robot subsystems (per Settings → Workspace): ${f.subsystems.map((n) => q(n, 40)).join(", ")}`);
+  }
+  if (f.disabledModules?.length) {
+    const off = TEAM_MODULES.filter((m) => f.disabledModules!.includes(m.id));
+    L.push(`- Modules switched off for this team (per Settings → Workspace → Modules): ${off.map((m) => `${m.label} (${m.id})`).join(", ")}. Their pages are hidden from the sidebar; the data is kept. Don't send people to these pages or propose changes in them; offer to switch the module back on instead.`);
+  }
+
   if (f.openTasks.length) {
     L.push(`OPEN TASKS — showing ${f.openTasks.length} of ${f.openTaskTotal}, soonest due first:`);
     for (const t of f.openTasks) {
@@ -241,7 +254,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
 export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number, timeZone: string, now: Date = new Date(), includeBoard = false): Promise<FactsInput | null> {
   const board = includeBoard ? "" : " AND COALESCE(is_board, 0) = 0";
   const tBoard = includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0";
-  const team = await db.dbGet("SELECT name FROM teams WHERE id = ?", teamId);
+  const team = await db.dbGet("SELECT name, disabled_modules, subsystems FROM teams WHERE id = ?", teamId);
   if (!team) return null;
   const today = todayIn(timeZone, now);
   // "Next 7 days" = today plus the following six dates; "last 7 days" = an
@@ -308,6 +321,8 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
 
   return {
     teamName: String(team.name || "the team"),
+    disabledModules: parseDisabledModules(team.disabled_modules),
+    subsystems: parseSubsystems(team.subsystems),
     timeZone,
     today,
     nowTime: timeIn(timeZone, now),

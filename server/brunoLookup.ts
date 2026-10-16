@@ -374,7 +374,7 @@ export function saidNothing(answer: string): boolean {
 /** The fenced block kinds the app reads and hides from the member (lookups,
  *  references, memories, scouting, and the action proposals the chat strips).
  *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
-const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook"];
+const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 

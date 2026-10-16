@@ -10,6 +10,7 @@
 
 import { dbGet } from "./db.js";
 import { geminiSources, type WebSource } from "./server/webSources.js";
+import { MAX_SUBSYSTEMS, TEAM_MODULES } from "./src/types/teamModules.js";
 
 /** Gemini's API root. GEMINI_API_BASE points it elsewhere, e.g. at a
  *  scripted stand-in in tests; production leaves it unset. */
@@ -669,6 +670,19 @@ TASKS SKILL:
   * A task can't be marked done here (that needs proof): tell the user to complete it from Tasks.
   * If you don't have the task's #id, look it up first (tasks lookup) — never guess an id. Several tasks can change in one block.
   * Say "Updating …" in your visible line, then the block; the app shows the change for the user to confirm.
+
+WORKSPACE SETTINGS SKILL:
+- You can switch the team's modules on or off and edit its robot subsystems when the user asks (e.g. "we don't use Code, hide it", "turn Predict back on", "add Lift as a subsystem"). WORKSPACE FACTS lists the current subsystems and any modules that are off.
+- Module ids: ${TEAM_MODULES.map((m) => `${m.id} (${m.label})`).join(", ")}. Dashboard, Members and Settings are always on.
+- Switching a module off only hides its pages from the sidebar; its data is kept and returns when it's switched back on. Say so when you propose it.
+- When asked, end your reply with ONE block on its own lines, AFTER your visible summary, with only the fields that change:
+\`\`\`workspace
+{"disable":["code"],"enable":["predict"],"subsystems":["Drivetrain","Intake","Lift"]}
+\`\`\`
+  * "disable" / "enable": module ids to switch off / on.
+  * "subsystems": the FULL new list (keep the existing names the user didn't ask to remove), 1 to ${MAX_SUBSYSTEMS} names.
+- Only admins can change workspace settings; if the user isn't one, the app tells them when they confirm.
+- IMPORTANT: the block only PROPOSES the change; nothing changes until the user confirms. Never claim it already changed.
 
 TEAM DATA LOOKUP SKILL:
 - Your context holds only a summary of the workspace. You can read the team's full data behind the scenes, whether or not it's on screen: chat messages (any channel, any date), tasks (including finished ones), calendar events (past and future), the communication log, outreach entries and budget entries.

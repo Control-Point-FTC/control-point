@@ -1,4 +1,5 @@
-import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
+import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal } from 'lucide-react';
+import { TEAM_MODULES } from '../types/teamModules';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
@@ -49,7 +50,7 @@ function taskUpdateSummary(it: any): string {
 /** The card's verb: all edits say Update, a mix of new and edited says Save. */
 export function proposalVerb(proposals: ActionProposal[]): { ask: string; done: string; busy: string } {
   if (proposals.some((p) => KIND_META[p.kind]?.destructive)) return { ask: 'Delete', done: 'Deleted', busy: 'Deleting…' };
-  const edits = proposals.filter((p) => p.kind === 'task-update').length;
+  const edits = proposals.filter((p) => p.kind === 'task-update' || p.kind === 'workspace').length;
   if (edits && edits === proposals.length) return { ask: 'Update', done: 'Updated', busy: 'Updating…' };
   if (edits) return { ask: 'Save', done: 'Saved', busy: 'Saving…' };
   return { ask: 'Add', done: 'Added', busy: 'Adding…' };
@@ -63,7 +64,21 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   'task-update': { label: 'Task changes', icon: ListChecks },
   budget: { label: 'Budget', icon: Wallet },
   communication: { label: 'Communication log', icon: Mail },
+  workspace: { label: 'Workspace settings', icon: SlidersHorizontal },
 };
+
+/** "Turn off Code · Turn on Predict · Subsystems: Drivetrain, Lift" */
+export function workspaceSummary(it: any): string {
+  const label = (id: unknown) => TEAM_MODULES.find((m) => m.id === id)?.label;
+  const names = (v: unknown) => (Array.isArray(v) ? v.map(label).filter(Boolean) : []) as string[];
+  const parts: string[] = [];
+  const on = names(it?.enable);
+  const off = names(it?.disable).filter((n) => !on.includes(n));
+  if (off.length) parts.push(`Turn off ${off.join(', ')} (data is kept)`);
+  if (on.length) parts.push(`Turn on ${on.join(', ')}`);
+  if (Array.isArray(it?.subsystems)) parts.push(`Subsystems: ${it.subsystems.filter((n: unknown) => typeof n === 'string').join(', ').slice(0, 120)}`);
+  return parts.join(' · ') || 'No change';
+}
 
 export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
   const it = kind === 'event' ? resolveEventItem(raw) : raw;
@@ -85,6 +100,7 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
   }
   if (kind === 'task') return taskSummary(it);
   if (kind === 'task-update') return taskUpdateSummary(it);
+  if (kind === 'workspace') return workspaceSummary(it);
   const amt = !isNaN(parseFloat(it.amount)) ? `$${parseFloat(it.amount).toFixed(2)}` : '';
   const dir = it.type === 'income' ? 'in' : 'out';
   return `${title} — ${amt} ${dir}${it.date ? ` — ${it.date}` : ''}`;
