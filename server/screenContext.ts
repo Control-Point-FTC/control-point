@@ -48,6 +48,8 @@ export interface ScreenLookups {
     id: number; title: string; status: string | null; due_date: string | null; description: string | null; assignees: string[];
     start_date?: string | null; subsystems?: unknown; awards?: unknown; labels?: unknown;
     blockedBy?: { id: number; open: boolean }[]; blocks?: number[]; related?: number[];
+    /** The latest comments, oldest first. */
+    recentComments?: { by: string; body: string }[];
   } | null;
   event?: { id: number; title: string; date: string; start_time: string | null; end_time: string | null; location: string | null; event_type: string | null; description: string | null } | null;
   channel?: { id: number; name: string; topic: string | null } | null;
@@ -90,6 +92,9 @@ export function formatScreenContext(req: ScreenContextRequest, found: ScreenLook
       t.related?.length ? `related to ${t.related.map((n) => `task #${n}`).join(", ")}` : "",
     ].filter(Boolean);
     lines.push(`- Open task #${t.id}: ${q(t.title, 160)} — ${bits.join(", ")}${t.description?.trim() ? `; description: ${q(t.description, 400)}` : ""}`);
+    if (t.recentComments?.length) {
+      lines.push(`  Latest comments on task #${t.id} (look up task_activity for the whole discussion): ${t.recentComments.map((c) => `${q(c.by, 40)}: ${q(c.body, 200)}`).join(" | ")}`);
+    }
   }
   const e = found.event;
   if (e) {

@@ -51,6 +51,8 @@ const POOLS: Record<string, StarterPool> = {
       'Which tasks count toward the Reach award?',
       'Which tasks did we cancel this season?',
       'Which tasks are blocked, and by what?',
+      'Summarize the discussion on this task',
+      'Comment on this task that the parts arrived',
       'Task #12 can’t start until #9 is done',
       'Create a task to pack the pit kit for the qualifier',
       'Add a recurring-style reminder task: weekly team meeting every Tuesday',

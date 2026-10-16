@@ -1,4 +1,4 @@
-import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
 import { TEAM_MODULES } from '../types/teamModules';
 import { awardById } from '../types/taskTags';
 import { Link } from 'react-router-dom';
@@ -87,6 +87,7 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   budget: { label: 'Budget', icon: Wallet },
   communication: { label: 'Communication log', icon: Mail },
   workspace: { label: 'Workspace settings', icon: SlidersHorizontal },
+  'task-comment': { label: 'Task comments', icon: MessageSquare },
 };
 
 /** "Turn off Code · Turn on Predict · Subsystems: Drivetrain, Lift" */
@@ -123,6 +124,12 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
   if (kind === 'task') return taskSummary(it);
   if (kind === 'task-update') return taskUpdateSummary(it);
   if (kind === 'workspace') return workspaceSummary(it);
+  if (kind === 'task-comment') {
+    const id = Number(String(it?.id ?? '').replace(/^#/, ''));
+    const name = getTaskIndex()?.get(id)?.title || `Task #${id}`;
+    const body = String(it?.body || '').trim();
+    return `${name.slice(0, 60)} — “${body.length > 160 ? `${body.slice(0, 160)}…` : body}”`;
+  }
   const amt = !isNaN(parseFloat(it.amount)) ? `$${parseFloat(it.amount).toFixed(2)}` : '';
   const dir = it.type === 'income' ? 'in' : 'out';
   return `${title} — ${amt} ${dir}${it.date ? ` — ${it.date}` : ''}`;
@@ -140,7 +147,7 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   onDismiss: () => void;
 }) {
   useProposalContext(); // re-render once the team's roster and today load
-  useTaskIndex(status !== 'done' && status !== 'dismissed' && proposals.some((p) => p.kind === 'task-update'));
+  useTaskIndex(status !== 'done' && status !== 'dismissed' && proposals.some((p) => p.kind === 'task-update' || p.kind === 'task-comment'));
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   const verb = proposalVerb(proposals);

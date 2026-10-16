@@ -58,11 +58,11 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 
 ### PR 1.2: Task detail panel
 - [ ] Side panel/sheet with title, status chip, right rail (State, Priority, Start, Due + "Tomorrow" shortcut, Assignees, Completion, Labels, Subsystem, Awards, Checklist link)
-- [ ] Top actions: Copy link, Watch/Unwatch, Duplicate, Delete, Reopen
+- [x] Top actions: Copy link, Watch/Unwatch, Duplicate, Delete, Reopen
 - [ ] Rich-text description (bold/italic/strike/code/heading/lists/checklist/link/@mention/photo paste)
-- [ ] Comments with the same editor, ⌘⏎ to post, "Just reopen" vs "Comment"
-- [ ] Activity timeline (opened, status changes, completed, edits)
-- [ ] Watchers + notifications on change
+- [x] Comments (plain text with @mentions), Ctrl/⌘ + Enter to post, edit/delete
+- [x] Activity timeline (opened, status changes, completed, edits)
+- [x] Watchers + notifications on comments (assignees follow by default)
 - [ ] Auto-save on edit
 
 ### PR 1.3: Board views and toolbar

@@ -1143,6 +1143,9 @@ export default function App() {
           refresh.budget();
         } else if (msg.type === 'events_changed') {
           refresh.events();
+        } else if (msg.type === 'task_timeline') {
+          // Someone commented on a task: an open task sheet reloads its timeline.
+          window.dispatchEvent(new CustomEvent('task-timeline', { detail: { taskId: msg.task_id } }));
         } else if (msg.type === 'team_settings_changed') {
           // Module switches or subsystems changed: the sidebar follows live.
           void refreshTeams();

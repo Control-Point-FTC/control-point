@@ -55,7 +55,9 @@ describe('Modern Tasks', () => {
     expect(within(sheet).getByText('Mount the climber hooks')).toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('radio', { name: /In progress/ }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })));
-    expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toEqual({ status: 'in-progress' });
+    // (The sheet also loads the task's timeline with a GET; only the PATCH matters here.)
+    const patch = api.apiFetch.mock.calls.find((c: any[]) => c[1]?.method === 'PATCH');
+    expect(JSON.parse(patch[1].body)).toEqual({ status: 'in-progress' });
   });
 
   it('right-clicking a card offers open, edit, moves, copy and delete', async () => {
@@ -90,7 +92,8 @@ describe('Modern Tasks', () => {
     fireEvent.click(screen.getByRole('button', { name: /Mount the climber hooks/ }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('radio', { name: /Done/ }));
     expect(onRequestComplete).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
-    expect(api.apiFetch).not.toHaveBeenCalled();
+    // Nothing is written (the sheet's timeline GET is a read).
+    expect(api.apiFetch.mock.calls.filter((c: any[]) => c[1]?.method)).toEqual([]);
   });
 
   it('managers can create; members cannot but can still open tasks', async () => {

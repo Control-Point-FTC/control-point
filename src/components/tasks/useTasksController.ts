@@ -484,6 +484,37 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     }
   };
   const addLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, true);
+  /** A copy of a task (same details, people and tags; not its progress or history). */
+  const duplicateTask = async (task: any): Promise<number | null> => {
+    try {
+      const res = await apiFetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          team_id: task.team_id, title: `${task.title} (copy)`, description: task.description || '', assignee_ids: taskAssigneeIds(task),
+          due_date: task.due_date || null, due_time: task.due_date ? task.due_time || null : null, priority: task.priority || null,
+          recurrence: task.recurrence ? readRecurrence(task.recurrence) : null, is_board: task.is_board ? 1 : 0,
+          start_date: task.start_date || null, subsystems: parseTagList(task.subsystems), awards: parseTagList(task.awards), labels: parseTagList(task.labels),
+          completion_mode: task.completion_mode === 'each' ? 'each' : null,
+        }),
+      });
+      if (!res.ok) { notify('Could not duplicate the task — try again.', 'error'); return null; }
+      const body = await res.json().catch(() => ({}));
+      refresh.tasks();
+      notify('Task duplicated.', 'success');
+      return Number(body?.id) || null;
+    } catch {
+      notify('Could not duplicate the task — try again.', 'error');
+      return null;
+    }
+  };
+  /** Follow or stop following a task (comment and change notifications). */
+  const setWatching = async (taskId: number, watching: boolean): Promise<boolean> => {
+    const res = await apiFetch(`/api/tasks/${taskId}/watch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ watching }) }).catch(() => null);
+    if (!res?.ok) { notify('Could not update — try again.', 'error'); return false; }
+    return true;
+  };
+
   /** Finish a task each assignee completes separately, for everyone (managers). */
   const completeForEveryone = (task: any) => onRequestComplete?.({ ...task, __whole: true });
   const removeLink = (taskId: number, kind: string, otherId: number) => editLink(taskId, kind, otherId, false);
@@ -570,7 +601,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, addLink, removeLink, taskById, completeForEveryone,
+    isAdmin, canManageTasks, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,
