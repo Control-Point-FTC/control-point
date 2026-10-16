@@ -2,7 +2,7 @@
 
 Snapshot of `docs/parity-checklist.md` on 2026-10-16, with the owner's decisions applied. Work is paused here.
 
-**Overall: about 26% done** (57 done, 3 in an open PR, 10 partly done, 183 to do; 11 not doing). Partly done items count as half.
+**Overall: about 25% done** (57 done, 3 in an open PR, 10 partly done, 183 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
 
 Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started · ❌ / ~~struck~~ not doing
 
@@ -42,11 +42,11 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 
 ## Progress by phase
 
-| Phase | Done | In PR | Partly | To do | Not doing | % |
+| Phase | Done | In PR (not counted) | Partly | To do | Not doing | % shipped |
 |---|---|---|---|---|---|---|
 | 0. Shared foundations (unblocks almost everything else) | 7 | 0 | 4 | 8 | 0 | 47% |
 | 1. Tasks overhaul | 29 | 0 | 1 | 3 | 0 | 89% |
-| 2. Calendar, events and attendance | 11 | 3 | 1 | 10 | 0 | 58% |
+| 2. Calendar, events and attendance | 11 | 3 | 1 | 10 | 0 | 46% |
 | 3. Engineering notebook upgrades | 3 | 0 | 0 | 20 | 0 | 13% |
 | 4. Checklists and 3D printing (new modules) | 0 | 0 | 0 | 19 | 0 | 0% |
 | 5. Practice and competition | 0 | 0 | 0 | 11 | 0 | 0% |
