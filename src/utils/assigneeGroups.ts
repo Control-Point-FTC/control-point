@@ -2,14 +2,16 @@
 // out from the roster and role names (teams have no separate mentor or alumni
 // flag). Shared by the task editor's assignee picker and Bruno's role matching
 // (which treats a group like a role), so both mean the same people. A team role
-// with the same name wins, and a group nobody is in is left out.
+// with the same name wins when someone holds it (pass the names of held roles),
+// and a group nobody is in is left out.
 
 export type SmartGroup = { key: 'everyone' | 'coaches' | 'alumni'; name: string; memberIds: number[] };
 
 const GROUPS: { key: SmartGroup['key']; name: string; match: RegExp | null }[] = [
   { key: 'everyone', name: 'Everyone', match: null },
-  { key: 'coaches', name: 'Coaches & mentors', match: /\b(coach|mentor)/i },
-  { key: 'alumni', name: 'Alumni', match: /\balum/i },
+  // Anywhere in the name ("AssistantCoach", "Lead Mentor"); alumni only as the first word.
+  { key: 'coaches', name: 'Coaches & mentors', match: /coach|mentor/i },
+  { key: 'alumni', name: 'Alumni', match: /^\s*alum/i },
 ];
 
 export function smartGroups(

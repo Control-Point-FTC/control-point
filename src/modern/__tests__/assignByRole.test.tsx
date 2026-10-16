@@ -52,6 +52,15 @@ describe('smart groups', () => {
     ]);
     expect(smartGroups(m, ['everyone']).map((g) => g.key)).toEqual(['coaches', 'alumni']);
     expect(smartGroups([{ id: 1, roleNames: ['Builders'] }]).map((g) => g.key)).toEqual(['everyone']);
+    // "coach" anywhere in the name; "alum" only as the start.
+    expect(smartGroups([{ id: 1, roleNames: ['AssistantCoach'] }, { id: 2, roleNames: ['Parent of Alumni'] }]).map((g) => [g.key, g.memberIds])).toEqual([['everyone', [1, 2]], ['coaches', [1]]]);
+  });
+
+  it('a held role named Everyone replaces the group in the picker', () => {
+    render(<AssigneePicker members={[{ id: 1, name: 'Ana', roles: [{ id: 5, name: 'Everyone' }] }, { id: 2, name: 'Lee', roles: [] }]} selected={[]} onChange={() => {}} />);
+    fireEvent.click(screen.getByRole('combobox'));
+    expect(screen.queryByRole('option', { name: 'Everyone (2)' })).toBeNull();
+    expect(screen.getByRole('option', { name: /Everyone with the Everyone role \(1\)/ })).toBeTruthy();
   });
 
   it('the picker offers Everyone, which adds the whole team and takes it out again', () => {

@@ -13785,14 +13785,17 @@ Rules:
       byRole.set(entry.id, entry);
     }
     // Smart groups (Everyone, Coaches & mentors, Alumni) work like roles for Bruno,
-    // matching the task editor's picker; a real role with the same name wins.
+    // by the task editor's picker's rule: a real role of the same name wins only
+    // when someone holds it (an empty one would assign nobody, so the group replaces it).
     const active = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 ORDER BY name", teamId)) as any[];
     const roleNamesOf = new Map<number, string[]>();
     for (const r of byRole.values()) for (const m of r.members) roleNamesOf.set(m.id, [...(roleNamesOf.get(m.id) ?? []), r.name]);
     const nameOf = new Map(active.map((m: any) => [Number(m.id), String(m.name)]));
-    const groups = smartGroups(active.map((m: any) => ({ id: Number(m.id), roleNames: roleNamesOf.get(Number(m.id)) ?? [] })), [...byRole.values()].map((r) => r.name));
+    const held = [...byRole.values()].filter((r) => r.members.length);
+    const groups = smartGroups(active.map((m: any) => ({ id: Number(m.id), roleNames: roleNamesOf.get(Number(m.id)) ?? [] })), held.map((r) => r.name));
+    const groupNames = new Set(groups.map((g) => g.name.toLowerCase()));
     return [
-      ...byRole.values(),
+      ...[...byRole.values()].filter((r) => r.members.length || !groupNames.has(r.name.trim().toLowerCase())),
       ...groups.map((g, i) => ({ id: -(i + 1), name: g.name, members: g.memberIds.map((id) => ({ id, name: nameOf.get(id) ?? "" })) })),
     ];
   }
