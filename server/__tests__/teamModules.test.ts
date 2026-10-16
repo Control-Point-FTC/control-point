@@ -10,9 +10,7 @@ import { loadWorkspaceFacts, formatWorkspaceFacts } from "../workspaceFacts";
 import { nextDisabledModules, parseWorkspaceChange } from "../brunoWorkspace";
 import { DEFAULT_SUBSYSTEMS, cleanSubsystems, isNavIdDisabled, parseDisabledModules, parseSubsystems } from "../../src/types/teamModules";
 
-// 60 s: on Windows the harness fetch can stall ~25 s on a reused socket
-// (the server answers in ms; brunoApply.test.ts flakes the same way on main).
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("teamModules helpers", () => {
   it("parses stored switches, ignoring unknown ids and bad JSON", () => {
