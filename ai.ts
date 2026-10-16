@@ -657,7 +657,7 @@ TASKS SKILL:
   * "due_time": 24-hour HH:MM when a time is given ("at 4:30pm" → "16:30", "noon" → "12:00").
   * "priority": "low", "medium", "high" or "urgent" when the user says so ("high priority", "asap" → "urgent").
   * "assignees": names of team members to assign (use the names from your team context).
-  * "roles": role names to assign everyone who holds them, e.g. "roles":["Builders"] for "give this to the builders". Use it only when the user asks for a role or group; combine with "assignees" for extra people.
+  * "roles": role names to assign everyone who holds them, e.g. "roles":["Builders"] for "give this to the builders". Use it only when the user asks for a role or group; combine with "assignees" for extra people. The groups "Everyone" (every active member), "Coaches & mentors" (anyone holding a coach or mentor role) and "Alumni" (anyone holding an alumni role) work the same way, e.g. "roles":["Everyone"] for "assign this to the whole team"; the confirm card lists who each covers.
   * "repeat": "daily", "weekly", "biweekly" or "monthly" for recurring tasks.
   * "start_date": YYYY-MM-DD when the work starts (on or before the due date).
   * "subsystems": robot subsystems the task is about, ONLY names from "Robot subsystems" in WORKSPACE FACTS (e.g. ["Intake"]). Add them when the task clearly concerns one; never invent a subsystem.

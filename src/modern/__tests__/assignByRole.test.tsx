@@ -5,6 +5,7 @@ import { AssigneePicker, rolesWithMembers } from '../pages/tasks/AssigneePicker'
 import { normalizeBrunoTask } from '../../utils/brunoTasks';
 import ActionProposalCard from '../../components/ActionProposalCard';
 import { setProposalContext } from '../../services/proposalContext';
+import { smartGroups } from '../../utils/assigneeGroups';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
 Element.prototype.scrollIntoView ??= function () {};
@@ -33,6 +34,35 @@ describe('assign tasks by role in the task editor', () => {
     expect(changes.at(-1)).toEqual([3, 1, 2]);
     fireEvent.click(screen.getByRole('option', { name: /Everyone with the Builders role/ }));
     expect(changes.at(-1)).toEqual([3]);
+  });
+});
+
+describe('smart groups', () => {
+  it('Everyone, then coaches and alumni from role names; a real role of the same name wins; empty groups are left out', () => {
+    const m = [
+      { id: 1, roleNames: ['Head Coach'] },
+      { id: 2, roleNames: ['Mentors', 'Builders'] },
+      { id: 3, roleNames: ['Alumni 2025'] },
+      { id: 4, roleNames: [] },
+    ];
+    expect(smartGroups(m)).toEqual([
+      { key: 'everyone', name: 'Everyone', memberIds: [1, 2, 3, 4] },
+      { key: 'coaches', name: 'Coaches & mentors', memberIds: [1, 2] },
+      { key: 'alumni', name: 'Alumni', memberIds: [3] },
+    ]);
+    expect(smartGroups(m, ['everyone']).map((g) => g.key)).toEqual(['coaches', 'alumni']);
+    expect(smartGroups([{ id: 1, roleNames: ['Builders'] }]).map((g) => g.key)).toEqual(['everyone']);
+  });
+
+  it('the picker offers Everyone, which adds the whole team and takes it out again', () => {
+    const changes: number[][] = [];
+    function Harness() { const [sel, setSel] = useState<number[]>([]); return <AssigneePicker members={members} selected={sel} onChange={(ids) => { changes.push(ids); setSel(ids); }} />; }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: 'Everyone (3)' }));
+    expect(changes.at(-1)).toEqual([1, 2, 3]);
+    fireEvent.click(screen.getByRole('option', { name: 'Everyone (3)' }));
+    expect(changes.at(-1)).toEqual([]);
   });
 });
 

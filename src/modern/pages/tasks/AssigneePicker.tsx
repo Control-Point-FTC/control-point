@@ -1,6 +1,7 @@
 // Multi-select for task assignees: shadcn Popover + Command with avatars.
 import { useState } from 'react';
-import { Check, ChevronsUpDown, Minus, Users, X } from 'lucide-react';
+import { Check, ChevronsUpDown, GraduationCap, Minus, UsersRound, Users, X } from 'lucide-react';
+import { smartGroups } from '../../../utils/assigneeGroups';
 import { cn } from '../../../components/cn';
 import { assetUrl } from '../../../services/api';
 import {
@@ -53,6 +54,8 @@ export function AssigneePicker({ members, selected, onChange, id }: {
   const toggle = (mid: number) => onChange(selected.includes(mid) ? selected.filter((x) => x !== mid) : [...selected, mid]);
   // Assign by role: everyone who holds it (again, when all are already in, takes them out).
   const roles = rolesWithMembers(members);
+  // Everyone / Coaches & mentors / Alumni (from role names), as Bruno understands them.
+  const groups = smartGroups(members.map((m) => ({ id: m.id, roleNames: (Array.isArray(m?.roles) ? m.roles : []).map((r: any) => String(r?.name || '')) })), roles.map((r) => r.name));
   const toggleRole = (ids: number[]) => {
     const all = ids.every((x) => selected.includes(x));
     onChange(all ? selected.filter((x) => !ids.includes(x)) : [...selected, ...ids.filter((x) => !selected.includes(x))]);
@@ -89,6 +92,23 @@ export function AssigneePicker({ members, selected, onChange, id }: {
           <CommandInput placeholder="Search people or roles…" />
           <CommandList className="max-h-72">
             <CommandEmpty>No one found.</CommandEmpty>
+            {groups.length > 0 && (
+              <CommandGroup heading="Groups">
+                {groups.map((g) => {
+                  const inCount = g.memberIds.filter((x) => selected.includes(x)).length;
+                  const state = inCount === 0 ? 'none' : inCount === g.memberIds.length ? 'all' : 'some';
+                  const Icon = g.key === 'everyone' ? UsersRound : g.key === 'alumni' ? GraduationCap : Users;
+                  return (
+                    <CommandItem key={`group-${g.key}`} value={`group ${g.name}`} onSelect={() => toggleRole(g.memberIds)} aria-label={`${g.name} (${g.memberIds.length})`}>
+                      <span className="flex size-6 items-center justify-center rounded-full bg-muted"><Icon className="size-3.5" /></span>
+                      <span className="flex-1 truncate">{g.name}</span>
+                      <span className="text-xs text-muted-foreground">{g.memberIds.length}</span>
+                      {state === 'all' ? <Check className="size-4 text-accent" /> : state === 'some' ? <Minus className="size-4 text-muted-foreground" /> : <Check className="size-4 opacity-0" />}
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            )}
             {roles.length > 0 && (
               <CommandGroup heading="By role">
                 {roles.map((r) => {
@@ -105,7 +125,7 @@ export function AssigneePicker({ members, selected, onChange, id }: {
                 })}
               </CommandGroup>
             )}
-            <CommandGroup heading={roles.length ? 'People' : undefined}>
+            <CommandGroup heading={roles.length || groups.length ? 'People' : undefined}>
               {members.map((m) => {
                 const on = selected.includes(m.id);
                 return (

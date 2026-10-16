@@ -132,6 +132,27 @@ describe("Bruno apply: editing existing tasks", () => {
     expect(who).toEqual([arnav, grace].sort((a, b) => a - b));
   });
 
+  it("smart groups work like roles: Everyone assigns every active member, Coaches & mentors follows role names", async () => {
+    const coach = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Head Coach', '[]')", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [grace, coach] });
+    const ctx = await t.api("/api/ai/proposal-context", { session: admin });
+    expect(ctx.body.roles.map((r: any) => r.name)).toEqual(expect.arrayContaining(["Everyone", "Coaches & mentors"]));
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [
+      { title: "Whole team job", roles: ["everyone"] },
+      { title: "Coach job", roles: ["Coaches & mentors"] },
+    ] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const assigned = async (title: string) => {
+      const [task] = await rows("SELECT id FROM tasks WHERE title = ?", title);
+      return (await rows("SELECT member_id FROM task_assignees WHERE task_id = ? ORDER BY member_id", task.id)).map((x) => Number(x.member_id));
+    };
+    const active = (await rows("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 ORDER BY id", team)).map((x) => Number(x.id));
+    expect(await assigned("Whole team job")).toEqual(active);
+    expect(await assigned("Coach job")).toEqual([grace]);
+    await t.db.execute({ sql: "DELETE FROM member_roles WHERE role_id = ?", args: [coach] });
+    await t.db.execute({ sql: "DELETE FROM roles WHERE id = ?", args: [coach] });
+  });
+
   it("several edits to one task all land (a date in one, a time in the next)", async () => {
     await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{ title: "Split edit" }] }] }, admin);
     const [task] = await rows("SELECT * FROM tasks WHERE title = 'Split edit'");
