@@ -240,7 +240,7 @@ export function TasksPage(props: any) {
       {view === 'board' && (
         group === 'status'
           ? <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
-          : <GroupedBoard tasks={shown} group={group} ctl={ctl} members={members} subsystems={teamSubsystems} assigneesOf={assigneesOf} onOpen={setViewTaskId} />
+          : <GroupedBoard tasks={shown} group={group} ctl={ctl} members={members} subsystems={teamSubsystems} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
         shown.length === 0
@@ -345,14 +345,42 @@ function TaskCardBody({ task: t, people, byId }: { task: any; people: any[]; byI
  * another Priority column changes its priority; status stays as it is (use
  * Columns: Status to move work along).
  */
-function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onOpen }: {
+function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onOpen, filterKey, sel }: {
   tasks: any[]; group: Exclude<GroupBy, 'status'>; ctl: ReturnType<typeof useTasksController>; members: any[]; subsystems: string[];
-  assigneesOf: (t: any) => any[]; onOpen: (id: number) => void;
+  assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string; sel: Selection | null;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
   const groups = groupTasks(tasks, group, { members, subsystems, assigneesOf: (t) => taskAssigneeIds(t) });
   const canDrag = group === 'priority' && ctl.canManageTasks;
+  // Long columns show 40 cards, then more as you scroll (like the Status board).
+  const inc = useIncrementalGroups(40, `${filterKey}|${group}`);
+  /** Arrows move between cards; in Priority columns Shift + Left/Right moves the card; X selects it. */
+  const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, t: any) => {
+    const col = Number(e.currentTarget.dataset.gcol);
+    const row = Number(e.currentTarget.dataset.grow);
+    const focusAt = (c: number, r: number) => {
+      const cards = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-grouped-card][data-gcol="${c}"]`));
+      if (!cards.length) return false;
+      cards[Math.max(0, Math.min(r, cards.length - 1))].focus();
+      return true;
+    };
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      if (!canDrag) return;
+      const next = groups[col + (e.key === 'ArrowLeft' ? -1 : 1)];
+      if (!next) return;
+      e.preventDefault();
+      void ctl.setPriority(t.id, next.id === 'none' ? null : next.id);
+      window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-grouped-card][data-id="${t.id}"]`)?.focus(), 60);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusAt(col, row + (e.key === 'ArrowDown' ? 1 : -1)); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowLeft' ? -1 : 1;
+      for (let c = col + dir; c >= 0 && c < groups.length; c += dir) if (focusAt(c, row)) break;
+    } else if ((e.key === 'x' || e.key === 'X') && sel) { e.preventDefault(); sel.toggle(t.id); }
+  };
   return (
     <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
       {groups.map((col) => (
@@ -374,23 +402,33 @@ function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onO
             <span className="text-sm tabular-nums text-muted-foreground">{col.tasks.length}</span>
           </header>
           <ul className="flex min-h-24 flex-col gap-2">
-            {col.tasks.map((t) => (
-              <li key={t.id}>
+            {inc.slice(col.id, col.tasks).map((t, rowIdx) => (
+              <li key={t.id} className="group/card relative">
+                {sel && (
+                  <RowCheckbox
+                    sel={sel} id={t.id} label={`Select ${t.title}`}
+                    className={cn('absolute right-2.5 top-2.5 z-10 transition-opacity md:opacity-0 md:group-hover/card:opacity-100 md:focus-within:opacity-100', sel.count > 0 && 'md:opacity-100')}
+                  />
+                )}
                 <button
                   type="button"
+                  data-grouped-card data-id={t.id} data-gcol={groups.indexOf(col)} data-grow={rowIdx}
+                  aria-keyshortcuts={canDrag ? 'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X' : 'ArrowUp ArrowDown ArrowLeft ArrowRight X'}
+                  onKeyDown={(e) => onKey(e, t)}
                   draggable={canDrag}
                   onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
                   onDragEnd={() => { setDragId(null); setOverCol(null); }}
                   onClick={() => onOpen(t.id)}
                   data-cm-type="task-card" data-cm-id={t.id}
                   aria-label={`${t.title}, ${STATUS_META[t.status]?.label ?? t.status}`}
-                  className={cn('w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow]', 'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60', dragId === t.id && 'opacity-50')}
+                  className={cn('w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow]', 'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60', dragId === t.id && 'opacity-50', sel && 'pr-9', sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40')}
                 >
                   <span className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className={cn('size-2 rounded-full', STATUS_META[t.status]?.dot)} />{STATUS_META[t.status]?.label ?? t.status}</span>
                   <TaskCardBody task={t} people={assigneesOf(t)} byId={ctl.taskById} />
                 </button>
               </li>
             ))}
+            <LoadMore as="li" hidden={inc.hidden(col.id, col.tasks)} onMore={() => inc.more(col.id)} />
             {col.tasks.length === 0 && (
               <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">Nothing here</li>
             )}

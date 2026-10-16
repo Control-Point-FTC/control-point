@@ -144,6 +144,11 @@ describe("Bruno and task tags", () => {
     expect(await run({ priority: "none" })).toMatch(/Filter me arm/);
     expect(await run({ subsystem: "intake" })).not.toMatch(/Filter me arm/);
     expect(await run({ label: "PIT" })).toMatch(/Filter me intake/);
+    // A tag filter never drops the status filter.
+    await t.post("/api/tasks", { title: "Filter me done pit", labels: ["Pit"], status: "done" }, admin);
+    const todo = await run({ label: "pit", status: "todo" });
+    expect(todo).toMatch(/Filter me intake/);
+    expect(todo).not.toMatch(/Filter me done pit/);
   });
 
   it("tasks lookup shows and searches tags; facts list subsystems on open tasks", async () => {

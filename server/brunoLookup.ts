@@ -219,12 +219,12 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
         (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
     if (q.status === "open") sql += " AND t.status NOT IN ('done', 'cancelled')";
+    else if (["todo", "in-progress", "done", "cancelled"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
     if (q.priority === "none") sql += " AND (t.priority IS NULL OR t.priority = '')";
     else if (q.priority) { sql += " AND t.priority = ?"; args.push(q.priority); }
     // Tags are JSON arrays: match one element, any case.
     if (q.subsystem) { sql += " AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(t.subsystems) THEN t.subsystems ELSE '[]' END) WHERE LOWER(json_each.value) = ?)"; args.push(q.subsystem.toLowerCase()); }
     if (q.label) { sql += " AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(t.labels) THEN t.labels ELSE '[]' END) WHERE LOWER(json_each.value) = ?)"; args.push(q.label.toLowerCase()); }
-    else if (["todo", "in-progress", "done", "cancelled"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
     if (q.person) {
       // Same rule as getTaskAssigneeIds: task_assignees rows, else the legacy
       // assigned_to (set when someone completes an unassigned task).

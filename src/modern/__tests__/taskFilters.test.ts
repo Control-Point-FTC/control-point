@@ -22,6 +22,11 @@ describe('task filters', () => {
     expect(writeFilters(new URLSearchParams(), NO_FILTERS, 'status').toString()).toBe('');
   });
 
+  it('keeps a value that contains commas whole', () => {
+    const f = { ...NO_FILTERS, subsystem: ['Drive, Intake'] };
+    expect(readFilters(writeFilters(new URLSearchParams(), f, 'status')).subsystem).toEqual(['Drive, Intake']);
+  });
+
   it('matches priority (incl. none), tags in any case, and due windows', () => {
     const ids = (f: any) => tasks.filter((t) => matchesFilters(t, { ...NO_FILTERS, ...f }, NOW)).map((t) => t.id);
     expect(ids({ priority: ['none'] })).toEqual([2]);

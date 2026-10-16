@@ -22,7 +22,8 @@ const GROUPS: GroupBy[] = ['status', 'priority', 'assignee', 'subsystem'];
 
 /** Filters from the page's URL (unknown values are ignored). */
 export function readFilters(params: URLSearchParams): TaskFilters {
-  const list = (k: string) => params.getAll(k).flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean).slice(0, 20);
+  // One parameter per value (?subsystem=A&subsystem=B): a name may itself contain commas.
+  const list = (k: string) => params.getAll(k).map((v) => v.trim()).filter(Boolean).slice(0, 20);
   const due = params.get('due');
   return {
     priority: list('priority').filter((p) => (PRIORITY_ORDER as readonly string[]).includes(p) || p === 'none'),
@@ -42,7 +43,7 @@ export function readGroup(params: URLSearchParams): GroupBy {
 export function writeFilters(params: URLSearchParams, f: TaskFilters, group: GroupBy): URLSearchParams {
   const next = new URLSearchParams(params);
   for (const k of [...LIST_KEYS, 'due', 'group']) next.delete(k);
-  for (const k of LIST_KEYS) if (f[k].length) next.set(k, f[k].join(','));
+  for (const k of LIST_KEYS) for (const v of f[k]) next.append(k, v);
   if (f.due) next.set('due', f.due);
   if (group !== 'status') next.set('group', group);
   return next;
