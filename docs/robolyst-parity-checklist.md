@@ -1,12 +1,12 @@
 # Robolyst parity checklist
 
-Source: `robolyst-deep-dive-60-page.md` (Robolyst teardown, 2026-10-15/16), compared against the Control Point tree on 2026-10-15.
+Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 2026-10-15/16, built from the public robolyst.org site, live demo and changelog). It is not committed here because it profiles a third party; ask the owner for a copy. Compared against the Control Point tree on 2026-10-15.
 
 **Legend:** `[x]` already have it · `[~]` partial, needs work (still unchecked until finished) · `[ ]` build it · 🛑 needs the owner's decision before any build.
 
 **Applies to every PR below:** Bruno must be able to answer questions about the feature, act through it (create/edit/query via `/api/ai/apply-actions` proposals) and surface it in page-aware suggestions. Rule 15 still holds. Each PR follows AGENTS.md (screenshots, Greptile 5/5, deploy check, prod verification).
 
-**Where Control Point is already ahead (keep and protect):** Bruno in-app assistant (Robolyst has none), CAD viewer + Onshape reviews, in-app code IDE + GitHub sync, voice/video channels, live team chat with channels, notebook with CRDT live collab, version history, pen/drawing, PDF annotation, match/event prediction + calibration, offline region packs, parts inventory with REV/goBILDA import, Google Calendar two-way sync, light/dark/system theme.
+**Where Control Point is already ahead (keep and protect):** Bruno in-app assistant (Robolyst has none), CAD viewer + Onshape reviews, in-app code IDE + GitHub sync, voice/video channels, live team chat with channels, notebook with CRDT live collab, version history, pen/drawing, PDF annotation, match/event prediction + calibration, offline region packs, parts inventory with REV/goBILDA import, Google Calendar outbound sync (CP → Google), light/dark/system theme.
 
 ---
 
@@ -118,6 +118,7 @@ Source: `robolyst-deep-dive-60-page.md` (Robolyst teardown, 2026-10-15/16), comp
 - [ ] Mini-month navigator
 - [ ] High-contrast event blocks (Robolyst's weak point)
 - [ ] FIRST event calendar import (official comps auto-added from FTC Events API)
+- [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
 ### PR 2.5: Pit display
 - [ ] Full-screen kiosk route for a spare screen: agenda, banners, next match, QR check-in
