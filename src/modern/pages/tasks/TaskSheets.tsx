@@ -2,7 +2,7 @@
 // create/edit form with Bruno quick-add. Both are shadcn Sheets (right on
 // desktop, bottom on phones). All mutations go through useTasksController.
 import { format } from 'date-fns';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Ban, Bell, BellOff, CalendarDays, Camera, Copy, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Link as LinkIcon, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { cn } from '../../../components/cn';
@@ -20,6 +20,7 @@ import { isTaskOverdue } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
 import { parseSubsystems } from '../../../types/teamModules';
 import { AWARD_OPTIONS, LabelsInput, TaskTagChips, ToggleChips } from './TaskTags';
+import { AiTagStrip, useTagSuggest } from './TaskTagSuggest';
 import { TaskLinksSection } from './TaskLinks';
 import { TaskTimeline, useTaskTimeline } from './TaskTimeline';
 import { notify } from '../../../components/dialog';
@@ -330,6 +331,15 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
   const f = ctl.newTask;
   const set = (patch: Partial<typeof f>) => ctl.setNewTask({ ...f, ...patch });
   const editing = !!ctl.editingTaskId;
+  // Bruno's tag suggestions read and write the latest form (a reply can land after more typing).
+  const latest = useRef(f);
+  latest.current = f;
+  const tagSuggest = useTagSuggest(
+    () => ({ title: latest.current.title || '', description: latest.current.description || '', subsystems: latest.current.subsystems ?? [], awards: latest.current.awards ?? [], labels: latest.current.labels ?? [] }),
+    (next) => ctl.setNewTask({ ...latest.current, ...next }),
+  );
+  // A different task (or a fresh draft) starts with no AI tags.
+  useEffect(() => { tagSuggest.reset(); }, [ctl.showAddTask, ctl.editingTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
   const saving = ctl.pendingIds.has(-1);
   // Subsystems come from the task's team (Settings → Workspace → Robot subsystems).
   const team = teams.find((t) => String(t.id) === String(f.team_id)) ?? teams[0];
@@ -381,7 +391,7 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
             )}
             <div className="grid gap-2">
               <Label htmlFor="task-title">Title <RequiredMark /></Label>
-              <Input id="task-title" required autoFocus={editing} value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="What needs doing?" />
+              <Input id="task-title" required autoFocus={editing} value={f.title} onChange={(e) => set({ title: e.target.value })} onBlur={() => { if (!editing) tagSuggest.autoSuggest(); }} placeholder="What needs doing?" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="task-desc">Description</Label>
@@ -444,18 +454,19 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               </span>
               <Switch checked={f.completion_mode === 'each'} onCheckedChange={(v: boolean) => set({ completion_mode: v ? 'each' : '' })} aria-label="Everyone assigned completes it separately" />
             </label>
+            <AiTagStrip s={tagSuggest} />
             <div className="grid gap-2">
               <Label htmlFor="task-subsystems">Subsystems</Label>
-              <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => set({ subsystems: v })} />
+              <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => { tagSuggest.touch('subsystems', v); set({ subsystems: v }); }} marked={tagSuggest.marked('subsystems', chosenSubsystems)} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="task-awards">Award evidence</Label>
-              <ToggleChips id="task-awards" label="Award evidence" options={AWARD_OPTIONS} selected={f.awards ?? []} onChange={(v) => set({ awards: v })} />
+              <ToggleChips id="task-awards" label="Award evidence" options={AWARD_OPTIONS} selected={f.awards ?? []} onChange={(v) => { tagSuggest.touch('awards', v); set({ awards: v }); }} marked={tagSuggest.marked('awards', f.awards ?? [])} />
               <p className="text-xs text-muted-foreground">Mark work that shows what judges look for in an award (hover one to see).</p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="task-labels">Labels</Label>
-              <LabelsInput id="task-labels" value={f.labels ?? []} onChange={(v) => set({ labels: v })} />
+              <LabelsInput id="task-labels" value={f.labels ?? []} onChange={(v) => { tagSuggest.touch('labels', v); set({ labels: v }); }} marked={tagSuggest.marked('labels', f.labels ?? [])} />
             </div>
             {ctl.isAdmin && (
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">

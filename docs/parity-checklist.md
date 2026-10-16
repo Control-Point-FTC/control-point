@@ -81,7 +81,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Insights tab — on-time rate, overdue and missing-due-date "needs attention" (Bruno reads the same numbers)
 
 ### PR 1.4: AI auto-tagging (Bruno)
-- [ ] Bruno suggests subsystem / labels / award tags on new tasks, shown as "AI tagged" with an explanation tooltip, one-click undo
+- [x] Bruno suggests subsystem / labels / award tags on new tasks, shown as "AI tagged" with an explanation tooltip, one-click undo
 
 ### PR 1.5: Sketchpad on tasks
 - [ ] Reuse the notebook drawing canvas as an attachment on a task

@@ -140,3 +140,22 @@ describe("a proposal cut off by the length cap", () => {
     expect(readable.at(-1)).toHaveLength(3);
   });
 });
+
+describe("Suggest tags in the task editor", () => {
+  it("keeps only the team's subsystems and real awards, with Bruno's reason; nothing is saved", async () => {
+    gemini.script = ['```json\n{"subsystems":["intake","Warp drive"],"awards":["think","Best Snacks"],"labels":["Prototype","CAD","Extra"],"reason":"Builds and tests a new intake."}\n```'];
+    const before = Number((await t.db.execute("SELECT COUNT(*) AS n FROM tasks")).rows[0].n);
+    const r = await t.post("/api/tasks/suggest-tags", { title: "Prototype a roller intake", description: "Test two roller spacings" }, session);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ subsystems: ["Intake"], awards: ["think"], labels: ["Prototype", "CAD"], reason: "Builds and tests a new intake." });
+    expect(JSON.stringify(gemini.requests[0].body)).toMatch(/Prototype a roller intake/);
+    expect(JSON.stringify(gemini.requests[0].body)).toMatch(/Intake/);
+    expect(Number((await t.db.execute("SELECT COUNT(*) AS n FROM tasks")).rows[0].n)).toBe(before);
+  });
+
+  it("asks for a title first; a reply that isn't JSON is an error, not empty tags", async () => {
+    expect((await t.post("/api/tasks/suggest-tags", { title: "x" }, session)).status).toBe(400);
+    gemini.script = ["Sure! I'd tag this as intake work."];
+    expect((await t.post("/api/tasks/suggest-tags", { title: "Prototype a roller intake" }, session)).status).toBe(502);
+  });
+});
