@@ -135,6 +135,17 @@ describe("Bruno and task tags", () => {
     expect(r.body.subsystems).toEqual(["Drivetrain", "Intake", "Arm"]);
   });
 
+  it("tasks lookup filters by priority, subsystem and label", async () => {
+    await t.post("/api/tasks", { title: "Filter me intake", priority: "urgent", subsystems: ["Intake"], labels: ["Pit"] }, admin);
+    await t.post("/api/tasks", { title: "Filter me arm", subsystems: ["Arm"] }, admin);
+    const run = async (q: any) => runLookups(dbAll as any, team, "America/New_York", [{ kind: "tasks", query: "Filter me", ...q }]);
+    expect(await run({ priority: "urgent" })).toMatch(/Filter me intake/);
+    expect(await run({ priority: "urgent" })).not.toMatch(/Filter me arm/);
+    expect(await run({ priority: "none" })).toMatch(/Filter me arm/);
+    expect(await run({ subsystem: "intake" })).not.toMatch(/Filter me arm/);
+    expect(await run({ label: "PIT" })).toMatch(/Filter me intake/);
+  });
+
   it("tasks lookup shows and searches tags; facts list subsystems on open tasks", async () => {
     const out = await runLookups(dbAll as any, team, "America/New_York", [{ kind: "tasks", query: "reach" } as any]);
     expect(out).toContain("Library demo prep");

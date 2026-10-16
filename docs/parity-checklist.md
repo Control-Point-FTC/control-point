@@ -69,9 +69,9 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Kanban with drag between columns
 - [x] List view
 - [ ] Gantt / timeline view
-- [ ] "Columns:" pivot — group by Status / Priority / Assignee / Subteam / Subsystem
+- [x] "Columns:" pivot — group by Status / Priority / Assignee / Subsystem (drag between Priority columns sets priority)
 - [ ] "Mine" filter with count
-- [ ] Filters: due date, start date, priority, title, status, subsystem, assignee, subteam
+- [x] Filters: priority, subsystem, label, award evidence, due (overdue / next 7 days / none); search; assignee; kept in the URL
 - [ ] Saved filters
 - [x] Bulk actions
 - [ ] Alt/Option + ← → keyboard move between columns (with on-page hint)
