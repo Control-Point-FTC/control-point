@@ -1,7 +1,6 @@
 // Attendance for today's calendar event: who said they're coming (or can't),
 // a late window before anyone is marked absent, and RSVP follow-through.
 import { useEffect, useMemo, useState } from 'react';
-import { format } from 'date-fns';
 import { CalendarClock, UserX } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../components/cn';
@@ -12,6 +11,7 @@ import { rsvpCountsText } from '../../ui/RsvpButtons';
 import { localTime } from '../calendar/CalendarSheets';
 
 export type RsvpByMember = Map<number, { status: string }>;
+export type EventRsvps = { answers: RsvpByMember; invitees: number[] | null };
 
 /** Today's events that take RSVPs or have a start time (first one leads). */
 export function todaysEvents(events: any[], today: string): any[] {
@@ -19,19 +19,23 @@ export function todaysEvents(events: any[], today: string): any[] {
     .sort((a, b) => String(a.start_time || '99').localeCompare(String(b.start_time || '99')));
 }
 
-/** Each member's answer for an event (none when it doesn't take RSVPs). */
-export function useEventRsvps(event: any | null): RsvpByMember {
-  const [map, setMap] = useState<RsvpByMember>(new Map());
+/** Each member's answer for an event, and who it's for (null until known). */
+export function useEventRsvps(event: any | null): EventRsvps {
+  const [state, setState] = useState<EventRsvps>({ answers: new Map(), invitees: null });
   const counts = event?.rsvp_counts ? `${event.rsvp_counts.going}|${event.rsvp_counts.maybe}|${event.rsvp_counts.not_going}` : '';
   useEffect(() => {
-    if (!event || (cleanRsvpMode(event.rsvp_mode) ?? 'none') === 'none') { setMap(new Map()); return; }
+    if (!event) { setState({ answers: new Map(), invitees: null }); return; }
     let live = true;
     apiFetch(`/api/events/${event.id}/rsvps`).then((r) => (r.ok ? r.json() : null)).then((d) => {
-      if (live && d && Array.isArray(d.answers)) setMap(new Map(d.answers.map((a: any) => [Number(a.member_id), { status: String(a.status) }])));
+      if (!live || !d || !Array.isArray(d.answers)) return;
+      setState({
+        answers: (cleanRsvpMode(event.rsvp_mode) ?? 'none') === 'none' ? new Map() : new Map(d.answers.map((a: any) => [Number(a.member_id), { status: String(a.status) }])),
+        invitees: Array.isArray(d.invitee_ids) ? d.invitee_ids.map(Number) : null,
+      });
     }).catch(() => {});
     return () => { live = false; };
-  }, [event?.id, event?.rsvp_mode, counts]); // eslint-disable-line react-hooks/exhaustive-deps
-  return map;
+  }, [event?.id, event?.rsvp_mode, event?.attendee_roles?.join?.(','), counts]); // eslint-disable-line react-hooks/exhaustive-deps
+  return state;
 }
 
 /** "Said going" / "Can't make it" next to a name in roll call. */
@@ -48,14 +52,16 @@ export function RsvpChip({ status }: { status?: string }) {
 }
 
 /**
- * Today's event: time, RSVP counts, and the late window. Until the event has
- * been going for LATE_WINDOW_MIN minutes, people not here yet aren't absent;
- * after it, one click marks the rest Unexcused (excused people are already marked).
+ * Today's event: time, RSVP counts, and the late window (the team's clock).
+ * Until the event has been going for LATE_WINDOW_MIN minutes, people not here
+ * yet aren't absent; after it, one click asks the server to mark everyone it's
+ * for who is still unmarked (arrivals and excuses meanwhile are kept).
  */
-export function TodayEventCard({ event, unmarked, onMarkRest, now = Date.now() }: {
-  event: any; unmarked: number; onMarkRest: () => void; now?: number;
+export function TodayEventCard({ event, unmarked, onMarkRest, timeZone, now = Date.now() }: {
+  event: any; unmarked: number; onMarkRest: () => void | Promise<void>; timeZone: string; now?: number;
 }) {
-  const ends = lateWindowEnds(event.date, event.start_time);
+  const [busy, setBusy] = useState(false);
+  const ends = lateWindowEnds(event.date, event.start_time, timeZone);
   const waiting = !!ends && now < ends.getTime();
   const counts = rsvpCountsText(event);
   return (
@@ -66,10 +72,10 @@ export function TodayEventCard({ event, unmarked, onMarkRest, now = Date.now() }
       {unmarked > 0 && (
         waiting ? (
           <p className="mt-3 text-xs text-muted-foreground" role="status">
-            Waiting for people to arrive: the rest can be marked absent from {format(ends!, 'h:mm a')} ({LATE_WINDOW_MIN} minutes after the start).
+            Waiting for people to arrive: the rest can be marked absent from {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone }).format(ends!)} ({LATE_WINDOW_MIN} minutes after the start).
           </p>
         ) : (
-          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onMarkRest}>
+          <Button type="button" size="sm" variant="outline" className="mt-3" disabled={busy} onClick={async () => { setBusy(true); try { await onMarkRest(); } finally { setBusy(false); } }}>
             <UserX /> Mark the {unmarked} not here absent
           </Button>
         )
@@ -78,19 +84,19 @@ export function TodayEventCard({ event, unmarked, onMarkRest, now = Date.now() }
   );
 }
 
-/** Insights: of those who said going, how many came (full-RSVP events, last 60 days). */
-export function RsvpFollowThrough() {
+/** Insights: of those who said going, how many came (full-RSVP events, last 60 finished days). `version` reloads it. */
+export function RsvpFollowThrough({ version = '' }: { version?: string }) {
   const [rows, setRows] = useState<any[] | null>(null);
   useEffect(() => {
     let live = true;
     apiFetch('/api/attendance/rsvp-turnout').then((r) => (r.ok ? r.json() : [])).then((d) => { if (live) setRows(Array.isArray(d) ? d : []); }).catch(() => { if (live) setRows([]); });
     return () => { live = false; };
-  }, []);
+  }, [version]);
   const total = useMemo(() => followThrough(rows ?? []), [rows]);
   if (!rows || rows.length === 0) return null;
   return (
     <section aria-label="RSVP follow-through" className="rounded-xl border border-border p-4">
-      <p className="text-xs text-muted-foreground">RSVP follow-through (last 60 days)</p>
+      <p className="text-xs text-muted-foreground">RSVP follow-through (last 60 days, before today)</p>
       <p className="font-display text-2xl font-semibold tabular-nums">{total.percent == null ? '—' : `${total.percent}%`}</p>
       <p className="text-xs text-muted-foreground">{total.said ? `${total.came} of ${total.said} who said going came` : 'Nobody has said going yet'}</p>
       <ul className="mt-3 space-y-1 text-xs">

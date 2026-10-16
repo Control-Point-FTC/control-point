@@ -284,7 +284,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       (SELECT SUM(CASE WHEN status = 'going' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS going_n,
       (SELECT SUM(CASE WHEN status = 'maybe' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS maybe_n,
       (SELECT SUM(CASE WHEN status = 'not_going' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS no_n,
-      (SELECT GROUP_CONCAT(m.name || ':' || r.status, '|') FROM event_rsvps r JOIN members m ON m.id = r.member_id WHERE r.event_id = events.id) AS rsvp_names
+      (SELECT json_group_array(json_object('n', m.name, 's', r.status)) FROM event_rsvps r JOIN members m ON m.id = r.member_id WHERE r.event_id = events.id) AS rsvp_names
       FROM events WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
@@ -432,14 +432,15 @@ export function saidNothing(answer: string): boolean {
 /** The fenced block kinds the app reads and hides from the member (lookups,
  *  references, memories, scouting, and the action proposals the chat strips).
  *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
-/** "; going: Ana, Ben; can't make it: Cy" from "Ana:going|Ben:going|Cy:not_going" (names only, never reasons). */
+/** "; going: Ana, Ben; can't make it: Cy" from [{"n":"Ana","s":"going"}, …] (names only, never reasons). */
 function rsvpNames(raw: unknown): string {
-  if (typeof raw !== "string" || !raw) return "";
+  let pairs: unknown;
+  try { pairs = typeof raw === "string" ? JSON.parse(raw) : null; } catch { return ""; }
+  if (!Array.isArray(pairs)) return "";
   const by: Record<string, string[]> = {};
-  for (const part of raw.split("|").slice(0, 60)) {
-    const i = part.lastIndexOf(":");
-    if (i < 1) continue;
-    (by[part.slice(i + 1)] ||= []).push(part.slice(0, i).slice(0, 40));
+  for (const p of pairs.slice(0, 60) as any[]) {
+    if (typeof p?.n !== "string" || typeof p?.s !== "string") continue;
+    (by[p.s] ||= []).push(p.n.slice(0, 40));
   }
   const label: Record<string, string> = { going: "going", maybe: "maybe", not_going: "can't make it" };
   return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");

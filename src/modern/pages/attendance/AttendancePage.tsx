@@ -29,6 +29,9 @@ import { AttendanceGrid } from './AttendanceGrid';
 import { StudentAttendance } from './StudentAttendance';
 import { StatusPicker, statusLabel, statusStyle } from './status';
 import { RsvpChip, RsvpFollowThrough, TodayEventCard, todaysEvents, useEventRsvps } from './EventAttendance';
+import { apiFetch } from '../../../services/api';
+import { notify } from '../../../components/dialog';
+import { teamToday } from '../../../utils/dueShortcuts';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { Check } from 'lucide-react';
@@ -45,6 +48,8 @@ export function AttendancePage(props: any) {
   if (!ctl.isAdmin) return <StudentAttendance attendance={attendance} currentUser={currentUser} refresh={refresh} onRefresh={onRefresh} />;
 
   const today = format(new Date(), 'yyyy-MM-dd');
+  // Events are on the workspace's clock (its saved timezone, else this browser's).
+  const teamZone: string = (props.teams || []).find((t: any) => String(t.id) === String(currentUser?.team_id))?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const hereToday = members.filter((m: any) => ['P', 'L'].includes(ctl.getStatus(m.id, today))).length;
 
   return (
@@ -65,7 +70,7 @@ export function AttendancePage(props: any) {
       </PageHeader>
 
       <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-        {tab === 'today' && <TodayTab ctl={ctl} members={members} teamName={props.activeTeamName || 'Your team'} today={today} hereToday={hereToday} events={events} />}
+        {tab === 'today' && <TodayTab ctl={ctl} members={members} teamName={props.activeTeamName || 'Your team'} today={today} hereToday={hereToday} events={events} timeZone={teamZone} refreshAttendance={() => props.refresh?.attendance?.()} />}
         {tab === 'grid' && <AttendanceGrid ctl={ctl} members={members} />}
         {tab === 'history' && <HistoryTab ctl={ctl} members={members} attendance={attendance} />}
         {tab === 'insights' && <InsightsTab ctl={ctl} {...props} members={members} attendance={attendance} events={events} />}
@@ -74,10 +79,28 @@ export function AttendancePage(props: any) {
   );
 }
 
-function TodayTab({ ctl, members, teamName, today, hereToday, events = [] }: { ctl: Ctl; members: any[]; teamName: string; today: string; hereToday: number; events?: any[] }) {
-  // Today's event (the first one): RSVPs beside names, and the late window before absences.
-  const event = todaysEvents(events, today)[0] ?? null;
-  const rsvps = useEventRsvps(event);
+function TodayTab({ ctl, members, teamName, today, hereToday, events = [], timeZone, refreshAttendance }: {
+  ctl: Ctl; members: any[]; teamName: string; today: string; hereToday: number; events?: any[]; timeZone: string; refreshAttendance: () => void;
+}) {
+  // Today's event (the first one, by the team's calendar): RSVPs beside names, and the late window.
+  const event = todaysEvents(events, teamToday(timeZone))[0] ?? null;
+  const { answers: rsvps, invitees } = useEventRsvps(event);
+  // Only the people the event is for (the server decides the same when marking).
+  const eventDate = event ? String(event.date).slice(0, 10) : today;
+  const forEvent = invitees ? members.filter((m: any) => invitees.includes(m.id)) : members;
+  const unmarkedForEvent = forEvent.filter((m: any) => ctl.getStatus(m.id, eventDate) === '-').length;
+  const markRest = async () => {
+    if (!event) return;
+    try {
+      const res = await apiFetch(`/api/events/${event.id}/mark-absent`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { notify(d?.error || 'Could not mark absences — try again.', 'error'); return; }
+      notify(d.marked ? `Marked ${d.marked} absent.` : 'Everyone already has a mark.', 'success');
+      refreshAttendance();
+    } catch {
+      notify('Could not mark absences — check your connection.', 'error');
+    }
+  };
   const counts = useMemo(() => {
     const c: Record<string, number> = { P: 0, L: 0, E: 0, U: 0, S: 0, '-': 0 };
     for (const m of members) c[ctl.getStatus(m.id, today)] = (c[ctl.getStatus(m.id, today)] || 0) + 1;
@@ -151,11 +174,7 @@ function TodayTab({ ctl, members, teamName, today, hereToday, events = [] }: { c
       </Section>
       <div className="space-y-6">
         {event && (
-          <TodayEventCard
-            event={event}
-            unmarked={counts['-']}
-            onMarkRest={() => void ctl.bulkSetStatus(members.filter((m: any) => ctl.getStatus(m.id, today) === '-').map((m: any) => m.id), today, 'U')}
-          />
+          <TodayEventCard event={event} unmarked={unmarkedForEvent} onMarkRest={markRest} timeZone={timeZone} />
         )}
         <QrCard teamName={teamName} />
         <div className="rounded-xl border border-border bg-card p-5">
@@ -283,7 +302,7 @@ function InsightsTab({ ctl, members, attendance, events, insights, updateInsight
               <p className="text-xs text-muted-foreground">Below 60%</p>
               <p className={cn('font-display text-2xl font-semibold tabular-nums', low > 0 && 'text-warning')}><AnimatedValue value={low} /></p>
             </div>
-            <div className="col-span-2 lg:col-span-1"><RsvpFollowThrough /></div>
+            <div className="col-span-2 lg:col-span-1"><RsvpFollowThrough version={`${attendance.length}|${(events || []).reduce((n: number, e: any) => n + (e.rsvp_counts ? e.rsvp_counts.going + e.rsvp_counts.maybe + e.rsvp_counts.not_going : 0), 0)}`} /></div>
           </div>
         </div>
       </Section>

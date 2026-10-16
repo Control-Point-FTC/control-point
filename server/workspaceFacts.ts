@@ -18,7 +18,7 @@ import { parseDisabledModules, parseSubsystems, TEAM_MODULES } from "../src/type
 import { parseTagList } from "../src/types/taskTags.js";
 import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
 import { onTimeStats, onTimePercent, ON_TIME_WINDOW_DAYS } from "../src/utils/taskInsights.js";
-import { FOLLOW_THROUGH_SQL, followThrough } from "../src/utils/eventAttendance.js";
+import { FOLLOW_THROUGH_SQL, daysBefore, followThrough } from "../src/utils/eventAttendance.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -172,7 +172,7 @@ export interface FactsInput {
   disabledModules?: string[];
   /** The team's robot subsystems (defaults until edited). */
   subsystems?: string[];
-  /** RSVP follow-through over the last 30 days (full-RSVP events up to today). */
+  /** RSVP follow-through over the last 30 days (full-RSVP events up to yesterday). */
   rsvpFollowThrough?: { events: number; said: number; came: number; percent: number | null };
   /** Open tasks with no due date (Insights → Needs attention). */
   noDueOpenTotal?: number;
@@ -308,8 +308,8 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamId, since.toISOString(),
   ).catch(() => [] as any[]);
   const onTime = onTimeStats(finished, { since, localDate: (iso) => todayIn(timeZone, new Date(iso)) });
-  const monthAgo = (() => { const [y, m, d] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d - 30)).toISOString().slice(0, 10); })();
-  const rsvpRows = (await db.dbAll(FOLLOW_THROUGH_SQL, teamId, monthAgo, today).catch(() => [] as any[])) as any[];
+  // Finished days only: today's events haven't had their chance yet.
+  const rsvpRows = (await db.dbAll(FOLLOW_THROUGH_SQL, teamId, daysBefore(today, 30), daysBefore(today, 1)).catch(() => [] as any[])) as any[];
   const ft = followThrough(rsvpRows);
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(

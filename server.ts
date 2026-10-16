@@ -207,7 +207,7 @@ import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js
 import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
-import { FOLLOW_THROUGH_SQL } from "./src/utils/eventAttendance.js";
+import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -7497,8 +7497,12 @@ async function startServer() {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const to = isIsoDate(req.query.to) ? String(req.query.to) : new Date().toISOString().slice(0, 10);
-      const from = isIsoDate(req.query.from) ? String(req.query.from) : new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+      // Finished days only (up to yesterday in the team's calendar), over the whole range.
+      const today = todayIn(await teamTimeZone(auth.teamId));
+      const yesterday = daysBefore(today, 1);
+      const to = isIsoDate(req.query.to) && String(req.query.to) < today ? String(req.query.to) : yesterday;
+      const from = isIsoDate(req.query.from) ? String(req.query.from) : daysBefore(today, 60);
+      if (from > to || daysBefore(to, 366) > from) return res.status(400).json({ error: "Pick a range of up to a year, ending before today" });
       const rows = (await dbAll(FOLLOW_THROUGH_SQL, auth.teamId, from, to)) as any[];
       res.json(rows.map((r) => ({ event_id: Number(r.id), title: String(r.title || ""), date: String(r.date), said_going: Number(r.said_going || 0), going_came: Number(r.going_came || 0), said_no: Number(r.said_no || 0), came: Number(r.came || 0) })));
     } catch (error) {
@@ -11135,9 +11139,41 @@ Rules:
       res.json({
         answers: rows.map((r) => ({ member_id: Number(r.member_id), name: r.name, status: r.status, ...(manager || Number(r.member_id) === auth.memberId ? { reason: r.reason || "" } : {}) })),
         no_answer: invitees.filter((id) => !answered.has(id)).length,
+        invitee_ids: invitees,
       });
     } catch (error) {
       console.error("Error loading RSVPs:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * "Mark the rest absent" for an event: once its late window has passed (team
+   * clock), everyone it's for who still has no mark that day becomes Unexcused.
+   * The check and the write are one statement per member, so an arrival or an
+   * excuse that lands meanwhile is kept.
+   */
+  app.post("/api/events/:id/mark-absent", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_attendance");
+      if (!auth) return;
+      const event = (await dbGet("SELECT id, team_id, date, start_time, attendee_roles FROM events WHERE id = ? AND team_id = ?", req.params.id, auth.teamId)) as any;
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const tz = await teamTimeZone(auth.teamId);
+      if (String(event.date).slice(0, 10) !== todayIn(tz)) return res.status(400).json({ error: "Only today's event can mark the rest absent" });
+      const ends = lateWindowEnds(event.date, event.start_time, tz);
+      if (ends && Date.now() < ends.getTime()) return res.status(400).json({ error: "People still have time to arrive" });
+      const invitees = await eventInviteeIds(auth.teamId, event.attendee_roles);
+      if (!invitees.length) return res.json({ marked: 0 });
+      const results = await dbBatchResults(invitees.map((id) => ({
+        sql: "INSERT OR IGNORE INTO attendance (team_id, member_id, date, status) VALUES (?, ?, ?, 'U')",
+        args: [auth.teamId, id, String(event.date).slice(0, 10)],
+      })));
+      const marked = results.reduce((n: number, r: any) => n + Number(r?.changes ?? r?.rowsAffected ?? 0), 0);
+      broadcastToTeam(auth.teamId, { type: "attendance_changed", date: String(event.date).slice(0, 10) });
+      res.json({ marked });
+    } catch (error) {
+      console.error("Error marking absences:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
