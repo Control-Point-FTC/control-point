@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { runLookups } from "../brunoLookup";
+import { EVERYONE_DONE_SQL } from "../taskCompletion";
 import { normalizeBrunoTask, normalizeTaskUpdate, readCompletionMode } from "../../src/utils/brunoTasks";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -97,6 +98,24 @@ describe("everyone completes it separately", () => {
     const r = await complete(id, anaS);
     expect(r.body).toMatchObject({ partial: true, done: 1, of: 2 });
     expect((await dbGet("SELECT status FROM tasks WHERE id = ?", id)).status).toBe("in-progress");
+  });
+
+  it("the closing write itself checks who is assigned at that moment (race guard)", async () => {
+    // The state a concurrent edit leaves between the route's read and its write:
+    // Ana has finished, Ben was just added and hasn't. The guarded close must not apply.
+    const id = (await t.post("/api/tasks", { title: "Race guard each", assignee_ids: [ana, ben], completion_mode: "each" }, admin)).body.id;
+    await t.db.execute({ sql: "INSERT INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, 'x')", args: [id, ana] });
+    const close = () => t.db.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ? AND ${EVERYONE_DONE_SQL}`, args: [id] });
+    expect((await close()).rowsAffected).toBe(0);
+    // Ben removed again: everyone left is done, so the same write closes it.
+    await t.db.execute({ sql: "DELETE FROM task_assignees WHERE task_id = ? AND member_id = ?", args: [id, ben] });
+    expect((await close()).rowsAffected).toBe(1);
+    // Legacy single assignee (no task_assignees rows): their own done row decides.
+    const legacy = Number((await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, assigned_to, completion_mode) VALUES (?, 'Legacy guard', 'todo', ?, 'each')", args: [team, ben] })).lastInsertRowid);
+    const closeLegacy = () => t.db.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ? AND ${EVERYONE_DONE_SQL}`, args: [legacy] });
+    expect((await closeLegacy()).rowsAffected).toBe(0);
+    await t.db.execute({ sql: "INSERT INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, 'x')", args: [legacy, ben] });
+    expect((await closeLegacy()).rowsAffected).toBe(1);
   });
 
   it("deleting a task removes its progress rows", async () => {

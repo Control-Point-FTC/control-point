@@ -202,6 +202,7 @@ import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, 
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import { isTaskStatus } from "./src/types/taskStatus.js";
+import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
@@ -9821,19 +9822,6 @@ Rules:
   };
   /** A known completion mode ('each') or null (one shared deliverable). */
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
-  /**
-   * "Everyone still assigned has finished their part", checked inside the
-   * UPDATE that closes the task, so a person added at the same moment keeps
-   * it open. Same rule as getTaskAssigneeIds (task_assignees, else the legacy
-   * assigned_to). Use on the tasks table, unaliased.
-   */
-  const EVERYONE_DONE_SQL = `(
-    (EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id)
-      AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id
-        AND NOT EXISTS (SELECT 1 FROM task_assignee_done d WHERE d.task_id = ta.task_id AND d.member_id = ta.member_id)))
-    OR (NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id) AND tasks.assigned_to IS NOT NULL
-      AND EXISTS (SELECT 1 FROM task_assignee_done d WHERE d.task_id = tasks.id AND d.member_id = tasks.assigned_to))
-  )`;
   /** Reopened from done: everyone's part starts over. */
   const clearAssigneeDone = (taskId: number) => dbRun("DELETE FROM task_assignee_done WHERE task_id = ?", taskId);
   /**
