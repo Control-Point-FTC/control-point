@@ -61,7 +61,7 @@ describe("runLookups", () => {
         (3, 1, 2, 'Ada in build', '2026-10-06T19:00:00Z', 11, NULL),
         (4, 1, 1, 'Late night (Oct 7 in New York)', '2026-10-07T05:00:00Z', 10, NULL),
         (5, 2, 3, 'Other team secret', '2026-10-06T19:00:00Z', 12, NULL);
-      INSERT INTO tasks VALUES (1, 1, 'Order wheels', '', 'done', '2026-10-05', NULL, 'high', '2026-10-01', '2026-10-05T15:00:00Z'), (2, 1, 'Fix lift', 'It slips', 'todo', '2026-10-09', '18:00', NULL, '2026-10-02', NULL), (3, 2, 'Other team task', '', 'done', '2026-10-05', NULL, NULL, '2026-10-01', '2026-10-05T15:00:00Z'),
+      INSERT INTO tasks (id, team_id, title, description, status, due_date, due_time, priority, created_at, completed_at) VALUES (1, 1, 'Order wheels', '', 'done', '2026-10-05', NULL, 'high', '2026-10-01', '2026-10-05T15:00:00Z'), (2, 1, 'Fix lift', 'It slips', 'todo', '2026-10-09', '18:00', NULL, '2026-10-02', NULL), (3, 2, 'Other team task', '', 'done', '2026-10-05', NULL, NULL, '2026-10-01', '2026-10-05T15:00:00Z'),
         (4, 1, 'Tune PID', '', 'done', '2026-09-01', NULL, NULL, '2026-08-20', '2026-10-06T14:00:00Z');
       INSERT INTO task_assignees VALUES (1, 1), (2, 2);
       INSERT INTO events VALUES (1, 1, 'Qualifier', '', '2026-12-12', '', '', 'Gym', 'competition'), (2, 2, 'Other event', '', '2026-12-12', '', '', '', 'meeting');

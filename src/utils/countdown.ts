@@ -1,6 +1,8 @@
 // Countdowns (owner spec: they tick every second). Shared by the dashboard
 // and the task views; pure so they're easy to test.
 
+import { isOpenStatus } from '../types/taskStatus';
+
 export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** When something is due, in local time. No time = the end of that day. */
@@ -14,7 +16,8 @@ export function dueMoment(date: string | null | undefined, time?: string | null)
 
 /** An open task past its full deadline (its time, or the end of its date). */
 export function isTaskOverdue(t: { due_date?: string | null; due_time?: string | null; status?: string } | null | undefined, now = Date.now()): boolean {
-  if (!t?.due_date || t.status === 'done') return false;
+  // Done and cancelled tasks are never overdue.
+  if (!t?.due_date || !isOpenStatus(t.status)) return false;
   const at = dueMoment(t.due_date, t.due_time);
   return !!at && at.getTime() < now;
 }

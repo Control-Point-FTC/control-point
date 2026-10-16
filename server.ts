@@ -201,6 +201,7 @@ import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./s
 import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, parseSubsystems } from "./src/types/teamModules.js";
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
+import { isTaskStatus } from "./src/types/taskStatus.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -10134,6 +10135,13 @@ Rules:
       if (req.body?.status === 'done' && task.status !== 'done') {
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
+      if (req.body?.status !== undefined && !isTaskStatus(req.body.status)) {
+        return res.status(400).json({ error: "Unknown status" });
+      }
+      // Cancelling (or bringing back a cancelled task) is a manager's call, like editing details.
+      if (!canManage && (req.body?.status === 'cancelled' || (task.status === 'cancelled' && req.body?.status !== undefined))) {
+        return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
+      }
       const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence } = req.body;
       if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
@@ -10196,7 +10204,9 @@ Rules:
 
       const notifyIds = await getTaskAssigneeIds(Number(req.params.id));
       for (const mid of notifyIds) {
-        const note = status !== undefined && title === undefined
+        const note = status === 'cancelled' && title === undefined
+          ? `Task cancelled: ${task.title}`
+          : status !== undefined && title === undefined
           ? `Task status updated to ${status}: ${task.title}`
           : `Task updated: ${title ?? task.title}`;
         createNotification(mid, note, 'task', { task_id: Number(req.params.id) });
@@ -10306,6 +10316,10 @@ Rules:
       const isAssignee = taskAssignees.includes(auth.memberId) || task.assigned_to === auth.memberId;
       if (!canManage && !isAssignee && (taskAssignees.length > 0 || task.assigned_to)) {
         return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
+      }
+      // A cancelled task comes back only through a manager (as PATCH), before any proof is stored.
+      if (task.status === 'cancelled' && !canManage) {
+        return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
       }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
       // Proof images are persisted in the database so they survive restarts.
@@ -13338,11 +13352,11 @@ Rules:
             if (await dbGet("SELECT 1 FROM bruno_nudges_sent WHERE member_id = ? AND day = ?", m.id, day)) continue;
             // Board tasks only count for members whose task page shows them.
             const board = (await hasPermInTeam(String(m.email || ""), t.id, "manage_members")) ? "" : " AND COALESCE(t.is_board, 0) = 0";
-            const mine = `t.team_id = ? AND t.status != 'done'${board} AND (t.assigned_to = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.member_id = ?))`;
+            const mine = `t.team_id = ? AND t.status NOT IN ('done', 'cancelled')${board} AND (t.assigned_to = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.member_id = ?))`;
             const due = (await dbGet(`SELECT SUM(CASE WHEN t.due_date = ? THEN 1 ELSE 0 END) AS today, SUM(CASE WHEN t.due_date < ? THEN 1 ELSE 0 END) AS overdue FROM tasks t WHERE ${mine}`, day, day, t.id, m.id, m.id)) as any;
             const manager = await hasPermInTeam(String(m.email || ""), t.id, "manage_tasks");
             const unassigned = manager
-              ? Number(((await dbGet(`SELECT COUNT(*) AS n FROM tasks t WHERE t.team_id = ? AND t.status != 'done'${board} AND t.assigned_to IS NULL AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)`, t.id)) as any)?.n || 0)
+              ? Number(((await dbGet(`SELECT COUNT(*) AS n FROM tasks t WHERE t.team_id = ? AND t.status NOT IN ('done', 'cancelled')${board} AND t.assigned_to IS NULL AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)`, t.id)) as any)?.n || 0)
               : null;
             const text = nudgeText({ dueToday: Number(due?.today || 0), overdue: Number(due?.overdue || 0), unassigned });
             if (!text) continue; // nothing yet; a later sweep this hour checks again
@@ -13831,11 +13845,11 @@ Rules:
       const teamId = auth.teamId;
       const seesBoard = await canSeeBoardTasks(auth.memberId, teamId);
       const openTasks = (await dbAll(
-        "SELECT title, status, due_date FROM tasks WHERE team_id = ? AND status != 'done'" + boardSql(seesBoard) + " ORDER BY due_date LIMIT 25",
+        "SELECT title, status, due_date FROM tasks WHERE team_id = ? AND status NOT IN ('done', 'cancelled')" + boardSql(seesBoard) + " ORDER BY due_date LIMIT 25",
         teamId
       )) as any[];
       const overdue = (await dbGet(
-        "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done' AND due_date IS NOT NULL AND due_date < date('now')" + boardSql(seesBoard),
+        "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status NOT IN ('done', 'cancelled') AND due_date IS NOT NULL AND due_date < date('now')" + boardSql(seesBoard),
         teamId
       )) as any;
       // (messages has no created_at column — this count used to fail and read
@@ -13855,7 +13869,7 @@ Rules:
       ).catch(() => [])) as any[];
       // Active members only (removed members' rows are kept for history).
       const memberCount = ((await dbGet("SELECT COUNT(*) AS c FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId)) as any)?.c || 0;
-      const openTaskTotal = ((await dbGet("SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done'" + boardSql(seesBoard), teamId)) as any)?.c || 0;
+      const openTaskTotal = ((await dbGet("SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status NOT IN ('done', 'cancelled')" + boardSql(seesBoard), teamId)) as any)?.c || 0;
       const tz = await teamTimeZone(teamId, req.body?.tz);
       const facts = await workspaceFactsBlock({ dbGet, dbAll }, teamId, tz, new Date(), undefined, seesBoard);
       const today = new Date().toISOString().slice(0, 10);

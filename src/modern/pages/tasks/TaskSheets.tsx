@@ -3,7 +3,8 @@
 // desktop, bottom on phones). All mutations go through useTasksController.
 import { format } from 'date-fns';
 import { useState } from 'react';
-import { CalendarDays, Camera, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
+import { Ban, CalendarDays, Camera, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
+import { isOpenStatus } from '../../../types/taskStatus';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Switch, Textarea,
@@ -26,6 +27,7 @@ export const STATUS_META: Record<string, { label: string; icon: typeof Circle; d
   'todo': { label: 'To do', icon: Circle, dot: 'bg-muted-foreground' },
   'in-progress': { label: 'In progress', icon: CircleDot, dot: 'bg-chart-2' },
   'done': { label: 'Done', icon: CheckCircle2, dot: 'bg-success' },
+  'cancelled': { label: 'Cancelled', icon: Ban, dot: 'bg-muted-foreground/40' },
 };
 
 export function isOverdue(t: any) {
@@ -58,7 +60,7 @@ export function DueText({ task, countdown = true }: { task: any; countdown?: boo
   return (
     <span className={cn(isOverdue(task) && 'text-destructive')}>
       {label}
-      {countdown && at && task.status !== 'done' && <> · <Countdown to={at} className="text-xs" /></>}
+      {countdown && at && isOpenStatus(task.status) && <> · <Countdown to={at} className="text-xs" /></>}
     </span>
   );
 }
@@ -190,6 +192,15 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
               <SheetDescription>{team ? team.name : 'Task'}{task.created_at ? ` · created ${format(new Date(task.created_at), 'MMM d')}` : ''}</SheetDescription>
             </SheetHeader>
             <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+              {task.status === 'cancelled' ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/40 p-3 text-sm">
+                  <Ban className="size-4 text-muted-foreground" aria-hidden />
+                  <span className="flex-1">Cancelled. It's kept here and can be restored.</span>
+                  {ctl.canManageTasks && (
+                    <Button size="sm" variant="outline" disabled={ctl.pendingIds.has(task.id)} onClick={() => void ctl.updateStatus(task.id, 'todo')}><RotateCcw /> Restore</Button>
+                  )}
+                </div>
+              ) : (
               <div className="space-y-2">
                 <Label>Status</Label>
                 <ToggleGroup
@@ -206,6 +217,7 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
                 </ToggleGroup>
                 <p className="text-xs text-muted-foreground">Marking done asks for a short note or photo as proof.{readRecurrence(task.recurrence) ? ' This task repeats: finishing it schedules the next one.' : ''}</p>
               </div>
+              )}
               {task.review_status === 'changes_requested' && task.review_note && (
                 <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm">
                   <p className="font-medium">Sent back for changes</p>
@@ -239,6 +251,9 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
             {ctl.canManageTasks && (
               <div className="flex items-center gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
                 <Button variant="outline" onClick={() => { onOpenChange(false); ctl.openEditTask(task); }}><Pencil /> Edit</Button>
+                {task.status !== 'cancelled' && task.status !== 'done' && (
+                  <Button variant="ghost" disabled={ctl.pendingIds.has(task.id)} onClick={() => void ctl.updateStatus(task.id, 'cancelled')}><Ban /> Cancel task</Button>
+                )}
                 <Button
                   variant="ghost"
                   className="ml-auto text-destructive hover:text-destructive"

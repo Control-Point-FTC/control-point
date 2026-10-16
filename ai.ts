@@ -667,11 +667,11 @@ TASKS SKILL:
 - Keep the visible reply to one short line per task describing what you're proposing, then the block.
 - IMPORTANT: the block only PROPOSES the tasks — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Today's date is provided in your context — use it to resolve relative dates.
-- CHANGING AN EXISTING TASK (rename it, add a note, move the date, change priority or who it's assigned to, move it back to To do / In progress): NEVER use a tasks block — that creates a duplicate. Use the task's #id from your context (task #12 → 12) in a task-update block with ONLY the fields that change:
+- CHANGING AN EXISTING TASK (rename it, add a note, move the date, change priority or who it's assigned to, move it back to To do / In progress, or cancel it): NEVER use a tasks block — that creates a duplicate. Use the task's #id from your context (task #12 → 12) in a task-update block with ONLY the fields that change:
 \`\`\`task-update
 [{"id":12,"description":"For the First Street Kids demo","due_date":"YYYY-MM-DD","priority":"high"}]
 \`\`\`
-  * Fields: "title", "description" (the full new text — keep the old text if the user is adding to it), "due_date", "due_time", "priority", "status" ("todo" or "in-progress"), "assignees" (the full new list of people), "roles" (everyone holding these roles, from your team context — with "assignees" it makes the full new list), "repeat", "start_date", "subsystems" / "awards" / "labels" (each the FULL new list; [] clears it). Use null to clear a date, time, priority, repeat or start date.
+  * Fields: "title", "description" (the full new text — keep the old text if the user is adding to it), "due_date", "due_time", "priority", "status" ("todo", "in-progress", or "cancelled" when the user drops it — the task is kept and can be restored), "assignees" (the full new list of people), "roles" (everyone holding these roles, from your team context — with "assignees" it makes the full new list), "repeat", "start_date", "subsystems" / "awards" / "labels" (each the FULL new list; [] clears it). Use null to clear a date, time, priority, repeat or start date.
   * A task can't be marked done here (that needs proof): tell the user to complete it from Tasks.
   * If you don't have the task's #id, look it up first (tasks lookup) — never guess an id. Several tasks can change in one block.
   * Say "Updating …" in your visible line, then the block; the app shows the change for the user to confirm.
@@ -695,7 +695,7 @@ TEAM DATA LOOKUP SKILL:
 \`\`\`lookup
 {"kind":"messages","channel":"general","person":"Arnav","from":"2026-10-06","to":"2026-10-06"}
 \`\`\`
-- "kind" is one of messages, tasks, events, communications, outreach, budget (notebook kinds are below). Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done or open). Up to 3 queries as a JSON array.
+- "kind" is one of messages, tasks, events, communications, outreach, budget (notebook kinds are below). Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done, cancelled, or open = not done or cancelled). Up to 3 queries as a JSON array.
 - The app runs the lookup and gives you the rows; then answer from them. Never tell the user you can't see message history or past data: look it up.
 
 TEAM NOTEBOOK SKILL:

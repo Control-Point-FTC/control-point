@@ -1,5 +1,5 @@
 /**
- * Robolyst parity, Phase 1.1a: tasks carry a start date and subsystem,
+ * Feature parity, Phase 1.1a: tasks carry a start date and subsystem,
  * award and label tags. The task API and Bruno's confirmed cards save them
  * with the same rules; Bruno's lookups, facts and screen context show them.
  */

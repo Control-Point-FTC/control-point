@@ -288,8 +288,8 @@ export interface TaskUpdateChanges {
   due_date?: string | null;
   due_time?: string | null;
   priority?: Priority | null;
-  /** Moving it back or forward; "done" needs the completion dialog's proof. */
-  status?: 'todo' | 'in-progress';
+  /** Moving it back or forward, or cancelling it; "done" needs the completion dialog's proof. */
+  status?: 'todo' | 'in-progress' | 'cancelled';
   /** Exact roster spellings. With roles, the full new list of who is assigned. */
   assignees?: string[];
   /** Everyone holding these roles is assigned (the team's spelling). */
@@ -337,6 +337,7 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
     const s = String(raw.status ?? '').toLowerCase().trim().replace(/[\s_]+/g, '-');
     if (s === 'todo' || s === 'to-do') changes.status = 'todo';
     else if (s === 'in-progress' || s === 'doing') changes.status = 'in-progress';
+    else if (s === 'cancelled' || s === 'canceled' || s === 'cancel') changes.status = 'cancelled';
     else if (s === 'done' || s === 'complete' || s === 'completed') refused.push('status');
   }
   if (has('assignees') || has('assignee')) {

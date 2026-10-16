@@ -82,6 +82,8 @@ export const TASK_COLUMNS = [
   { id: 'in-progress', label: 'In Progress' },
   { id: 'done', label: 'Done' },
 ] as const;
+/** Cancelled tasks are kept but hidden; the board shows this column on request. */
+export const CANCELLED_COLUMN = { id: 'cancelled', label: 'Cancelled' } as const;
 
 const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [] };
 const EMPTY_LIST: any[] = [];
@@ -415,6 +417,13 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   const updateStatus = async (id: number, status: string) => {
     if (pendingIds.has(id)) return;
+    // Cancelling and restoring are a manager's call (the server refuses
+    // anyone else), so they're never offered as a move that bounces back.
+    const current = tasks.find((t: any) => t.id === id);
+    if (!canManageTasks && (status === 'cancelled' || current?.status === 'cancelled')) {
+      notify('Only team managers can cancel or restore tasks.', 'error');
+      return;
+    }
     // Moving to done requires proof: open the shared completion dialog.
     // (The server rejects direct PATCH transitions to done.)
     if (status === 'done') {
@@ -438,7 +447,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       });
       if (!res.ok) {
         setTasks(prev);
-        notify('Could not update task — try again.', 'error');
+        const data = await res.json().catch(() => ({}));
+        notify(res.status === 403 && data?.error ? data.error : 'Could not update task — try again.', 'error');
       }
     } catch {
       setTasks(prev);

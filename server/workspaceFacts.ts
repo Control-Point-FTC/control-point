@@ -270,9 +270,9 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
   ).catch(() => [] as any[]);
   const counts = await db.dbGet(
     `SELECT
-       SUM(CASE WHEN status != 'done' THEN 1 ELSE 0 END) AS open_n,
-       SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS overdue_n,
-       SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS week_n,
+       SUM(CASE WHEN status NOT IN ('done', 'cancelled') THEN 1 ELSE 0 END) AS open_n,
+       SUM(CASE WHEN status NOT IN ('done', 'cancelled') AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS overdue_n,
+       SUM(CASE WHEN status NOT IN ('done', 'cancelled') AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS week_n,
        SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND completed_at >= ? THEN 1 ELSE 0 END) AS done7_n
      FROM tasks WHERE team_id = ?${board}`,
     today, today, weekAhead, weekAgoIso, teamId,
@@ -280,13 +280,13 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(
     `SELECT COUNT(*) AS n FROM tasks t
-     WHERE t.team_id = ? AND t.status != 'done' AND t.assigned_to IS NULL${tBoard}
+     WHERE t.team_id = ? AND t.status NOT IN ('done', 'cancelled') AND t.assigned_to IS NULL${tBoard}
        AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)`,
     teamId,
   );
   const openTasks = await db.dbAll(
     `SELECT t.id, t.title, t.status, t.due_date, t.subsystems FROM tasks t
-     WHERE t.team_id = ? AND t.status != 'done'${tBoard}
+     WHERE t.team_id = ? AND t.status NOT IN ('done', 'cancelled')${tBoard}
      ORDER BY CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END, t.due_date ASC, t.id ASC LIMIT 20`,
     teamId,
   );
