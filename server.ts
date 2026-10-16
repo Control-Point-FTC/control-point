@@ -203,6 +203,8 @@ import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspa
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import { isTaskStatus, strictWipLimits, WIP_COLUMNS, MAX_WIP } from "./src/types/taskStatus.js";
 import { smartGroups } from "./src/utils/assigneeGroups.js";
+import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js";
+import { parseTagList } from "./src/types/taskTags.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
@@ -10061,6 +10063,32 @@ Rules:
   // Bulk task import: paste a blob of text (meeting notes, chat logs) — Bruno AI
   // extracts each task with title, description, status, assignee, and due date.
   // Returns parsed items for preview/edit before saving.
+  // Bruno suggests tags for a task being written (the editor's "Suggest tags").
+  // Nothing is saved: the editor shows them as AI tagged, and the member keeps or undoes them.
+  app.post("/api/tasks/suggest-tags", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : "";
+      const description = typeof req.body?.description === "string" ? req.body.description.trim().slice(0, 4000) : "";
+      if (title.length < 3) return res.status(400).json({ error: "Give the task a title first" });
+      if (!isGeminiConfigured()) return res.status(503).json({ error: "Bruno isn't set up on this server" });
+      const subsystems = await teamSubsystemList(auth.teamId);
+      // The team's labels, most used first, so Bruno reuses them instead of inventing near-duplicates.
+      const rows = (await dbAll("SELECT labels FROM tasks WHERE team_id = ? AND labels IS NOT NULL AND labels != '' ORDER BY id DESC LIMIT 300", auth.teamId)) as any[];
+      const counts = new Map<string, number>();
+      for (const r of rows) for (const l of parseTagList(r.labels)) counts.set(l, (counts.get(l) || 0) + 1);
+      const labels = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([l]) => l);
+      const raw = await aiGenerate(tagSuggestSystem({ subsystems, labels }), `Title: ${title}\nDescription: ${description || "(none)"}`, 512);
+      const s = parseTagSuggestion(raw, { subsystems });
+      if (!s) return res.status(502).json({ error: "Bruno couldn't suggest tags this time — try again" });
+      res.json(s);
+    } catch (error) {
+      console.error("Suggest tags error:", error);
+      res.status(500).json({ error: "Bruno couldn't suggest tags this time — try again" });
+    }
+  });
+
   app.post("/api/tasks/parse", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_tasks");

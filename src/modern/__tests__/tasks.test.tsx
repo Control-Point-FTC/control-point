@@ -189,6 +189,41 @@ describe('Modern Tasks', () => {
     expect(screen.getByText(/0 of 1 tasks with a due date/)).toBeInTheDocument();
   });
 
+  it('Bruno suggests tags in the editor: marked AI tagged with the reason, and Undo takes back only his', async () => {
+    api.apiFetch.mockImplementation(async (url: string) => (url === '/api/tasks/suggest-tags'
+      ? { ok: true, json: async () => ({ subsystems: [], awards: ['think'], labels: ['CAD'], reason: 'Design work worth showing judges.' }) }
+      : { ok: true, json: async () => ({}) }));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Model the new claw' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Innovate/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest tags' }));
+    expect(await screen.findByText('Bruno: Design work worth showing judges.')).toBeInTheDocument();
+    expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/suggest-tags', expect.objectContaining({ body: expect.stringContaining('Model the new claw') }));
+    expect(screen.getByRole('button', { name: /Think ?\(AI tagged\)/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Innovate/ })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: /Undo/ }));
+    expect(screen.getByRole('button', { name: /^Think/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: /Innovate/ })).toHaveAttribute('aria-pressed', 'true'); // the member's own pick stays
+    expect(screen.queryByRole('button', { name: 'Remove label CAD' })).not.toBeInTheDocument();
+  });
+
+  it('clicking Suggest tags while the automatic suggestion runs still shows why it failed', async () => {
+    let finish!: (v: any) => void;
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/tasks/suggest-tags'
+      ? new Promise((r) => { finish = r; })
+      : Promise.resolve({ ok: true, json: async () => ({}) })));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    const title = screen.getByLabelText(/^Title/);
+    fireEvent.change(title, { target: { value: 'Model the new claw' } });
+    fireEvent.blur(title); // starts the automatic suggestion
+    // Mousing down on the button blurs the title first, so it's already busy when the click lands.
+    fireEvent.click(screen.getByRole('button', { name: /Bruno is tagging/ }));
+    finish({ ok: false, json: async () => ({ error: "Bruno isn't set up on this server" }) });
+    expect(await screen.findByText("Bruno isn't set up on this server")).toBeInTheDocument();
+  });
+
   it('a late save never wipes a newer draft', async () => {
     let resolve!: (v: any) => void;
     api.apiFetch.mockImplementation(() => new Promise((r) => { resolve = r; }));

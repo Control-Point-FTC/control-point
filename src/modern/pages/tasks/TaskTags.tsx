@@ -2,7 +2,7 @@
 // Read-only chips for cards and the task sheet, and toggle chips / a label
 // input for the editor. Award chips explain what judges look for on hover.
 import { useState } from 'react';
-import { Award, Cog, Tag, X } from 'lucide-react';
+import { Award, Cog, Sparkles, Tag, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Input } from '../../../components/ui-kit';
 import { FTC_AWARDS, MAX_LABEL_LENGTH, MAX_LABELS, awardById, cleanLabels, parseTagList } from '../../../types/taskTags';
@@ -37,30 +37,33 @@ export function TaskTagChips({ task, className }: { task: any; className?: strin
 }
 
 /** A row of toggle chips (multi-select). */
-export function ToggleChips({ options, selected, onChange, label, id }: {
+export function ToggleChips({ options, selected, onChange, label, id, marked = [] }: {
   options: { value: string; label: string; title?: string }[];
   selected: string[];
   onChange: (next: string[]) => void;
   label: string;
   id?: string;
+  /** Values Bruno added (shown with a sparkle, "AI tagged"). */
+  marked?: string[];
 }) {
   return (
     <div id={id} role="group" aria-label={label} className="flex flex-wrap gap-1.5">
       {options.map((o) => {
         const on = selected.includes(o.value);
+        const ai = on && marked.includes(o.value);
         return (
           <button
             key={o.value}
             type="button"
             aria-pressed={on}
-            title={o.title}
+            title={ai ? `AI tagged${o.title ? ` · ${o.title}` : ''}` : o.title}
             onClick={() => onChange(on ? selected.filter((v) => v !== o.value) : [...selected, o.value])}
             className={cn(
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors max-sm:py-1.5',
               on ? 'border-accent bg-accent/15 text-foreground' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
             )}
           >
-            {o.label}
+            {ai && <Sparkles className="mr-1 inline size-3 text-accent" aria-hidden />}{o.label}{ai && <span className="sr-only"> (AI tagged)</span>}
           </button>
         );
       })}
@@ -71,7 +74,7 @@ export function ToggleChips({ options, selected, onChange, label, id }: {
 export const AWARD_OPTIONS = FTC_AWARDS.map((a) => ({ value: a.id, label: a.name, title: a.criteria }));
 
 /** Labels: type and press Enter (or comma) to add; × to remove. */
-export function LabelsInput({ value, onChange, id }: { value: string[]; onChange: (next: string[]) => void; id?: string }) {
+export function LabelsInput({ value, onChange, id, marked = [] }: { value: string[]; onChange: (next: string[]) => void; id?: string; marked?: string[] }) {
   const [draft, setDraft] = useState('');
   const add = () => {
     const next = cleanLabels([...value, ...draft.split(',')]);
@@ -84,8 +87,8 @@ export function LabelsInput({ value, onChange, id }: { value: string[]; onChange
       {value.length > 0 && (
         <ul className="flex flex-wrap gap-1.5" aria-label="Labels">
           {value.map((l) => (
-            <li key={l} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pl-2.5 pr-1 text-xs">
-              {l}
+            <li key={l} title={marked.includes(l) ? 'AI tagged' : undefined} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pl-2.5 pr-1 text-xs">
+              {marked.includes(l) && <Sparkles className="size-3 text-accent" aria-hidden />}{l}{marked.includes(l) && <span className="sr-only"> (AI tagged)</span>}
               <button type="button" aria-label={`Remove label ${l}`} onClick={() => onChange(value.filter((x) => x !== l))}
                 className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground">
                 <X className="size-3" />
