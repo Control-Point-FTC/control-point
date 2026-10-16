@@ -5,7 +5,7 @@
 import { useRef, useState } from 'react';
 import { Sparkles, Undo2 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
-import { awardById } from '../../../types/taskTags';
+import { MAX_LABELS, awardById } from '../../../types/taskTags';
 import { Button } from '../../../components/ui-kit';
 
 export type TagLists = { subsystems: string[]; awards: string[]; labels: string[] };
@@ -21,26 +21,34 @@ export function useTagSuggest(get: () => { title: string; description: string } 
   // Whether the member asked (so failures are shown): also true when they click
   // while the automatic request (started by leaving the title) is still running.
   const asked = useRef(false);
+  // Each editor session (a task opened, or a fresh draft) has its own number; a
+  // reply that lands after the session changed is dropped, never applied elsewhere.
+  const session = useRef(0);
 
   const suggest = async (auto = false) => {
     const f = get();
     if (inFlight.current) { if (!auto) asked.current = true; return; }
     if (f.title.trim().length < 3) { if (!auto) setNote('Give the task a title first.'); return; }
+    const mine = session.current;
+    const live = () => session.current === mine;
     inFlight.current = true;
     asked.current = !auto;
     setBusy(true);
     if (!auto) setNote(null);
-    const say = (msg: string) => { if (asked.current) setNote(msg); };
+    const say = (msg: string) => { if (live() && asked.current) setNote(msg); };
     try {
       const res = await apiFetch('/api/tasks/suggest-tags', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: f.title, description: f.description }),
       });
       const d = await res.json().catch(() => ({}));
+      if (!live()) return;
       if (!res.ok) { say(d?.error || 'Bruno couldn’t suggest tags this time — try again.'); return; }
       // Only what isn't on the task already (the member's own picks stay theirs).
       const now = get();
       const fresh = Object.fromEntries(KEYS.map((k) => [k, (Array.isArray(d?.[k]) ? d[k] : []).filter((v: unknown): v is string => typeof v === 'string' && !now[k].some((x) => sameKey(x, v)))])) as TagLists;
+      // Labels stop at the limit (what doesn't fit isn't added or marked).
+      fresh.labels = fresh.labels.slice(0, Math.max(0, MAX_LABELS - now.labels.length));
       if (!KEYS.some((k) => fresh[k].length)) { say('Bruno didn’t find tags that clearly fit this task.'); return; }
       apply(Object.fromEntries(KEYS.map((k) => [k, [...now[k], ...fresh[k]]])) as TagLists);
       setAdded({ ...fresh, reason: typeof d?.reason === 'string' ? d.reason : '' });
@@ -48,8 +56,7 @@ export function useTagSuggest(get: () => { title: string; description: string } 
     } catch {
       say('Bruno isn’t reachable right now — try again in a moment.');
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      if (live()) { inFlight.current = false; setBusy(false); }
     }
   };
 
@@ -68,10 +75,31 @@ export function useTagSuggest(get: () => { title: string; description: string } 
     setAdded(null);
   };
 
+  /**
+   * The member changed a tag list: anything of Bruno's they removed is no longer
+   * his (adding it back makes it theirs, and Undo leaves it alone).
+   */
+  const touch = (k: keyof TagLists, next: string[]) => {
+    setAdded((a) => {
+      if (!a) return a;
+      const kept = { ...a, [k]: a[k].filter((v) => next.some((x) => sameKey(x, v))) };
+      return KEYS.some((key) => kept[key].length) ? kept : null;
+    });
+  };
+
   /** Still-present tags Bruno added (for the "AI tagged" marks). */
   const marked = (k: keyof TagLists, current: string[]) => (added ? current.filter((v) => added[k].some((a) => sameKey(a, v))) : []);
 
-  return { busy, note, added, suggest, autoSuggest, undo, marked, reset: () => { setAdded(null); setNote(null); autoTried.current = false; } };
+  const reset = () => {
+    session.current += 1;
+    inFlight.current = false;
+    setBusy(false);
+    setAdded(null);
+    setNote(null);
+    autoTried.current = false;
+  };
+
+  return { busy, note, added, suggest, autoSuggest, undo, marked, touch, reset };
 }
 
 /** "Suggest tags" button, then the AI tagged strip with Bruno's reason and Undo. */

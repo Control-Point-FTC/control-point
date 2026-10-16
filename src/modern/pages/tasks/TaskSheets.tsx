@@ -457,16 +457,16 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
             <AiTagStrip s={tagSuggest} />
             <div className="grid gap-2">
               <Label htmlFor="task-subsystems">Subsystems</Label>
-              <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => set({ subsystems: v })} marked={tagSuggest.marked('subsystems', chosenSubsystems)} />
+              <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => { tagSuggest.touch('subsystems', v); set({ subsystems: v }); }} marked={tagSuggest.marked('subsystems', chosenSubsystems)} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="task-awards">Award evidence</Label>
-              <ToggleChips id="task-awards" label="Award evidence" options={AWARD_OPTIONS} selected={f.awards ?? []} onChange={(v) => set({ awards: v })} marked={tagSuggest.marked('awards', f.awards ?? [])} />
+              <ToggleChips id="task-awards" label="Award evidence" options={AWARD_OPTIONS} selected={f.awards ?? []} onChange={(v) => { tagSuggest.touch('awards', v); set({ awards: v }); }} marked={tagSuggest.marked('awards', f.awards ?? [])} />
               <p className="text-xs text-muted-foreground">Mark work that shows what judges look for in an award (hover one to see).</p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="task-labels">Labels</Label>
-              <LabelsInput id="task-labels" value={f.labels ?? []} onChange={(v) => set({ labels: v })} marked={tagSuggest.marked('labels', f.labels ?? [])} />
+              <LabelsInput id="task-labels" value={f.labels ?? []} onChange={(v) => { tagSuggest.touch('labels', v); set({ labels: v }); }} marked={tagSuggest.marked('labels', f.labels ?? [])} />
             </div>
             {ctl.isAdmin && (
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
