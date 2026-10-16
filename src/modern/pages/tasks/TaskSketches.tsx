@@ -56,7 +56,8 @@ function SketchPad({ open, onOpenChange, initial, onSave }: {
   const pointer = useRef<number | null>(null);
   // What the server will take (shared limits): the board stops short of them and says so.
   const usedPoints = strokes.reduce((n, s) => n + s.points.length, 0);
-  const full = strokes.length >= MAX_SKETCH_STROKES || usedPoints >= MAX_SKETCH_POINTS;
+  // A stroke needs two points, so one point of room left is full too.
+  const full = strokes.length >= MAX_SKETCH_STROKES || usedPoints > MAX_SKETCH_POINTS - 2;
 
   const at = (e: React.PointerEvent): [number, number, number] => {
     const r = board.current!.getBoundingClientRect();

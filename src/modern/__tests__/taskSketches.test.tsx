@@ -82,6 +82,15 @@ describe('TaskSketches', () => {
     expect(screen.getByRole('img', { name: /Drawing board, 600 strokes/ })).toBeTruthy();
   });
 
+  it('one point of room left counts as full, so a stroke never silently vanishes', () => {
+    const pts = Array.from({ length: 29999 }, (_, i) => [i % 800, 1, 0.5]);
+    const big = { ...sketch, strokes: [{ ...sketch.strokes[0], points: pts }] };
+    render(<TaskSketches taskId={12} sketches={[big as any]} reload={vi.fn(async () => {})} members={members} currentUserId={7} canModerate={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /Roller spacing/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Edit/ }));
+    expect(screen.getByText(/as big as one can be/)).toBeTruthy();
+  });
+
   it('a dropped connection on save keeps the drawing open and says so', async () => {
     api.apiFetch.mockRejectedValue(new Error('offline'));
     render(<TaskSketches taskId={12} sketches={[]} reload={vi.fn(async () => {})} members={members} currentUserId={7} canModerate={false} />);
