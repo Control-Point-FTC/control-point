@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import type { Member, AttendanceRecord, Task, CalendarEvent, BudgetItem } from '../../types';
 import type { ActivityItem } from './TeamActivity';
 import { isTaskOverdue } from '../../utils/countdown';
+import { isOpenStatus } from '../../types/taskStatus';
 
 /**
  * Pure, memoized dashboard selectors.
@@ -99,7 +100,7 @@ export function countPresent(records: DashboardAttendance[]): number {
 }
 
 export function selectActiveTasks(tasks: DashboardTask[]): DashboardTask[] {
-  return tasks.filter((t) => t.status !== 'done');
+  return tasks.filter((t) => isOpenStatus(t.status));
 }
 
 export function countOverdue(tasks: DashboardTask[], _today: string, now = Date.now()): number {

@@ -9,8 +9,9 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
-  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera,
+  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera, Ban,
 } from 'lucide-react';
+import { isOpenStatus } from '../../../types/taskStatus';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../../ui/windowing';
@@ -21,7 +22,7 @@ import {
   DropdownMenuTrigger, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Table, TableBody, TableCell,
   TableHead, TableHeader, TableRow, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
-import { useTasksController, taskAssigneeIds, TASK_COLUMNS, completionTrendsOf, memberCapacityOf, avgCompletionDaysOf } from '../../../components/tasks/useTasksController';
+import { useTasksController, taskAssigneeIds, TASK_COLUMNS, CANCELLED_COLUMN, completionTrendsOf, memberCapacityOf, avgCompletionDaysOf } from '../../../components/tasks/useTasksController';
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { AnimatedValue } from '../../AnimatedValue';
 import { AvatarStack } from './AssigneePicker';
@@ -40,8 +41,9 @@ type View = 'board' | 'list' | 'completed' | 'insights';
 type ReviewFilter = 'all' | 'pending' | 'approved';
 
 const NO_TASKS: any[] = [];
-const LIST_RANK: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
-/** The list view's order: in progress, then to do, then done; soonest due first. */
+const LIST_RANK: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2, 'cancelled': 3 };
+type BoardColumn = { id: string; label: string };
+/** The list view's order: in progress, then to do, then done, then cancelled; soonest due first. */
 function listOrder(tasks: any[]) {
   return [...tasks].sort((a, b) => (LIST_RANK[a.status] - LIST_RANK[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
 }
@@ -57,8 +59,8 @@ function completedOrder(tasks: any[], filter: ReviewFilter) {
     .sort((a, b) => lastFinished(b).localeCompare(lastFinished(a)));
 }
 /** The board's reading order: column by column, cards top to bottom. */
-function boardOrder(tasks: any[]) {
-  return TASK_COLUMNS.flatMap((c) => tasks.filter((t) => t.status === c.id));
+function boardOrder(tasks: any[], columns: readonly BoardColumn[]) {
+  return columns.flatMap((c) => tasks.filter((t) => t.status === c.id));
 }
 const taskId = (t: any) => t.id as number;
 
@@ -129,7 +131,12 @@ export function TasksPage(props: any) {
     });
   }, [ctl.filteredTasks, query, who, currentUser?.id]);
 
-  const open = visible.filter((t: any) => t.status !== 'done');
+  // Cancelled tasks are kept but out of the way until asked for.
+  const [showCancelled, setShowCancelled] = useState(false);
+  const cancelledCount = visible.filter((t: any) => t.status === 'cancelled').length;
+  const shown = useMemo(() => (showCancelled ? visible : visible.filter((t: any) => t.status !== 'cancelled')), [visible, showCancelled]);
+  const columns: readonly BoardColumn[] = useMemo(() => (showCancelled ? [...TASK_COLUMNS, CANCELLED_COLUMN] : TASK_COLUMNS), [showCancelled]);
+  const open = visible.filter((t: any) => isOpenStatus(t.status));
   const overdue = open.filter(isOverdue);
   // Multi-select works on what's shown (search + filters), for task managers.
   // Rows in the order they're on screen, so shift-click ranges match what you see.
@@ -137,7 +144,7 @@ export function TasksPage(props: any) {
   const completed = useMemo(() => completedOrder(visible, reviewFilter), [visible, reviewFilter]);
   // Same rule as the Awaiting review list: done and not approved yet (older tasks have no review status).
   const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status !== 'approved').length;
-  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(visible) : view === 'board' ? boardOrder(visible) : view === 'completed' ? completed : NO_TASKS), [view, visible, completed]);
+  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(shown) : view === 'board' ? boardOrder(shown, columns) : view === 'completed' ? completed : NO_TASKS), [view, shown, columns, completed]);
   const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
@@ -147,7 +154,7 @@ export function TasksPage(props: any) {
     <Page>
       <PageHeader
         title="Tasks"
-        description={`${open.length} open${overdue.length ? ` · ${overdue.length} overdue` : ''} · ${visible.length - open.length} done`}
+        description={`${open.length} open${overdue.length ? ` · ${overdue.length} overdue` : ''} · ${visible.filter((t: any) => t.status === 'done').length} done${cancelledCount ? ` · ${cancelledCount} cancelled` : ''}`}
         actions={ctl.canManageTasks ? (
           <div className="flex">
             <Button onClick={() => ctl.openNewTask('todo')} className="rounded-r-none"><Plus /> New task</Button>
@@ -190,6 +197,11 @@ export function TasksPage(props: any) {
               <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
             </label>
           )}
+          {(cancelledCount > 0 || showCancelled) && (view === 'board' || view === 'list') && (
+            <Button variant="outline" size="sm" aria-pressed={showCancelled} onClick={() => setShowCancelled((v) => !v)} className={cn('max-sm:h-11', showCancelled && 'border-accent bg-accent/10')}>
+              <Ban /> {showCancelled ? 'Hide cancelled' : 'Show cancelled'} <span className="tabular-nums text-muted-foreground">{cancelledCount}</span>
+            </Button>
+          )}
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as View)} aria-label="View" className="ml-auto">
             <ToggleGroupItem value="board" aria-label="Board"><KanbanSquare /> <span className="hidden sm:inline">Board</span></ToggleGroupItem>
             <ToggleGroupItem value="list" aria-label="List"><List /> <span className="hidden sm:inline">List</span></ToggleGroupItem>
@@ -205,12 +217,12 @@ export function TasksPage(props: any) {
       </PageHeader>
 
       {view === 'board' && (
-        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} sel={ctl.canManageTasks ? sel : null} />
+        <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
-        visible.length === 0
+        shown.length === 0
           ? <EmptyState icon={ListChecks} title="No tasks match" description="Try clearing the search or filters." />
-          : <ListView tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} sel={ctl.canManageTasks ? sel : null} />
+          : <ListView tasks={shown} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'completed' && ctl.canManageTasks && (
         <CompletedView tasks={completed} filter={reviewFilter} onFilter={setReviewFilter} members={members} onOpen={setViewTaskId} sel={sel} />
@@ -279,7 +291,7 @@ function DueChip({ task }: { task: any }) {
   if (!task.due_date) return null;
   const overdue = isOverdue(task);
   const at = dueMoment(task.due_date, task.due_time);
-  const live = at && task.status !== 'done' && at.getTime() - Date.now() < WEEK_MS;
+  const live = at && isOpenStatus(task.status) && at.getTime() - Date.now() < WEEK_MS;
   return (
     <span className={cn('inline-flex flex-wrap items-center gap-1 text-xs', overdue ? 'text-destructive' : 'text-muted-foreground')}>
       <CalendarDays className="size-3" />
@@ -350,7 +362,7 @@ function CompletedView({ tasks, filter, onFilter, members, onOpen, sel }: {
 }
 
 /** Board keyboard: arrows move between cards, Shift+Left/Right moves the card. */
-function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: ReturnType<typeof useTasksController>, sel: Selection | null) {
+function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: ReturnType<typeof useTasksController>, sel: Selection | null, columns: readonly BoardColumn[]) {
   const card = e.currentTarget;
   const col = Number(card.dataset.col);
   const row = Number(card.dataset.row);
@@ -361,7 +373,7 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
     return true;
   };
   if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-    const next = TASK_COLUMNS[col + (e.key === 'ArrowLeft' ? -1 : 1)];
+    const next = columns[col + (e.key === 'ArrowLeft' ? -1 : 1)];
     if (!next) return;
     e.preventDefault();
     void ctl.updateStatus(task.id, next.id);
@@ -375,15 +387,15 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
     const dir = e.key === 'ArrowLeft' ? -1 : 1;
-    for (let c = col + dir; c >= 0 && c < TASK_COLUMNS.length; c += dir) if (focusAt(c, row)) break;
+    for (let c = col + dir; c >= 0 && c < columns.length; c += dir) if (focusAt(c, row)) break;
   } else if ((e.key === 'x' || e.key === 'X') && sel) {
     e.preventDefault();
     sel.toggle(task.id);
   }
 }
 
-function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
-  tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
+function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
+  tasks: any[]; columns: readonly BoardColumn[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
   sel: Selection | null;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
@@ -396,8 +408,8 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
   return (
     <LayoutGroup>
       <p className="mb-2 hidden text-xs text-muted-foreground md:block">Keyboard: arrow keys move between cards, Shift + Left/Right moves a card to the next column, X selects it.</p>
-      <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
-        {TASK_COLUMNS.map((col) => {
+      <div className={cn('-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:overflow-visible md:px-0', columns.length > 3 ? 'md:grid-cols-4' : 'md:grid-cols-3')}>
+        {columns.map((col) => {
           const items = tasks.filter((t) => t.status === col.id);
           const M = STATUS_META[col.id];
           return (
@@ -425,7 +437,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                 <span className={cn('size-2 rounded-full', M.dot)} />
                 <h2 className="text-sm font-medium">{M.label}</h2>
                 <span className="text-sm tabular-nums text-muted-foreground">{items.length}</span>
-                {ctl.canManageTasks && (
+                {ctl.canManageTasks && col.id !== 'cancelled' && (
                   <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label={`Add task to ${M.label}`} onClick={() => ctl.openNewTask(col.id)}><Plus /></Button>
                 )}
               </header>
@@ -457,9 +469,9 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                           type="button"
                           draggable
                           data-cm-type="task-card" data-cm-id={t.id}
-                          data-task-card data-id={t.id} data-col={TASK_COLUMNS.findIndex((c) => c.id === col.id)} data-row={rowIdx}
+                          data-task-card data-id={t.id} data-col={columns.findIndex((c) => c.id === col.id)} data-row={rowIdx}
                           aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X"
-                          onKeyDown={(e) => onCardKey(e, t, ctl, sel)}
+                          onKeyDown={(e) => onCardKey(e, t, ctl, sel, columns)}
                           onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
                           onDragEnd={() => { setDragId(null); setOverCol(null); }}
                           onClick={() => onOpen(t.id)}
@@ -472,7 +484,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                             sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40',
                           )}
                         >
-                          <p className={cn('line-clamp-2 text-sm font-medium', t.status === 'done' && 'text-muted-foreground line-through')}>{t.title}</p>
+                          <p className={cn('line-clamp-2 text-sm font-medium', !isOpenStatus(t.status) && 'text-muted-foreground line-through')}>{t.title}</p>
                           <TaskTagChips task={t} className="mt-2" />
                           <div className="mt-2.5 flex flex-wrap items-center gap-2">
                             {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
@@ -543,7 +555,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
                 <Select value={t.status} onValueChange={(v) => { if (v !== t.status) void ctl.updateStatus(t.id, v); }}>
                   <SelectTrigger size="sm" aria-label={`Status of ${t.title}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {TASK_COLUMNS.map((c) => (
+                    {(ctl.canManageTasks || t.status === 'cancelled' ? [...TASK_COLUMNS, CANCELLED_COLUMN] : TASK_COLUMNS).map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         <span className="flex items-center gap-2"><span className={cn('size-2 rounded-full', STATUS_META[c.id].dot)} />{STATUS_META[c.id].label}</span>
                       </SelectItem>
@@ -569,7 +581,7 @@ function Insights({ tasks, members, scope }: { tasks: any[]; members: any[]; sco
   const trends = useMemo(() => completionTrendsOf(tasks), [tasks]);
   const capacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
   const avg = useMemo(() => avgCompletionDaysOf(tasks), [tasks]);
-  const openCount = tasks.filter((t) => t.status !== 'done').length;
+  const openCount = tasks.filter((t) => isOpenStatus(t.status)).length;
   const doneThisWeek = trends.reduce((a: number, d: any) => a + d.completed, 0);
   return (
     <>

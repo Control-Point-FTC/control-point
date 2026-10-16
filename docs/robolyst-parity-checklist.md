@@ -44,7 +44,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 ## Phase 1: Tasks overhaul
 
 ### PR 1.1: Task data model
-- [ ] Statuses: Not Started / In Progress / Complete / Cancelled (migrate todo/in-progress/done; Cancelled hidden by default instead of a permanent column)
+- [x] Statuses: To do / In progress / Done / Cancelled (Cancelled kept but hidden by default; "Show cancelled" adds the column)
 - [ ] Custom task statuses per team
 - [~] Priority (have) — make it Low / Med / High / Urgent pills
 - [x] Start date (have due date + due time)

@@ -29,7 +29,7 @@ export interface LookupQuery {
   /** YYYY-MM-DD, inclusive, in the team's timezone. */
   from?: string;
   to?: string;
-  /** Tasks: "todo" | "in-progress" | "done" | "open". */
+  /** Tasks: "todo" | "in-progress" | "done" | "cancelled" | "open" (not done or cancelled). */
   status?: string;
   /** notebook_page: the page id (from a search, the outline or the screen). */
   page?: number;
@@ -195,8 +195,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),
         (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
-    if (q.status === "open") sql += " AND t.status != 'done'";
-    else if (["todo", "in-progress", "done"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
+    if (q.status === "open") sql += " AND t.status NOT IN ('done', 'cancelled')";
+    else if (["todo", "in-progress", "done", "cancelled"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
     if (q.person) {
       // Same rule as getTaskAssigneeIds: task_assignees rows, else the legacy
       // assigned_to (set when someone completes an unassigned task).

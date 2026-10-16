@@ -46,7 +46,7 @@ function taskUpdateSummary(it: any): string {
     c.description !== undefined ? (c.description ? `description becomes “${c.description.length > 400 ? `${c.description.slice(0, 400)}…` : c.description}”` : 'clear the description') : '',
     c.due_date !== undefined ? (c.due_date ? `due ${c.due_date}${c.due_time ? ` at ${c.due_time}` : ''}` : 'no due date') : c.due_time !== undefined ? (c.due_time ? `at ${c.due_time}` : 'no due time') : '',
     c.priority !== undefined ? (c.priority ? `${c.priority} priority` : 'no priority') : '',
-    c.status ? (c.status === 'todo' ? 'back to To do' : 'In progress') : '',
+    c.status ? (c.status === 'todo' ? 'back to To do' : c.status === 'cancelled' ? 'cancel it (kept, can be restored)' : 'In progress') : '',
     c.assignees !== undefined || c.roles ? (c.assignees?.length || c.roles ? `→ ${[...(c.assignees ?? []), ...(c.roles ?? []).map((r) => {
       const who = getProposalContext()?.roles?.find((x) => x.name === r)?.members;
       return `everyone in ${r}${!who ? '' : who.length ? ` (${who.join(', ')})` : ' (no one has this role yet)'}`;

@@ -46,7 +46,7 @@ export interface Task {
   team_id: number;
   title: string;
   description: string;
-  status: 'todo' | 'in-progress' | 'done';
+  status: 'todo' | 'in-progress' | 'done' | 'cancelled';
   assigned_to: number | null;
   due_date: string;
 }

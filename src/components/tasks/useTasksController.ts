@@ -82,6 +82,8 @@ export const TASK_COLUMNS = [
   { id: 'in-progress', label: 'In Progress' },
   { id: 'done', label: 'Done' },
 ] as const;
+/** Cancelled tasks are kept but hidden; the board shows this column on request. */
+export const CANCELLED_COLUMN = { id: 'cancelled', label: 'Cancelled' } as const;
 
 const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [] };
 const EMPTY_LIST: any[] = [];
@@ -438,7 +440,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       });
       if (!res.ok) {
         setTasks(prev);
-        notify('Could not update task — try again.', 'error');
+        const data = await res.json().catch(() => ({}));
+        notify(res.status === 403 && data?.error ? data.error : 'Could not update task — try again.', 'error');
       }
     } catch {
       setTasks(prev);

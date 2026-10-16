@@ -1,5 +1,5 @@
 /**
- * Robolyst parity, Phase 0: per-workspace module switches and robot
+ * Feature parity, Phase 0: per-workspace module switches and robot
  * subsystems. Admins set them in Settings or by confirming Bruno's
  * ```workspace card; everyone else is refused. Bruno's workspace facts list
  * them so it can answer questions and avoid hidden pages.
