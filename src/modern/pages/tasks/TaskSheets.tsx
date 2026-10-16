@@ -300,7 +300,7 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
                   : <p className="text-sm text-muted-foreground">No description.</p>}
               </div>
               <Separator />
-              <TaskTimeline taskId={task.id} timeline={timeline} reload={reload} members={members} currentUserId={ctl.currentUserId} canModerate={ctl.canManageTasks} />
+              <TaskTimeline key={task.id} taskId={task.id} timeline={timeline} reload={reload} members={members} currentUserId={ctl.currentUserId} canModerate={ctl.canManageTasks} />
             </div>
             {ctl.canManageTasks && (
               <div className="flex items-center gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">

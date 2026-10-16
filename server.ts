@@ -9824,6 +9824,12 @@ Rules:
     }
     return tasks;
   };
+  /** Record task activity, then tell open timelines of that task to reload. */
+  async function recordActivity(teamId: number | null, taskId: number, memberId: number | null, entries: Parameters<typeof logTaskActivity>[4], via?: "bruno"): Promise<void> {
+    if (!entries.length) return;
+    await logTaskActivity(dbRun, teamId, taskId, memberId, entries, via);
+    void broadcastTaskEvent(teamId, { type: "task_timeline", task_id: taskId });
+  }
   /** A known completion mode ('each') or null (one shared deliverable). */
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
   /** Reopened from done: everyone's part starts over. */
@@ -10008,7 +10014,7 @@ Rules:
       const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
       created.assignee_ids = validIds;
       void broadcastTask(auth.teamId, "task_created", created);
-      await logTaskActivity(dbRun, auth.teamId, taskId, auth.memberId, [{ kind: "created" }]);
+      await recordActivity(auth.teamId, taskId, auth.memberId, [{ kind: "created" }]);
       res.json({ id: taskId });
     } catch (error) {
       console.error("Error creating task:", error);
@@ -10282,7 +10288,7 @@ Rules:
 
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       updated.assignee_ids = notifyIds;
-      await logTaskActivity(dbRun, auth.teamId, Number(req.params.id), auth.memberId, taskEditActivity(task, updated, { before: assigneeIds, after: notifyIds }));
+      await recordActivity(auth.teamId, Number(req.params.id), auth.memberId, taskEditActivity(task, updated, { before: assigneeIds, after: notifyIds }));
       void broadcastTask(auth.teamId, "task_updated", updated);
       res.json({ success: true });
     } catch (error) {
@@ -10347,7 +10353,7 @@ Rules:
       const plan = await planTaskLinks(auth, changes);
       if ("error" in plan) return plan.error;
       await writeTaskLinks(auth.teamId, plan);
-      if (plan.add.length || plan.remove.length) for (const id of new Set(changes.map((c) => c.id))) await logTaskActivity(dbRun, auth.teamId, id, auth.memberId, [{ kind: "links" }]);
+      if (plan.add.length || plan.remove.length) for (const id of new Set(changes.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }]);
       return null;
     });
   }
@@ -10575,7 +10581,7 @@ Rules:
         const r = await dbRun(`UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done' ${SAME_FINISH}`, auth.memberId, now, note || null, reviewEntry("approved"), task.id, seen);
         if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} approved your task: ${task.title}`, "task", { task_id: Number(task.id) });
-        await logTaskActivity(dbRun, auth.teamId, Number(task.id), auth.memberId, [{ kind: "approved" }]);
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "approved" }]);
       } else if (action === "send_back") {
         if (!note) return res.status(400).json({ error: "Say what needs to change" });
         const r = await dbRun(
@@ -10585,7 +10591,7 @@ Rules:
         if (!changed(r)) return reopened();
         await clearAssigneeDone(Number(task.id));
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });
-        await logTaskActivity(dbRun, auth.teamId, Number(task.id), auth.memberId, [{ kind: "sent_back", detail: { note: note.slice(0, 300) } }]);
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "sent_back", detail: { note: note.slice(0, 300) } }]);
       } else {
         return res.status(400).json({ error: "Unknown review action" });
       }
@@ -10656,7 +10662,7 @@ Rules:
           const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
           await withAssignees([partial]);
           void broadcastTask(auth.teamId, "task_updated", partial);
-          await logTaskActivity(dbRun, auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
+          await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
           return res.json({ success: true, partial: true, done: taskAssignees.length - remaining.length, of: taskAssignees.length, task: partial });
         }
         // Last one in: the task is done (same review and repeat rules as below).
@@ -10689,7 +10695,7 @@ Rules:
         await withAssignees([partial]);
         void broadcastTask(auth.teamId, "task_updated", partial);
         const ids = partial.assignee_ids as number[];
-        await logTaskActivity(dbRun, auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "part_done" }]);
         return res.json({ success: true, partial: true, done: (partial.done_assignee_ids || []).length, of: ids.length, task: partial });
       }
       // A repeating task rolls forward the moment it's done.
@@ -10701,7 +10707,7 @@ Rules:
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       void broadcastTask(auth.teamId, "task_updated", updated);
-      await logTaskActivity(dbRun, auth.teamId, Number(req.params.id), auth.memberId, [{ kind: "completed" }]);
+      await recordActivity(auth.teamId, Number(req.params.id), auth.memberId, [{ kind: "completed" }]);
       res.json({ success: true, task: updated });
     } catch (error) {
       console.error("Error completing task:", error);
@@ -13863,6 +13869,11 @@ Rules:
           if (!task) return res.status(400).json({ error: `Task #${id} no longer exists — nothing was saved` });
           commentTargets.set(id, task);
         }
+        for (const it of a.items) {
+          if (typeof it?.body === "string" && it.body.trim().length > MAX_COMMENT) {
+            return res.status(400).json({ error: `A comment is longer than ${MAX_COMMENT} characters — nothing was saved` });
+          }
+        }
       }
       // Link changes (blocked by / blocks / related) on the whole card are
       // checked together against the final graph and saved first, in one
@@ -13985,7 +13996,7 @@ Rules:
             );
             const taskId = Number(info.lastInsertRowid);
             made("task", taskId);
-            await logTaskActivity(dbRun, auth.teamId, taskId, auth.memberId, [{ kind: "created" }], "bruno");
+            await recordActivity(auth.teamId, taskId, auth.memberId, [{ kind: "created" }], "bruno");
             if (ids.length) {
               await setTaskAssignees(taskId, ids, auth.teamId);
               for (const mid of ids) if (mid !== auth.memberId) void createNotification(mid, `New task assigned: ${t.title}`, "task", { task_id: taskId });
@@ -14058,7 +14069,7 @@ Rules:
             for (const mid of now) if (before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `Task updated: ${c.title ?? task.title}`, "task", { task_id: u.id });
             const updated: any = await dbGet("SELECT * FROM tasks WHERE id = ?", u.id);
             if (updated) { updated.assignee_ids = now; void broadcastTask(auth.teamId, "task_updated", updated); }
-            if (updated) await logTaskActivity(dbRun, auth.teamId, u.id, auth.memberId, taskEditActivity(task, updated, { before, after: now }), "bruno");
+            if (updated) await recordActivity(auth.teamId, u.id, auth.memberId, taskEditActivity(task, updated, { before, after: now }), "bruno");
             made("task-update", u.id);
           }
           applied["task-update"] = (applied["task-update"] || 0) + updates.length;
@@ -14115,7 +14126,7 @@ Rules:
       }
       if (linkPlan && !("error" in linkPlan)) {
         await writeTaskLinks(auth.teamId, linkPlan);
-        if (linkPlan.add.length || linkPlan.remove.length) for (const id of new Set(linkChanges.map((c) => c.id))) await logTaskActivity(dbRun, auth.teamId, id, auth.memberId, [{ kind: "links" }], "bruno");
+        if (linkPlan.add.length || linkPlan.remove.length) for (const id of new Set(linkChanges.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }], "bruno");
       }
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });

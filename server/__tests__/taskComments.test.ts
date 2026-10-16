@@ -98,6 +98,13 @@ describe("Bruno", () => {
     expect((await notes(benId)).some((n) => n.includes("Ordered from REV"))).toBe(true);
   });
 
+  it("a comment longer than the limit refuses the card instead of being cut", async () => {
+    const id = (await t.post("/api/tasks", { title: "Long talk" }, admin)).body.id;
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-comment", items: [{ id, body: "x".repeat(4001) }] }] }, admin);
+    expect(r.status).toBe(400);
+    expect(await dbAll("SELECT id FROM task_comments WHERE task_id = ?", id)).toHaveLength(0);
+  });
+
   it("task_activity reads one task's discussion and history, oldest first", async () => {
     const [row] = await dbAll("SELECT id FROM tasks WHERE title = 'Wire the hub'");
     const out = await runLookups(dbAll as any, team, "America/New_York", [{ kind: "task_activity", task: Number(row.id) } as any]);

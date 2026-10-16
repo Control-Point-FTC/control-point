@@ -2,7 +2,7 @@
 // oldest first, with a comment box. Mention people with @First or
 // @[Full Name]; everyone following the task is notified. Live: a comment
 // anywhere reloads the timeline of the open task.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { History, Loader2, Pencil, Send, Trash2 } from 'lucide-react';
 import { Button, Label, Textarea } from '../../../components/ui-kit';
@@ -21,11 +21,16 @@ export interface Timeline {
 /** Load (and keep fresh) a task's timeline. `key` changes when the task itself changes. */
 export function useTaskTimeline(taskId: number | null, key: string) {
   const [data, setData] = useState<Timeline | null>(null);
+  // The task shown now: a reply for a task you've since left is dropped.
+  const current = useRef(taskId);
+  current.current = taskId;
   const load = useCallback(async () => {
     if (!taskId) return;
     try {
       const res = await apiFetch(`/api/tasks/${taskId}/timeline`);
-      if (res.ok) setData(await res.json());
+      if (!res.ok) return;
+      const body = await res.json();
+      if (current.current === taskId) setData(body);
     } catch { /* offline: keep what we have */ }
   }, [taskId]);
   useEffect(() => { setData(null); }, [taskId]);
