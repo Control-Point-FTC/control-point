@@ -30,7 +30,7 @@ import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, 
 import { TaskTagChips } from './TaskTags';
 import { TaskLinkMarks } from './TaskLinks';
 import { GroupBySelect, TaskFiltersButton } from './TaskFilterBar';
-import { groupTasks, matchesFilters, readFilters, readGroup, writeFilters, type GroupBy, type TaskFilters } from './taskFilters';
+import { groupTasks, matchesFilters, readFilters, readGroup, writeFilters, type Group, type GroupBy, type TaskFilters } from './taskFilters';
 import { parseSubsystems } from '../../../types/teamModules';
 import { parseTagList } from '../../../types/taskTags';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
@@ -163,7 +163,14 @@ export function TasksPage(props: any) {
   const completed = useMemo(() => completedOrder(visible, reviewFilter), [visible, reviewFilter]);
   // Same rule as the Awaiting review list: done and not approved yet (older tasks have no review status).
   const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status !== 'approved').length;
-  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(shown) : view === 'board' ? boardOrder(shown, columns) : view === 'completed' ? completed : NO_TASKS), [view, shown, columns, completed]);
+  // The board's groups as displayed (Priority / Assignee / Subsystem columns).
+  const groups = useMemo(() => (group === 'status' ? null : groupTasks(shown, group, { members, subsystems: teamSubsystems, assigneesOf: (t) => taskAssigneeIds(t) })), [shown, group, members, teamSubsystems.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Selection (and shift-click ranges) follow what's on screen; each task once.
+  const shownInOrder = useMemo(() => (
+    view === 'list' ? listOrder(shown)
+      : view === 'board' ? (groups ? [...new Map(groups.flatMap((g) => g.tasks).map((t: any) => [t.id, t])).values()] : boardOrder(shown, columns))
+        : view === 'completed' ? completed : NO_TASKS
+  ), [view, shown, columns, completed, groups]);
   const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
@@ -240,7 +247,7 @@ export function TasksPage(props: any) {
       {view === 'board' && (
         group === 'status'
           ? <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
-          : <GroupedBoard tasks={shown} group={group} ctl={ctl} members={members} subsystems={teamSubsystems} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
+          : <GroupedBoard tasks={shown} groups={groups!} group={group} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
         shown.length === 0
@@ -345,16 +352,22 @@ function TaskCardBody({ task: t, people, byId }: { task: any; people: any[]; byI
  * another Priority column changes its priority; status stays as it is (use
  * Columns: Status to move work along).
  */
-function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onOpen, filterKey, sel }: {
-  tasks: any[]; group: Exclude<GroupBy, 'status'>; ctl: ReturnType<typeof useTasksController>; members: any[]; subsystems: string[];
+function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKey, sel }: {
+  tasks: any[]; groups: Group[]; group: Exclude<GroupBy, 'status'>; ctl: ReturnType<typeof useTasksController>;
   assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string; sel: Selection | null;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
-  const groups = groupTasks(tasks, group, { members, subsystems, assigneesOf: (t) => taskAssigneeIds(t) });
   const canDrag = group === 'priority' && ctl.canManageTasks;
   // Long columns show 40 cards, then more as you scroll (like the Status board).
+  // A card just moved into a column stays in view (and keeps focus).
   const inc = useIncrementalGroups(40, `${filterKey}|${group}`);
+  const [moved, setMoved] = useState<Set<number>>(() => new Set());
+  const keepMoved = (t: any) => moved.has(t.id);
+  const moveTo = (t: any, colId: string) => {
+    setMoved((s) => new Set(s).add(t.id));
+    void ctl.setPriority(t.id, colId === 'none' ? null : colId);
+  };
   /** Arrows move between cards; in Priority columns Shift + Left/Right moves the card; X selects it. */
   const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, t: any) => {
     const col = Number(e.currentTarget.dataset.gcol);
@@ -370,7 +383,7 @@ function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onO
       const next = groups[col + (e.key === 'ArrowLeft' ? -1 : 1)];
       if (!next) return;
       e.preventDefault();
-      void ctl.setPriority(t.id, next.id === 'none' ? null : next.id);
+      moveTo(t, next.id);
       window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-grouped-card][data-id="${t.id}"]`)?.focus(), 60);
       return;
     }
@@ -393,7 +406,7 @@ function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onO
             e.preventDefault();
             const id = dragId; setDragId(null); setOverCol(null);
             const t = tasks.find((x) => x.id === id);
-            if (canDrag && t && (t.priority || 'none') !== col.id) void ctl.setPriority(t.id, col.id === 'none' ? null : col.id);
+            if (canDrag && t && (t.priority || 'none') !== col.id) moveTo(t, col.id);
           }}
           className={cn('flex w-[82vw] shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2 sm:w-72', overCol === col.id && 'bg-accent/10 ring-1 ring-accent/40')}
         >
@@ -402,7 +415,7 @@ function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onO
             <span className="text-sm tabular-nums text-muted-foreground">{col.tasks.length}</span>
           </header>
           <ul className="flex min-h-24 flex-col gap-2">
-            {inc.slice(col.id, col.tasks).map((t, rowIdx) => (
+            {inc.slice(col.id, col.tasks, keepMoved).map((t, rowIdx) => (
               <li key={t.id} className="group/card relative">
                 {sel && (
                   <RowCheckbox
@@ -428,7 +441,7 @@ function GroupedBoard({ tasks, group, ctl, members, subsystems, assigneesOf, onO
                 </button>
               </li>
             ))}
-            <LoadMore as="li" hidden={inc.hidden(col.id, col.tasks)} onMore={() => inc.more(col.id)} />
+            <LoadMore as="li" hidden={inc.hidden(col.id, col.tasks, keepMoved)} onMore={() => inc.more(col.id)} />
             {col.tasks.length === 0 && (
               <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">Nothing here</li>
             )}
