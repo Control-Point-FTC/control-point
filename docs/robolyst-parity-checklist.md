@@ -14,9 +14,9 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 
 ### PR 0.1: Season-wide taxonomies
 - [x] Subsystem list per team (defaults: Drivetrain, Intake, Outtake, Arm, Autonomous, Electrical, Chassis, Sensors), editable in settings
-- [ ] FTC award taxonomy constant (Think, Connect, Reach, Sustain, Innovate, Control, Design, Inspire) with one-line "what judges look for" text per award, in `src/types` so the server can use it
-- [ ] Shared `<SubsystemChips>` and `<AwardChips>` pickers (award chip hover shows judging criteria)
-- [ ] Polymorphic tag tables: `subsystem_tags(entity_type, entity_id, subsystem)` and `award_tags(entity_type, entity_id, award)`
+- [x] FTC award taxonomy constant (Think, Connect, Reach, Sustain, Innovate, Control, Design, Inspire) with one-line "what judges look for" text per award, in `src/types` so the server can use it
+- [x] Shared tag chips and toggle pickers (award chip hover shows judging criteria) — `src/modern/pages/tasks/TaskTags.tsx`
+- [x] Tag storage: JSON arrays on each record (`subsystems`, `awards`, `labels`), queryable with `json_each` for rollups
 - [ ] Seasons table + season selector component (current season default; past seasons readable)
 
 ### PR 0.2: Permissions expansion
@@ -47,12 +47,12 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] Statuses: Not Started / In Progress / Complete / Cancelled (migrate todo/in-progress/done; Cancelled hidden by default instead of a permanent column)
 - [ ] Custom task statuses per team
 - [~] Priority (have) — make it Low / Med / High / Urgent pills
-- [ ] Start date (have due date + due time)
+- [x] Start date (have due date + due time)
 - [ ] Blocked state + task dependencies ("blocked by an incomplete task" warning)
 - [ ] Linked tasks ("2 linked")
-- [ ] Subsystem tags (uses PR 0.1)
-- [ ] Labels with "+ New label"
-- [ ] Award tags on tasks (uses PR 0.1)
+- [x] Subsystem tags (uses PR 0.1)
+- [x] Labels
+- [x] Award tags on tasks (uses PR 0.1)
 - [ ] Completion mode per task: "everyone assigned completes it separately" vs "one deliverable, closed once by whoever finishes"
 - [~] Assign-by-role (have) — add smart groups: Everyone, All members, Coaches & mentors, Alumni
 
