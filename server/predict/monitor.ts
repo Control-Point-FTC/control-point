@@ -16,22 +16,30 @@ import { accuracy as accuracyOf, brier, type ProbOutcome } from "./metrics.js";
 import type { EventRecord } from "./types.js";
 import type { Forecast, Stage } from "./engine.js";
 import type { FirstAdvancement } from "../ftcEvents.js";
+import { ENGINE_VERSION } from "@control-scout/predict-engine";
 
 export type SnapStage = Exclude<Stage, "live">;
 export interface EventSnapshot {
   season: number;
   code: string;
-  /** Match key (`level:series:number`) → red's win probability before the match. */
-  matches: Record<string, { p: number; at: string }>;
+  /** Match key (`level:series:number`) → red's win probability before the match,
+   *  and the engine version that made it (missing = before engine 2.0). */
+  matches: Record<string, { p: number; at: string; engine?: string }>;
   /** Stage → team → advancement probability, from the first forecast at that stage. */
-  advancement: Partial<Record<SnapStage, { at: string; teams: Record<string, number>; excluded: number[] }>>;
+  advancement: Partial<Record<SnapStage, { at: string; teams: Record<string, number>; excluded: number[]; engine?: string }>>;
 }
 
 export interface StageScore { n: number; events: number; brier: number }
 export interface LiveAccuracy {
   season: number;
+  /** The running engine version's own calls (what the accuracy page and drift checks use). */
   matches: { n: number; accuracy: number; brier: number; upsets: number };
+  /** Every recorded call split by engine version ("1.1.0" for calls recorded before versions were). */
+  matchesByEngine?: Record<string, { n: number; accuracy: number; brier: number }>;
+  /** Advancement snapshots taken by the running engine version. */
   advancement: Record<SnapStage, StageScore>;
+  /** The engine version `matches` and `advancement` describe. */
+  engine?: string;
   updatedAt: string;
 }
 
@@ -112,7 +120,7 @@ export class PredictMonitor {
     const finished = playoffsStarted && fc.matches.every((m) => m.played || storedPlayed.has(m.key));
     for (const m of finished ? [] : fc.matches) {
       if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
-      snap.matches[m.key] = { p: round(m.pRedWin), at };
+      snap.matches[m.key] = { p: round(m.pRedWin), at, engine: ENGINE_VERSION };
       changed = true;
     }
     // A "live" forecast (quals under way) is neither a clean pre-event call
@@ -121,7 +129,7 @@ export class PredictMonitor {
     if (stage && !snap.advancement[stage] && fc.teams.length) {
       const teams: Record<string, number> = {};
       for (const t of fc.teams) teams[t.team] = round(t.pAdvance);
-      snap.advancement[stage] = { at, teams, excluded: fc.prequalified };
+      snap.advancement[stage] = { at, teams, excluded: fc.prequalified, engine: ENGINE_VERSION };
       changed = true;
     }
     if (!changed && !this.unsaved.has(k)) return false;
@@ -180,7 +188,11 @@ export class PredictMonitor {
   ): LiveAccuracy {
     const snaps = this.all(season);
     const byCode = new Map(events.map((e) => [e.code, e]));
+    // Versions are never pooled: the headline numbers and drift checks are the
+    // running engine's own calls; older versions' calls appear in matchesByEngine.
     const matchOutcomes: ProbOutcome[] = [];
+    const byEngine = new Map<string, ProbOutcome[]>();
+    const engineOf = (x: { engine?: string }) => x.engine ?? "1.1.0";
     let upsets = 0;
     for (const s of snaps) {
       const ev = byCode.get(s.code);
@@ -189,8 +201,14 @@ export class PredictMonitor {
         const pre = s.matches[`${m.level}:${m.series}:${m.number}`];
         if (!pre) continue;
         const y = m.red.total === m.blue.total ? 0.5 : m.red.total > m.blue.total ? 1 : 0;
-        matchOutcomes.push({ p: pre.p, y });
-        if (y !== 0.5 && pre.p !== 0.5 && (pre.p > 0.5) !== (y === 1)) upsets++;
+        const v = engineOf(pre);
+        let outcomes = byEngine.get(v);
+        if (!outcomes) { outcomes = []; byEngine.set(v, outcomes); }
+        outcomes.push({ p: pre.p, y });
+        if (v === ENGINE_VERSION) {
+          matchOutcomes.push({ p: pre.p, y });
+          if (y !== 0.5 && pre.p !== 0.5 && (pre.p > 0.5) !== (y === 1)) upsets++;
+        }
       }
     }
     const advByCode = new Map(advancement.filter((a) => a.advancement).map((a) => [a.code, a.advancement!]));
@@ -202,7 +220,7 @@ export class PredictMonitor {
       for (const s of snaps) {
         const a = advByCode.get(s.code);
         const shot = s.advancement[st];
-        if (!a || !shot) continue;
+        if (!a || !shot || engineOf(shot) !== ENGINE_VERSION) continue;
         const status = new Map(a.rows.map((r) => [r.team, r.status]));
         const skip = new Set([...shot.excluded, ...a.rows.filter((r) => r.status === "ALREADY_ADVANCING" || r.status === "INELIGIBLE").map((r) => r.team)]);
         let used = 0;
@@ -219,7 +237,9 @@ export class PredictMonitor {
     return {
       season,
       matches: { n: matchOutcomes.length, accuracy: round(accuracyOf(matchOutcomes)), brier: round(brier(matchOutcomes)), upsets },
+      matchesByEngine: Object.fromEntries([...byEngine].sort(([a], [b]) => a.localeCompare(b)).map(([v, xs]) => [v, { n: xs.length, accuracy: round(accuracyOf(xs)), brier: round(brier(xs)) }])),
       advancement: adv,
+      engine: ENGINE_VERSION,
       updatedAt: now.toISOString(),
     };
   }

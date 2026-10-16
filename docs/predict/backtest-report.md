@@ -138,3 +138,23 @@ Because advancement regresses, it wasn't shipped. Leads for a retry:
 
 The experiment's outputs are kept in `.cache/predict/*-rebuild-experiment.json`.
 
+## Prediction Engine 2.0 (shared engine 2.0.0, Oct 2026)
+
+Control Point vendors `@control-scout/predict-engine` 2.0.0, byte-identical to
+Control Scout's build (`npm run equivalence` there). Its contextual win
+probability was validated on the held-out 2025–26 season. Winner accuracy went
+from 72.68% to 74.65% (+1.98 pp) and Brier from 0.17894 to 0.16842, while
+10-bin calibration error worsened from 1.02% to 1.26%. Two further changes are
+correctness fixes with no accuracy claim attached:
+
+- the Table 4-2 advancement tiebreaks, which moved event Brier by about 0.0003
+  but raised calibration error;
+- recorded bonus RPs in live forecasts.
+
+The full report is Control Scout's `docs/prediction-engine-2.0-report.md`.
+
+`scripts/predict/backtest-matches.mts` computes P(win) with its own inline 1.x
+formula, so it does not measure the 2.0 probability. Use Control Scout's
+`packages/predict-engine/validation/` harness for match-level comparisons.
+`backtest-events.mts` uses the engine's simulator directly and reflects 2.0.
+

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PredictMonitor, eventStillOpen } from "../predict/monitor.js";
+import { ENGINE_VERSION } from "@control-scout/predict-engine";
 import type { Forecast, ForecastMatch } from "../predict/engine.js";
 import type { EventRecord, MatchRecord } from "../predict/types.js";
 
@@ -22,6 +23,31 @@ const rec = (n: number, red: number, blue: number): MatchRecord => ({ season: 20
 const event = (matches: MatchRecord[]): EventRecord => ({ season: 2025, code: "USXXQ1", type: "Qualifier", start: "2025-11-01", end: "2025-11-01", startTime: 0, teams: [1, 2, 3, 4], matches, awards: [] } as any);
 
 describe("PredictMonitor", () => {
+  it("headline scores and drift use only the running engine's calls", () => {
+    const mon = new PredictMonitor(dir);
+    mon.record(forecast("pre", [fm(1, 0.8)], [[1, 0.9]]));
+    // An older, unversioned call (recorded before engine 2.0) that was badly wrong.
+    const file = join(dir, "live", "2025", "USXXQ1.json");
+    const snap = JSON.parse(readFileSync(file, "utf8"));
+    snap.matches["qual:0:2"] = { p: 0.99, at: "2025-11-01T00:00:00Z" };
+    writeFileSync(file, JSON.stringify(snap));
+    const live = new PredictMonitor(dir).score(2025, [event([rec(1, 100, 50), rec(2, 10, 90)])], []);
+    expect(live.engine).toBe(ENGINE_VERSION);
+    expect(live.matches.n).toBe(1);
+    expect(live.matches.accuracy).toBe(1);
+    expect(live.matchesByEngine!["1.1.0"]).toEqual({ n: 1, accuracy: 0, brier: 0.9801 });
+  });
+
+  it("labels every call with the engine version and scores versions apart", () => {
+    const mon = new PredictMonitor(dir);
+    mon.record(forecast("pre", [fm(1, 0.8), fm(2, 0.3)], [[1, 0.6]]));
+    const snap = JSON.parse(readFileSync(join(dir, "live", "2025", "USXXQ1.json"), "utf8"));
+    expect(snap.matches["qual:0:1"].engine).toBe(ENGINE_VERSION);
+    expect(snap.advancement.pre.engine).toBe(ENGINE_VERSION);
+    const live = mon.score(2025, [event([rec(1, 100, 50), rec(2, 40, 90)])], []);
+    expect(live.matchesByEngine).toEqual({ [ENGINE_VERSION]: { n: 2, accuracy: 1, brier: live.matches.brier } });
+  });
+
   it("records unplayed matches first-write-wins and skips played ones", () => {
     const mon = new PredictMonitor(dir);
     expect(mon.record(forecast("pre", [fm(1, 0.7), fm(2, null), fm(3, 0.4, { red: 1, blue: 2 })]))).toBe(true);

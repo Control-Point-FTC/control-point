@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { PredictEngine } from "../predict/engine";
 import { RatingBook } from "../predict/rating";
+import { predictMatch } from "../predict/matchModel";
+import { FITTED_MODEL } from "@control-scout/predict-engine";
 import type { PredictStore } from "../predict/store";
 import type { EventRecord, MatchRecord } from "../predict/types";
 import type { FtcEventFull, FtcMatchFull } from "../../src/types/ftcScout";
@@ -126,6 +128,25 @@ describe("a rebuild in progress", () => {
   });
 });
 
+describe("offline recorded bonus RPs", () => {
+  it("the pack carries stored bonus flags and the device's forecaster uses them like the server", async () => {
+    const flags = { movement: true, goal: false, pattern: true };
+    hist.USXXQ1.matches[0].blue.bonusRp = flags;
+    try {
+      const e = new PredictEngine(store, [2025]);
+      await e.rebuild();
+      const predict = JSON.parse(JSON.stringify(e.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1"])));
+      expect(predict.bonus.USXXQ1["qual:0:1"]).toEqual([null, flags]);
+      const off = offlineForecaster({ ...pack, predict })!;
+      const recorded = (off as unknown as { recordedBonus(s: number, c: string, k: string, x: "red" | "blue"): unknown }).recordedBonus;
+      expect(recorded.call(off, 2025, "USXXQ1", "qual:0:1", "blue")).toEqual(flags);
+      expect(recorded.call(off, 2025, "USXXQ1", "qual:0:1", "red")).toBeNull();
+      // A pack from before engine 2.0 has no flags: nothing recorded, so they're sampled.
+      expect(recorded.call(offlineForecaster({ ...pack, predict: { ...predict, bonus: undefined } })!, 2025, "USXXQ1", "qual:0:1", "blue")).toBeNull();
+    } finally { delete hist.USXXQ1.matches[0].blue.bonusRp; }
+  });
+});
+
 describe("RatingBook data round trip", () => {
   it("survives JSON, including seasons a team skipped", () => {
     const b = new RatingBook();
@@ -137,5 +158,24 @@ describe("RatingBook data round trip", () => {
     for (const t of TEAMS) expect(back.get(t)).toEqual(b.get(t));
     expect(back.priorZ(100)).toEqual(b.priorZ(100));
     expect(RatingBook.fromData(b.toData(new Set([100]))).toData().history.map(([t]) => t)).toEqual([100]);
+  });
+
+  it("carries engine 2.0's reliability state, and a pre-2.0 pack falls back to the legacy win odds", () => {
+    const b = new RatingBook(FITTED_MODEL.rating);
+    b.startSeason(2025);
+    for (const m of hist.USXXQ1.matches) b.update(m);
+    const opts = { contextual: FITTED_MODEL.contextual, context: { level: "qual" as const } };
+    const back = RatingBook.fromData(JSON.parse(JSON.stringify(b.toData())));
+    expect(back.reliabilityReady).toBe(true);
+    for (const t of TEAMS) expect(back.reliabilityOf(t)).toEqual(b.reliabilityOf(t));
+    const now = predictMatch(b, [100, 101], [102, 103], FITTED_MODEL.noise, FITTED_MODEL.calibration, opts);
+    expect(now.model).toBe("contextual");
+    expect(predictMatch(back, [100, 101], [102, 103], FITTED_MODEL.noise, FITTED_MODEL.calibration, opts).pRedWin).toBe(now.pRedWin);
+    // A pack saved before 2.0 has no reliability state: legacy odds, never an invented history.
+    const { reliability: _r, stateVersion: _v, ...old } = b.toData();
+    const legacy = RatingBook.fromData(old);
+    const p = predictMatch(legacy, [100, 101], [102, 103], FITTED_MODEL.noise, FITTED_MODEL.calibration, opts);
+    expect(p.model).toBe("legacy");
+    expect(p.pRedWin).toBe(predictMatch(b, [100, 101], [102, 103], FITTED_MODEL.noise, FITTED_MODEL.calibration).pRedWin);
   });
 });
