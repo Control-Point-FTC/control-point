@@ -11,8 +11,7 @@ import { taskTagColumns } from "../taskTags";
 import { cleanAwards, cleanLabels, cleanRecordSubsystems } from "../../src/types/taskTags";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "../../src/utils/brunoTasks";
 
-// 60 s: the harness fetch can stall on a reused socket on Windows (see teamModules.test.ts).
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("tag helpers", () => {
   it("awards by id or name, in taxonomy order; unknown ones dropped", () => {

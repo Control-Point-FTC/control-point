@@ -15084,8 +15084,12 @@ Rules:
     });
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Vite middleware for development. CP_NO_VITE=1 skips it (the server
+  // tests set it): Vite's dependency scan can block the event loop for
+  // 20–50 s shortly after boot, which stalls every API request behind it.
+  if (process.env.NODE_ENV !== "production" && process.env.CP_NO_VITE === "1") {
+    // API only: no client pages are served.
+  } else if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

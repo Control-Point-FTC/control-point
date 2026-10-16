@@ -38,8 +38,13 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.once(sig, onSignal);
 }
 
-/** Start `npx tsx server.ts` in its own process group (POSIX). */
+/** Start `npx tsx server.ts` in its own process group (POSIX).
+ *  Without Vite's dev middleware unless `env.CP_NO_VITE` says otherwise:
+ *  Vite's dependency scan blocks the server's event loop for 20–50 s
+ *  shortly after boot (Windows, busy machines), so API requests sent then
+ *  time out. A suite that needs Vite passes CP_NO_VITE: "". */
 export function spawnServerProcess(env: Record<string, string | undefined>, stdio: any = "ignore"): ChildProcess {
+  if (env.CP_NO_VITE === undefined) env = { ...env, CP_NO_VITE: "1" };
   const win = process.platform === "win32";
   // Windows can't spawn the npx.cmd shim without a shell.
   const proc = spawn(win ? "npx tsx server.ts" : "npx", win ? [] : ["tsx", "server.ts"], {

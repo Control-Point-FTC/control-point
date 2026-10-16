@@ -12,8 +12,7 @@ import { isOpenStatus } from "../../src/types/taskStatus";
 import { isTaskOverdue } from "../../src/utils/countdown";
 import { normalizeTaskUpdate } from "../../src/utils/brunoTasks";
 
-// 60 s: the harness fetch can stall on a reused socket on Windows (see teamModules.test.ts).
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("status helpers", () => {
   it("only To do and In progress are open; a cancelled task is never overdue", () => {
