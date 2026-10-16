@@ -5,6 +5,7 @@
 //   updateSummary / updateInsights (briefing), openBruno (Ask Bruno).
 // Admin and member dashboards are one layout; admin-only sections are gated
 // exactly like the Legacy split (isAdmin).
+import { RsvpButtons } from '../ui/RsvpButtons';
 import { useMemo, useState } from 'react';
 import { attendanceInsight } from '../../components/dashboard/attendanceInsight';
 import { useNavigate } from 'react-router-dom';
@@ -499,6 +500,9 @@ function ThisWeek({ events, allEvents, dayLabel, onNavigate }: { events: any[]; 
                   </span>
                 </span>
               </button>
+              {e.rsvp_mode && e.rsvp_mode !== 'none' && e.invited !== false && (
+                <div className="ml-14 mt-1.5"><RsvpButtons event={e} compact /></div>
+              )}
             </StaggerItem>
           ))}
         </Stagger>

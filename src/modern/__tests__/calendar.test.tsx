@@ -30,6 +30,8 @@ beforeEach(() => {
 const me = { id: 7, name: 'Ada', team_id: 1, interface_mode: 'modern' };
 const now = new Date();
 const today = toDateKey(now);
+/** The first write the page made (reads such as /api/roles don't count). */
+const writeCall = () => api.apiFetch.mock.calls.find((c: any[]) => c[1]?.method && c[1].method !== 'GET')![1];
 const later = toDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
 const baseEvents = [
   { id: 1, title: 'Build night', date: later, start_time: '23:00', end_time: '23:30', event_type: 'meeting', location: 'Shop', team_id: 1 },
@@ -75,7 +77,7 @@ describe('Modern Calendar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add another day/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create event' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
-    const body = JSON.parse(api.apiFetch.mock.calls[0][1].body);
+    const body = JSON.parse(writeCall().body);
     expect(body).toMatchObject({ title: 'Regional', start_time: '16:00', end_time: '18:00', event_type: 'scrimmage', agenda: 'Inspection\nMatches' });
     expect(body.extra_days).toEqual([{ date: toDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)), start_time: '16:00', end_time: '18:00' }]);
   });
@@ -110,9 +112,9 @@ describe('Modern Calendar', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Competition/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create event' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
-    expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toEqual({
+    expect(JSON.parse(writeCall().body)).toEqual({
       title: 'Scrimmage', description: '', date: today, start_time: '18:00', end_time: '', location: '',
-      event_type: 'competition', agenda: '', team_id: null, created_by: 7, reminder_minutes: null, repeat: null,
+      event_type: 'competition', agenda: '', rsvp_mode: 'none', attendee_roles: [], team_id: null, created_by: 7, reminder_minutes: null, repeat: null,
     });
     expect(props.setEvents).toHaveBeenCalled();
     await waitFor(() => expect(props.refresh.events).toHaveBeenCalled());
@@ -147,7 +149,7 @@ describe('Modern Calendar', () => {
     fireEvent.change(title, { target: { value: 'Build night (late)' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events/1', expect.objectContaining({ method: 'PATCH' })));
-    expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toMatchObject({ title: 'Build night (late)', team_id: 1, created_by: 7 });
+    expect(JSON.parse(writeCall().body)).toMatchObject({ title: 'Build night (late)', team_id: 1, created_by: 7 });
 
     fireEvent.click(screen.getAllByRole('button', { name: /Qualifier/ })[0]);
     sheet = await screen.findByRole('dialog');

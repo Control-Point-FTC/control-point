@@ -96,14 +96,14 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Multi-day events ("+ Add another day"; one event per day, each with its own times)
 - [x] Location accepts an address or a video-call link (clickable)
 - [x] Agenda field (in exports, Bruno's lookup and Bruno's event cards)
-- [ ] Attendees default to whole team, with role chips to narrow
+- [x] Attendees default to whole team, with role chips to narrow (only they're notified and can RSVP)
 - [x] Repeats weekly / recurring series
 - [ ] "Notify members" checkbox (uses PR 0.4)
 
 ### PR 2.2: RSVP
-- [ ] RSVP style per event: No RSVP / Can't-make-it-only (with reason → auto-excused) / Full RSVP
-- [ ] RSVP buttons in the event popover, dashboard and notifications
-- [ ] RSVP counts on the event
+- [x] RSVP style per event: No RSVP / Can't-make-it-only (with reason → auto-excused) / Full RSVP
+- [~] RSVP buttons in the event popover and dashboard (done); in notifications (to do)
+- [x] RSVP counts on the event (and who answered; reasons for managers)
 
 ### PR 2.3: Event-linked attendance
 - [~] Attendance by date (have) — link attendance sheets to a specific event

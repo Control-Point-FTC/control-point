@@ -13,6 +13,9 @@ import { EVENT_TYPES, repeatError, type useCalendarController } from '../../../c
 import { eventTimeError } from '../../../utils/validation';
 import { everyLabel, readEventRepeat, repeatLabel, reminderLabel, REMINDER_CHOICES } from '../../../utils/eventSeries';
 import { locationHref, MAX_AGENDA } from '../../../types/eventTypes';
+import { RSVP_MODES, RSVP_MODE_LABELS, RSVP_STATUS_LABELS, cleanRsvpMode } from '../../../types/eventRsvp';
+import { RsvpButtons, rsvpCountsText } from '../../ui/RsvpButtons';
+import { apiFetch } from '../../../services/api';
 
 type Ctl = ReturnType<typeof useCalendarController>;
 
@@ -90,6 +93,9 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
                   <dd>{reminderLabel(event.reminder_minutes)}{!event.start_time && Number(event.reminder_minutes) < 1440 ? ' 9 AM' : ''}</dd>
                 </>)}
               </dl>
+              {cleanRsvpMode(event.rsvp_mode) && cleanRsvpMode(event.rsvp_mode) !== 'none' && (
+                <RsvpSection event={event} />
+              )}
               <Separator />
               {event.agenda?.trim() && (
                 <div>
@@ -341,6 +347,17 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 </p>
               )}
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="event-rsvp">RSVP</Label>
+                <Select value={f.rsvp_mode} onValueChange={(v) => set({ rsvp_mode: v as typeof f.rsvp_mode })}>
+                  <SelectTrigger id="event-rsvp"><SelectValue /></SelectTrigger>
+                  <SelectContent>{RSVP_MODES.map((m) => <SelectItem key={m} value={m}>{RSVP_MODE_LABELS[m]}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <AttendeeRoles value={f.attendee_roles} onChange={(ids) => set({ attendee_roles: ids })} open={ctl.showModal} />
+              {f.rsvp_mode === 'decline_only' && <p className="text-xs text-muted-foreground sm:col-span-2">People only say when they can't come; giving a reason excuses them on that day's attendance.</p>}
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="event-location">Location</Label>
               <Input id="event-location" value={f.location} onChange={(e) => set({ location: e.target.value })} placeholder="An address, or a video-call link" />
@@ -443,5 +460,65 @@ function ExtraDays({ f, set }: { f: Ctl['form']; set: (patch: Partial<Ctl['form'
       )}
       {days.length > 0 && <p className="text-xs text-muted-foreground">Each day is saved as its own event with the same details.</p>}
     </div>
+  );
+}
+
+/** "Who's it for": the whole team, or members of the picked roles. */
+function AttendeeRoles({ value, onChange, open }: { value: number[]; onChange: (ids: number[]) => void; open: boolean }) {
+  const [roles, setRoles] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    apiFetch('/api/roles').then((r) => (r.ok ? r.json() : [])).then((d) => { if (live && Array.isArray(d)) setRoles(d.map((r: any) => ({ id: Number(r.id), name: String(r.name) }))); }).catch(() => {});
+    return () => { live = false; };
+  }, [open]);
+  const toggle = (id: number) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="grid gap-2">
+      <Label>Who's it for</Label>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Who the event is for">
+        <button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}
+          className={cn('rounded-full border px-2.5 py-1 text-xs', value.length === 0 ? 'border-accent bg-accent/15' : 'border-border text-muted-foreground hover:bg-muted')}>
+          Whole team
+        </button>
+        {roles.map((r) => (
+          <button key={r.id} type="button" aria-pressed={value.includes(r.id)} onClick={() => toggle(r.id)}
+            className={cn('rounded-full border px-2.5 py-1 text-xs', value.includes(r.id) ? 'border-accent bg-accent/15' : 'border-border text-muted-foreground hover:bg-muted')}>
+            {r.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The event sheet's RSVP: your answer, the counts, and who answered. */
+function RsvpSection({ event }: { event: any }) {
+  const [who, setWho] = useState<{ answers: { member_id: number; name: string; status: string; reason?: string }[]; no_answer: number } | null>(null);
+  const load = () => {
+    apiFetch(`/api/events/${event.id}/rsvps`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && Array.isArray(d.answers)) setWho(d); }).catch(() => {});
+  };
+  useEffect(load, [event.id, event.rsvp_counts?.going, event.rsvp_counts?.maybe, event.rsvp_counts?.not_going]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <section aria-label="RSVP" className="space-y-3">
+      <Separator />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <Label>RSVP</Label>
+        <span className="text-xs text-muted-foreground">{rsvpCountsText(event)}{who && who.no_answer > 0 ? ` · ${who.no_answer} no answer yet` : ''}</span>
+      </div>
+      {event.invited === false
+        ? <p className="text-sm text-muted-foreground">This event is for other roles.</p>
+        : <RsvpButtons event={event} onChanged={load} />}
+      {who && who.answers.length > 0 && (
+        <ul className="space-y-1 text-sm">
+          {who.answers.map((a) => (
+            <li key={a.member_id} className="flex flex-wrap gap-x-2">
+              <span className="font-medium">{a.name}</span>
+              <span className="text-muted-foreground">{(RSVP_STATUS_LABELS as Record<string, string>)[a.status] ?? a.status}{a.reason ? ` — ${a.reason}` : ''}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

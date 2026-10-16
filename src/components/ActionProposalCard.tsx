@@ -1,8 +1,9 @@
-import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
+import { ArrowRight, Calendar, CalendarCheck, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
 import { TEAM_MODULES } from '../types/teamModules';
 import { awardById } from '../types/taskTags';
 import { strictWipLimits } from '../types/taskStatus';
 import { cleanEventType, EVENT_TYPE_LABELS } from '../types/eventTypes';
+import { RSVP_STATUS_LABELS } from '../types/eventRsvp';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
@@ -90,6 +91,7 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   communication: { label: 'Communication log', icon: Mail },
   workspace: { label: 'Workspace settings', icon: SlidersHorizontal },
   'task-comment': { label: 'Task comments', icon: MessageSquare },
+  'event-rsvp': { label: 'RSVP', icon: CalendarCheck },
 };
 
 /** "Turn off Code · Turn on Predict · Subsystems: Drivetrain, Lift" */
@@ -137,6 +139,12 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
   if (kind === 'task') return taskSummary(it);
   if (kind === 'task-update') return taskUpdateSummary(it);
   if (kind === 'workspace') return workspaceSummary(it);
+  if (kind === 'event-rsvp') {
+    const s = typeof it.status === 'string' ? (RSVP_STATUS_LABELS as Record<string, string>)[it.status] : '';
+    const name = typeof it.title === 'string' && it.title.trim() ? it.title.trim().slice(0, 60) : `Event #${String(it.id ?? '').replace(/^#/, '')}`;
+    const reason = typeof it.reason === 'string' && it.reason.trim() ? ` · ${it.reason.trim().slice(0, 80)}` : '';
+    return `${name} — ${s || 'Take back my answer'}${reason}`;
+  }
   if (kind === 'task-comment') {
     const id = Number(String(it?.id ?? '').replace(/^#/, ''));
     const name = getTaskIndex()?.get(id)?.title || `Task #${id}`;

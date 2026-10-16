@@ -142,6 +142,19 @@ describe("Google copies", () => {
 });
 
 describe("reminders", () => {
+  it("an event for chosen roles reminds only them", async () => {
+    const role = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Pit crew', '[]')", args: [team] })).lastInsertRowid);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [memberId, role] });
+    const at = new Date(Date.now() + 20 * 60_000);
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+      .formatToParts(at).map((x) => [x.type, x.value]));
+    const r = await t.post("/api/events", { title: "Crew huddle", date: `${p.year}-${p.month}-${p.day}`, start_time: `${p.hour}:${p.minute}`, reminder_minutes: 30, attendee_roles: [role] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    for (let i = 0; i < 40 && !(await rows("SELECT reminder_sent_at FROM events WHERE id = ?", r.body.id))[0].reminder_sent_at; i++) await new Promise((res) => setTimeout(res, 250));
+    const got = await rows("SELECT user_id FROM notifications WHERE content LIKE 'Reminder: Crew huddle%'");
+    expect(got.map((n) => Number(n.user_id))).toEqual([memberId]);
+  });
+
   it("sends one notification per member when the lead time arrives, once", async () => {
     // Starts 20 minutes from now in the team's timezone, 30-minute reminder: due now.
     const at = new Date(Date.now() + 20 * 60_000);

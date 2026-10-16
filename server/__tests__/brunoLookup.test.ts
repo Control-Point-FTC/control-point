@@ -51,7 +51,8 @@ describe("runLookups", () => {
       CREATE TABLE task_links (team_id INTEGER, from_id INTEGER, to_id INTEGER, kind TEXT, created_at TEXT);
       CREATE TABLE task_assignee_done (task_id INTEGER, member_id INTEGER, completed_at TEXT);
       CREATE TABLE task_assignees (task_id INTEGER, member_id INTEGER);
-      CREATE TABLE events (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, date TEXT, start_time TEXT, end_time TEXT, location TEXT, event_type TEXT, agenda TEXT);
+      CREATE TABLE events (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, date TEXT, start_time TEXT, end_time TEXT, location TEXT, event_type TEXT, agenda TEXT, rsvp_mode TEXT);
+      CREATE TABLE event_rsvps (event_id INTEGER, team_id INTEGER, member_id INTEGER, status TEXT, reason TEXT, excused_date TEXT, updated_at TEXT);
       CREATE TABLE communications (id INTEGER PRIMARY KEY, team_id INTEGER, recipient TEXT, subject TEXT, body TEXT, date TEXT, direction TEXT, parent_id INTEGER);
       CREATE TABLE outreach (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, date TEXT, hours INTEGER, location TEXT);
       CREATE TABLE budget (id INTEGER PRIMARY KEY, team_id INTEGER, type TEXT, amount REAL, category TEXT, description TEXT, date TEXT);
@@ -67,7 +68,8 @@ describe("runLookups", () => {
         (4, 1, 'Tune PID', '', 'done', '2026-09-01', NULL, NULL, '2026-08-20', '2026-10-06T14:00:00Z');
       INSERT INTO task_assignees VALUES (1, 1), (2, 2);
       INSERT INTO events VALUES (1, 1, 'Qualifier', '', '2026-12-12', '', '', 'Gym', 'competition', 'Inspection
-Practice field'), (2, 2, 'Other event', '', '2026-12-12', '', '', '', 'meeting', '');
+Practice field', 'full'), (2, 2, 'Other event', '', '2026-12-12', '', '', '', 'meeting', '', 'none');
+      INSERT INTO event_rsvps VALUES (1, 1, 1, 'going', '', NULL, '2026-10-01'), (1, 1, 2, 'not_going', 'Sick', NULL, '2026-10-01');
       INSERT INTO communications VALUES (1, 1, 'REV Robotics', 'Wheel order', 'Asked about lead times', '2026-10-03', 'outbound', NULL);
       INSERT INTO budget VALUES (1, 1, 'expense', 60, 'Wheels', 'Mecanum wheels', '2026-10-03'), (2, 1, 'income', 500, 'Sponsor', 'Acme', '2026-10-04');
       ALTER TABLE tasks ADD COLUMN assigned_to INTEGER;
