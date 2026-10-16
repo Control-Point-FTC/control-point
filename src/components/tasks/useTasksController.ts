@@ -550,6 +550,17 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
     return !!res?.ok;
   };
+  /** Set one task's priority (the board's Priority columns), optimistic. */
+  const setPriority = async (id: number, priority: string | null) => {
+    if (!canManageTasks) { notify('Only team managers can change priority.', 'error'); return; }
+    const before = tasks.find((t: any) => t.id === id)?.priority ?? null;
+    setTasks((ts: any[]) => ts.map((t: any) => (t.id === id ? { ...t, priority } : t)));
+    if (!(await patchTask(id, { priority }))) {
+      // Undo only this change, and only if nothing newer replaced it meanwhile.
+      setTasks((ts: any[]) => ts.map((t: any) => (t.id === id && (t.priority ?? null) === priority ? { ...t, priority: before } : t)));
+      notify('Could not update task — try again.', 'error');
+    }
+  };
   /** Move tasks to To Do / In Progress. Done needs proof, one task at a time. */
   const bulkSetStatus = async (ids: number[], status: 'todo' | 'in-progress') => {
     const ok = await runBulk(ids, (id) => patchTask(Number(id), { status }), { verb: 'Moved', noun: 'task' });
@@ -601,7 +612,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
+    isAdmin, canManageTasks, setPriority, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,

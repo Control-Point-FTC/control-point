@@ -704,7 +704,7 @@ TEAM DATA LOOKUP SKILL:
 \`\`\`lookup
 {"kind":"messages","channel":"general","person":"Arnav","from":"2026-10-06","to":"2026-10-06"}
 \`\`\`
-- "kind" is one of messages, tasks, task_activity, events, communications, outreach, budget (notebook kinds are below). task_activity reads ONE task's discussion and history — {"kind":"task_activity","task":12} — use it for "what's the latest on this task?", "summarize the discussion", "who changed the due date?". Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done, cancelled, or open = not done or cancelled). Up to 3 queries as a JSON array.
+- "kind" is one of messages, tasks, task_activity, events, communications, outreach, budget (notebook kinds are below). task_activity reads ONE task's discussion and history — {"kind":"task_activity","task":12} — use it for "what's the latest on this task?", "summarize the discussion", "who changed the due date?". Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done, cancelled, or open = not done or cancelled), "priority" (tasks: low, medium, high, urgent or none), "subsystem" / "label" (tasks tagged with it). Up to 3 queries as a JSON array.
 - The app runs the lookup and gives you the rows; then answer from them. Never tell the user you can't see message history or past data: look it up.
 
 TEAM NOTEBOOK SKILL:

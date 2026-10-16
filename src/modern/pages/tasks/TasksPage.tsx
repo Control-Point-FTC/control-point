@@ -29,6 +29,10 @@ import { AvatarStack } from './AssigneePicker';
 import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
 import { TaskTagChips } from './TaskTags';
 import { TaskLinkMarks } from './TaskLinks';
+import { GroupBySelect, TaskFiltersButton } from './TaskFilterBar';
+import { groupTasks, matchesFilters, readFilters, readGroup, writeFilters, type Group, type GroupBy, type TaskFilters } from './taskFilters';
+import { parseSubsystems } from '../../../types/teamModules';
+import { parseTagList } from '../../../types/taskTags';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
 import { taskCompletions } from '../../../utils/taskCompletions';
@@ -125,16 +129,26 @@ export function TasksPage(props: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantsNew]);
 
+  // Filters and grouping live in the URL (bookmarkable, shareable).
+  const filters = useMemo(() => readFilters(params), [params]);
+  const group = readGroup(params);
+  const setFilters = (f: TaskFilters) => setParams(writeFilters(params, f, group), { replace: true });
+  const setGroup = (g: GroupBy) => setParams(writeFilters(params, filters, g), { replace: true });
+  const teamSubsystems = parseSubsystems(teams.find((t: any) => t.id === currentUser?.team_id)?.subsystems);
+  const filterSubsystems = useMemo(() => [...new Set([...teamSubsystems, ...ctl.filteredTasks.flatMap((t: any) => parseTagList(t.subsystems))])], [ctl.filteredTasks, teamSubsystems.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filterLabels = useMemo(() => [...new Set(ctl.filteredTasks.flatMap((t: any) => parseTagList(t.labels)))].sort(), [ctl.filteredTasks]);
+
   // Search + assignee filters on top of the shared team/board filter.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return ctl.filteredTasks.filter((t: any) => {
       if (q && !`${t.title} ${t.description || ''}`.toLowerCase().includes(q)) return false;
+      if (!matchesFilters(t, filters)) return false;
       if (who === 'mine') return taskAssigneeIds(t).includes(currentUser?.id);
       if (who !== 'all') return taskAssigneeIds(t).includes(Number(who));
       return true;
     });
-  }, [ctl.filteredTasks, query, who, currentUser?.id]);
+  }, [ctl.filteredTasks, query, who, currentUser?.id, filters]);
 
   // Cancelled tasks are kept but out of the way until asked for.
   const [showCancelled, setShowCancelled] = useState(false);
@@ -149,7 +163,14 @@ export function TasksPage(props: any) {
   const completed = useMemo(() => completedOrder(visible, reviewFilter), [visible, reviewFilter]);
   // Same rule as the Awaiting review list: done and not approved yet (older tasks have no review status).
   const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status !== 'approved').length;
-  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(shown) : view === 'board' ? boardOrder(shown, columns) : view === 'completed' ? completed : NO_TASKS), [view, shown, columns, completed]);
+  // The board's groups as displayed (Priority / Assignee / Subsystem columns).
+  const groups = useMemo(() => (group === 'status' ? null : groupTasks(shown, group, { members, subsystems: teamSubsystems, assigneesOf: (t) => taskAssigneeIds(t) })), [shown, group, members, teamSubsystems.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Selection (and shift-click ranges) follow what's on screen; each task once.
+  const shownInOrder = useMemo(() => (
+    view === 'list' ? listOrder(shown)
+      : view === 'board' ? (groups ? [...new Map(groups.flatMap((g) => g.tasks).map((t: any) => [t.id, t])).values()] : boardOrder(shown, columns))
+        : view === 'completed' ? completed : NO_TASKS
+  ), [view, shown, columns, completed, groups]);
   const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
@@ -187,6 +208,8 @@ export function TasksPage(props: any) {
               {members.map((m: any) => <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>)}
             </SelectContent>
           </Select>
+          <TaskFiltersButton filters={filters} onChange={setFilters} subsystems={filterSubsystems} labels={filterLabels} />
+          {view === 'board' && <GroupBySelect value={group} onChange={setGroup} />}
           {teams.length > 1 && (
             <Select value={ctl.filterTeam} onValueChange={ctl.setFilterTeam}>
               <SelectTrigger className="w-44" aria-label="Filter by team"><SelectValue /></SelectTrigger>
@@ -222,7 +245,9 @@ export function TasksPage(props: any) {
       </PageHeader>
 
       {view === 'board' && (
-        <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} sel={ctl.canManageTasks ? sel : null} />
+        group === 'status'
+          ? <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
+          : <GroupedBoard tasks={shown} groups={groups!} group={group} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
         shown.length === 0
@@ -303,6 +328,127 @@ function DueChip({ task }: { task: any }) {
       {format(new Date(String(task.due_date).slice(0, 10) + 'T12:00:00'), 'MMM d')}{task.due_time && at ? `, ${format(at, 'h:mm a')}` : ''}
       {live && <Countdown to={at!} className="text-[11px]" />}
     </span>
+  );
+}
+
+/** A card's content: title, tags, markers, due date and people (Board and grouped boards). */
+function TaskCardBody({ task: t, people, byId }: { task: any; people: any[]; byId: Map<number, any> }) {
+  return (
+    <>
+      <p className={cn('line-clamp-2 text-sm font-medium', !isOpenStatus(t.status) && 'text-muted-foreground line-through')}>{t.title}</p>
+      <TaskTagChips task={t} className="mt-2" />
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
+        <TaskMarks task={t} byId={byId} />
+        <DueChip task={t} />
+        <span className="ml-auto"><AvatarStack members={people} /></span>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The board in Priority, Assignee or Subsystem columns. Dragging a card to
+ * another Priority column changes its priority; status stays as it is (use
+ * Columns: Status to move work along).
+ */
+function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKey, sel }: {
+  tasks: any[]; groups: Group[]; group: Exclude<GroupBy, 'status'>; ctl: ReturnType<typeof useTasksController>;
+  assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string; sel: Selection | null;
+}) {
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
+  const canDrag = group === 'priority' && ctl.canManageTasks;
+  // Long columns show 40 cards, then more as you scroll (like the Status board).
+  // A card just moved into a column stays in view (and keeps focus).
+  const inc = useIncrementalGroups(40, `${filterKey}|${group}`);
+  const [moved, setMoved] = useState<Set<number>>(() => new Set());
+  const keepMoved = (t: any) => moved.has(t.id);
+  const moveTo = (t: any, colId: string) => {
+    setMoved((s) => new Set(s).add(t.id));
+    void ctl.setPriority(t.id, colId === 'none' ? null : colId);
+  };
+  /** Arrows move between cards; in Priority columns Shift + Left/Right moves the card; X selects it. */
+  const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, t: any) => {
+    const col = Number(e.currentTarget.dataset.gcol);
+    const row = Number(e.currentTarget.dataset.grow);
+    const focusAt = (c: number, r: number) => {
+      const cards = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-grouped-card][data-gcol="${c}"]`));
+      if (!cards.length) return false;
+      cards[Math.max(0, Math.min(r, cards.length - 1))].focus();
+      return true;
+    };
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      if (!canDrag) return;
+      const next = groups[col + (e.key === 'ArrowLeft' ? -1 : 1)];
+      if (!next) return;
+      e.preventDefault();
+      moveTo(t, next.id);
+      window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-grouped-card][data-id="${t.id}"]`)?.focus(), 60);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusAt(col, row + (e.key === 'ArrowDown' ? 1 : -1)); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowLeft' ? -1 : 1;
+      for (let c = col + dir; c >= 0 && c < groups.length; c += dir) if (focusAt(c, row)) break;
+    } else if ((e.key === 'x' || e.key === 'X') && sel) { e.preventDefault(); sel.toggle(t.id); }
+  };
+  return (
+    <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
+      {groups.map((col) => (
+        <section
+          key={col.id}
+          aria-label={`${col.label} (${col.tasks.length})`}
+          onDragOver={(e) => { if (canDrag && dragId != null) { e.preventDefault(); setOverCol(col.id); } }}
+          onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
+          onDrop={(e) => {
+            e.preventDefault();
+            const id = dragId; setDragId(null); setOverCol(null);
+            const t = tasks.find((x) => x.id === id);
+            if (canDrag && t && (t.priority || 'none') !== col.id) moveTo(t, col.id);
+          }}
+          className={cn('flex w-[82vw] shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2 sm:w-72', overCol === col.id && 'bg-accent/10 ring-1 ring-accent/40')}
+        >
+          <header className="flex items-center gap-2 px-2 pb-2 pt-1">
+            <h2 className="truncate text-sm font-medium">{col.label}</h2>
+            <span className="text-sm tabular-nums text-muted-foreground">{col.tasks.length}</span>
+          </header>
+          <ul className="flex min-h-24 flex-col gap-2">
+            {inc.slice(col.id, col.tasks, keepMoved).map((t, rowIdx) => (
+              <li key={t.id} className="group/card relative">
+                {sel && (
+                  <RowCheckbox
+                    sel={sel} id={t.id} label={`Select ${t.title}`}
+                    className={cn('absolute right-2.5 top-2.5 z-10 transition-opacity md:opacity-0 md:group-hover/card:opacity-100 md:focus-within:opacity-100', sel.count > 0 && 'md:opacity-100')}
+                  />
+                )}
+                <button
+                  type="button"
+                  data-grouped-card data-id={t.id} data-gcol={groups.indexOf(col)} data-grow={rowIdx}
+                  aria-keyshortcuts={canDrag ? 'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X' : 'ArrowUp ArrowDown ArrowLeft ArrowRight X'}
+                  onKeyDown={(e) => onKey(e, t)}
+                  draggable={canDrag}
+                  onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                  onClick={() => onOpen(t.id)}
+                  data-cm-type="task-card" data-cm-id={t.id}
+                  aria-label={`${t.title}, ${STATUS_META[t.status]?.label ?? t.status}`}
+                  className={cn('w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow]', 'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60', dragId === t.id && 'opacity-50', sel && 'pr-9', sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40')}
+                >
+                  <span className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className={cn('size-2 rounded-full', STATUS_META[t.status]?.dot)} />{STATUS_META[t.status]?.label ?? t.status}</span>
+                  <TaskCardBody task={t} people={assigneesOf(t)} byId={ctl.taskById} />
+                </button>
+              </li>
+            ))}
+            <LoadMore as="li" hidden={inc.hidden(col.id, col.tasks, keepMoved)} onMore={() => inc.more(col.id)} />
+            {col.tasks.length === 0 && (
+              <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">Nothing here</li>
+            )}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -495,14 +641,7 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
                             sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40',
                           )}
                         >
-                          <p className={cn('line-clamp-2 text-sm font-medium', !isOpenStatus(t.status) && 'text-muted-foreground line-through')}>{t.title}</p>
-                          <TaskTagChips task={t} className="mt-2" />
-                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                            {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
-                            <TaskMarks task={t} byId={ctl.taskById} />
-                            <DueChip task={t} />
-                            <span className="ml-auto"><AvatarStack members={people} /></span>
-                          </div>
+                          <TaskCardBody task={t} people={people} byId={ctl.taskById} />
                         </button>
                       </motion.li>
                     );

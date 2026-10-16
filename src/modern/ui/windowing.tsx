@@ -106,12 +106,14 @@ export function useIncrementalGroups(step = WINDOW_THRESHOLD, resetKey?: unknown
   const printing = usePrinting();
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => { setLimits({}); }, [resetKey]);
+  // Group keys can be any text (a subsystem called "constructor"): read own keys only.
+  const limitOf = (key: string) => (Object.prototype.hasOwnProperty.call(limits, key) ? limits[key] : step);
   return {
     /** The first chunk, plus any later item `keep` asks for (e.g. a card
      *  just moved into this group, so it never vanishes off the end). */
     slice<T>(key: string, items: T[], keep?: (item: T) => boolean): T[] {
       if (printing) return items;
-      const n = limits[key] ?? step;
+      const n = limitOf(key);
       const head = items.slice(0, n);
       return keep ? head.concat(items.slice(n).filter(keep)) : head;
     },
@@ -119,13 +121,13 @@ export function useIncrementalGroups(step = WINDOW_THRESHOLD, resetKey?: unknown
      *  same `keep` used for slice (kept items beyond the range are shown). */
     hidden<T>(key: string, items: number | T[], keep?: (item: T) => boolean): number {
       if (printing) return 0;
-      const n = limits[key] ?? step;
+      const n = limitOf(key);
       if (typeof items === 'number') return Math.max(0, items - n);
       const rest = items.slice(n);
       return keep ? rest.filter((x) => !keep(x)).length : rest.length;
     },
     more(key: string) {
-      setLimits((l) => ({ ...l, [key]: (l[key] ?? step) + step }));
+      setLimits((l) => ({ ...l, [key]: (Object.prototype.hasOwnProperty.call(l, key) ? l[key] : step) + step }));
     },
   };
 }

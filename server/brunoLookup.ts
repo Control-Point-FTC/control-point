@@ -38,6 +38,11 @@ export interface LookupQuery {
   note?: number;
   /** task_activity: the task's id (its comments and history). */
   task?: number;
+  /** Tasks: "low" | "medium" | "high" | "urgent" | "none". */
+  priority?: string;
+  /** Tasks: a robot subsystem or label they're tagged with. */
+  subsystem?: string;
+  label?: string;
 }
 
 /** Runs a notebook lookup for the asking member (Bruno-scoped access). */
@@ -82,6 +87,9 @@ export function extractLookupBlocks(text: string): { text: string; queries: Look
         ...(q.kind === "notebook_page" && Number.isSafeInteger(page) && page > 0 ? { page } : {}),
         ...(q.kind === "sticky_notes" && Number.isSafeInteger(Number(q.note)) && Number(q.note) > 0 ? { note: Number(q.note) } : {}),
         ...(q.kind === "task_activity" ? { task: taskRef } : {}),
+        ...(q.kind === "tasks" && ["low", "medium", "high", "urgent", "none"].includes(String(q.priority || "").toLowerCase()) ? { priority: String(q.priority).toLowerCase() } : {}),
+        ...(q.kind === "tasks" && str(q.subsystem, 40) ? { subsystem: str(q.subsystem, 40) } : {}),
+        ...(q.kind === "tasks" && str(q.label, 40) ? { label: str(q.label, 40) } : {}),
       });
     }
   }
@@ -212,6 +220,11 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
     if (q.status === "open") sql += " AND t.status NOT IN ('done', 'cancelled')";
     else if (["todo", "in-progress", "done", "cancelled"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
+    if (q.priority === "none") sql += " AND (t.priority IS NULL OR t.priority = '')";
+    else if (q.priority) { sql += " AND t.priority = ?"; args.push(q.priority); }
+    // Tags are JSON arrays: match one element, any case.
+    if (q.subsystem) { sql += " AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(t.subsystems) THEN t.subsystems ELSE '[]' END) WHERE LOWER(json_each.value) = ?)"; args.push(q.subsystem.toLowerCase()); }
+    if (q.label) { sql += " AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(t.labels) THEN t.labels ELSE '[]' END) WHERE LOWER(json_each.value) = ?)"; args.push(q.label.toLowerCase()); }
     if (q.person) {
       // Same rule as getTaskAssigneeIds: task_assignees rows, else the legacy
       // assigned_to (set when someone completes an unassigned task).
@@ -322,7 +335,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
 }
 
 function describe(q: LookupQuery): string {
-  const bits = [q.page && `page #${q.page}`, q.task && `task #${q.task}`, q.query && `"${q.query}"`, q.channel && `#${q.channel}`, q.person && `person ${q.person}`, q.status && `status ${q.status}`,
+  const bits = [q.page && `page #${q.page}`, q.task && `task #${q.task}`, q.priority && `priority ${q.priority}`, q.subsystem && `subsystem ${q.subsystem}`, q.label && `label ${q.label}`, q.query && `"${q.query}"`, q.channel && `#${q.channel}`, q.person && `person ${q.person}`, q.status && `status ${q.status}`,
     q.from && q.to ? (q.from === q.to ? `on ${q.from}` : `${q.from} to ${q.to}`) : q.from ? `from ${q.from}` : q.to ? `until ${q.to}` : ""].filter(Boolean);
   return `${q.kind}${bits.length ? ` (${bits.join(", ")})` : ""}`;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
+import { render, renderHook, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { useState } from 'react';
 import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../ui/windowing';
 
@@ -136,5 +136,18 @@ describe('incremental groups', () => {
     expect(rendered()).toHaveLength(81);
     fireEvent.click(screen.getByRole('button', { name: 'New search' }));
     expect(rendered()).toHaveLength(41);
+  });
+});
+
+describe('useIncrementalGroups keys', () => {
+  it('any text works as a group key (a subsystem called "constructor")', () => {
+    const items = Array.from({ length: 5 }, (_, i) => i);
+    const { result } = renderHook(() => useIncrementalGroups(2));
+    for (const key of ['constructor', '__proto__', 'toString']) {
+      expect(result.current.slice(key, items)).toEqual([0, 1]);
+      expect(result.current.hidden(key, items)).toBe(3);
+    }
+    act(() => result.current.more('constructor'));
+    expect(result.current.slice('constructor', items)).toEqual([0, 1, 2, 3]);
   });
 });
