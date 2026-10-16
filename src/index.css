@@ -684,3 +684,19 @@ html.light .theme-dark .card-surface {
   .cp-slot-banner, .cp-slot-mention { max-width: calc(100vw - var(--cp-side-dock, 0px) - 3rem); }
 }
 .cp-slot-mention { bottom: calc(var(--cp-above-fab) + var(--cp-slot-banner, 0px)) !important; }
+
+/* Task board: a card that was just marked Done pops once and shows a check. */
+@keyframes task-done-pop {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-success) 55%, transparent); }
+  35% { transform: scale(1.03); box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-success) 25%, transparent); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes task-done-check { 0% { opacity: 0; transform: scale(0.4) rotate(-20deg); } 40% { opacity: 1; transform: scale(1.15) rotate(0); } 80% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
+@keyframes task-done-ring { 0%, 60% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-success) 60%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes task-done-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+.task-done-pop { animation: task-done-pop 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.task-done-check { animation: task-done-check 1.2s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .task-done-pop { animation: task-done-ring 1.2s linear; }
+  .task-done-check { animation: task-done-fade 1.2s linear forwards; }
+}

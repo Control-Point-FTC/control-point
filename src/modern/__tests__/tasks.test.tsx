@@ -163,6 +163,32 @@ describe('Modern Tasks', () => {
     expect(await screen.findByText('Whole team')).toBeInTheDocument();
   });
 
+  it('Mine shows your open count and toggles the assignee filter', async () => {
+    setup();
+    const mine = screen.getByRole('button', { name: /Mine: 1 open task assigned to you/ });
+    fireEvent.click(mine);
+    expect(mine).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(screen.queryByText('Print brackets')).not.toBeInTheDocument());
+    fireEvent.click(mine);
+    expect(screen.getByText('Print brackets')).toBeInTheDocument();
+  });
+
+  it('Alt + Right moves a focused card to the next column', async () => {
+    setup();
+    const card = screen.getByRole('button', { name: /^Mount the climber hooks, To do/ });
+    fireEvent.keyDown(card, { key: 'ArrowRight', altKey: true });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH', body: expect.stringContaining('"in-progress"') })));
+  });
+
+  it('insights flag overdue and undated open tasks and show the on-time rate', async () => {
+    setup({ tasks: [...baseTasks, { id: 4, title: 'Shipped late', status: 'done', team_id: 1, due_date: '2020-01-01', completed_at: new Date().toISOString() }] as any[] });
+    fireEvent.mouseDown(screen.getByRole('radio', { name: 'Insights' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Insights' }));
+    expect(await screen.findByRole('region', { name: 'Needs attention: Overdue' })).toHaveTextContent('Mount the climber hooks');
+    expect(screen.getByRole('region', { name: 'Needs attention: No due date' })).toHaveTextContent('Print brackets');
+    expect(screen.getByText(/0 of 1 tasks with a due date/)).toBeInTheDocument();
+  });
+
   it('a late save never wipes a newer draft', async () => {
     let resolve!: (v: any) => void;
     api.apiFetch.mockImplementation(() => new Promise((r) => { resolve = r; }));

@@ -186,6 +186,21 @@ describe("ground truth: the audited workspace", () => {
     expect(f.openTasks.some((x) => x.title === "Not yours")).toBe(false);
   });
 
+  it("on-time rate uses the team's calendar day; open tasks without a due date are counted", async () => {
+    const team2 = await seedTeam(t.db, "On-time Team");
+    // Done 10 PM Oct 1 in New York (Oct 2 in UTC), due Oct 1: on time for the team.
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, due_date, completed_at) VALUES (?, 'Just made it', 'done', '2026-10-01', '2026-10-02T02:00:00Z')", args: [team2] });
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, due_date, completed_at) VALUES (?, 'Late', 'done', '2026-09-30', '2026-10-03T15:00:00Z')", args: [team2] });
+    // Outside the 30-day window, and done without a due date: not counted.
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, due_date, completed_at) VALUES (?, 'Long ago', 'done', '2026-08-01', '2026-08-01T15:00:00Z')", args: [team2] });
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status, completed_at) VALUES (?, 'No due', 'done', '2026-10-03T15:00:00Z')", args: [team2] });
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status) VALUES (?, 'Someday', 'todo')", args: [team2] });
+    const f = (await loadWorkspaceFacts(db(), team2, "America/New_York", NOW))!;
+    expect(f.onTime).toEqual({ onTime: 1, total: 2 });
+    expect(f.noDueOpenTotal).toBe(1);
+    expect(formatWorkspaceFacts(f)).toMatch(/1 open task\(s\) have no due date; on-time rate 50% \(1 of 2/);
+  });
+
   it("says Sunday — with the date, the time and the source", async () => {
     const f = (await loadWorkspaceFacts(db(), teamId, "America/New_York", NOW))!;
     const text = formatWorkspaceFacts(f);

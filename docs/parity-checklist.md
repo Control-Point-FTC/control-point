@@ -46,7 +46,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ### PR 1.1: Task data model
 - [x] Statuses: To do / In progress / Done / Cancelled (Cancelled kept but hidden by default; "Show cancelled" adds the column)
 - [ ] Custom task statuses per team
-- [~] Priority (have) — make it Low / Med / High / Urgent pills
+- [x] Priority: Low / Medium / High / Urgent pills
 - [x] Start date (have due date + due time)
 - [x] Blocked state + task dependencies ("blocked by an incomplete task" warning)
 - [x] Linked tasks ("2 linked")
@@ -70,15 +70,15 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] List view
 - [x] Gantt / timeline view (start → due bars, week navigation, today line)
 - [x] "Columns:" pivot — group by Status / Priority / Assignee / Subsystem (drag between Priority columns sets priority)
-- [ ] "Mine" filter with count
+- [x] "Mine" filter with count
 - [x] Filters: priority, subsystem, label, award evidence, due (overdue / next 7 days / none); search; assignee; kept in the URL
 - [x] Saved filters — filters live in the URL, so a filtered board is bookmarkable/shareable
 - [x] Bulk actions
-- [ ] Alt/Option + ← → keyboard move between columns (with on-page hint)
-- [ ] Completion animation (reduced-motion variant)
+- [x] Alt/Option + ← → keyboard move between columns (with on-page hint)
+- [x] Completion animation (reduced-motion variant)
 - [ ] "Notebook entries" counter on each card (did you write it down?) — needs structured notebook↔task links (Phase 3)
 - [x] WIP limits per column (the competitor lacks this; cheap win)
-- [~] Insights tab (have) — add on-time rate, overdue, missing-due-date "needs attention"
+- [x] Insights tab — on-time rate, overdue and missing-due-date "needs attention" (Bruno reads the same numbers)
 
 ### PR 1.4: AI auto-tagging (Bruno)
 - [ ] Bruno suggests subsystem / labels / award tags on new tasks, shown as "AI tagged" with an explanation tooltip, one-click undo

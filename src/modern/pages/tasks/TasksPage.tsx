@@ -9,7 +9,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
-  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera, Ban, GanttChart,
+  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera, Ban, GanttChart, UserCheck,
 } from 'lucide-react';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
@@ -30,6 +30,8 @@ import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, 
 import { TaskTagChips } from './TaskTags';
 import { TaskLinkMarks } from './TaskLinks';
 import { TaskGantt } from './TaskGantt';
+import { useJustCompleted } from './useJustCompleted';
+import { onTimeStats, onTimePercent, localDateIn, ON_TIME_WINDOW_DAYS } from '../../../utils/taskInsights';
 import { WipLimit } from './TaskWip';
 import { cleanWipLimits } from '../../../types/taskStatus';
 import { GroupBySelect, TaskFiltersButton } from './TaskFilterBar';
@@ -159,6 +161,8 @@ export function TasksPage(props: any) {
   const shown = useMemo(() => (showCancelled ? visible : visible.filter((t: any) => t.status !== 'cancelled')), [visible, showCancelled]);
   const columns: readonly BoardColumn[] = useMemo(() => (showCancelled ? [...TASK_COLUMNS, CANCELLED_COLUMN] : TASK_COLUMNS), [showCancelled]);
   const open = visible.filter((t: any) => isOpenStatus(t.status));
+  // Your open tasks across the team (not narrowed by search or filters).
+  const mineOpen = useMemo(() => ctl.filteredTasks.filter((t: any) => isOpenStatus(t.status) && taskAssigneeIds(t).includes(currentUser?.id)).length, [ctl.filteredTasks, currentUser?.id]);
   const overdue = open.filter(isOverdue);
   // Multi-select works on what's shown (search + filters), for task managers.
   // Rows in the order they're on screen, so shift-click ranges match what you see.
@@ -199,10 +203,18 @@ export function TasksPage(props: any) {
         ) : undefined}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full min-w-0 sm:w-auto sm:flex-1 sm:max-w-xs">
+          <div className="relative w-full min-w-0 sm:w-auto sm:min-w-44 sm:flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tasks" aria-label="Search tasks" className="pl-9" />
           </div>
+          <Button
+            variant="outline" size="sm" aria-pressed={who === 'mine'}
+            aria-label={`Mine: ${mineOpen} open task${mineOpen === 1 ? '' : 's'} assigned to you`}
+            onClick={() => setWho((w) => (w === 'mine' ? 'all' : 'mine'))}
+            className={cn('max-sm:h-11', who === 'mine' && 'border-accent bg-accent/10')}
+          >
+            <UserCheck /> Mine <span className="tabular-nums text-muted-foreground">{mineOpen}</span>
+          </Button>
           <Select value={who} onValueChange={setWho}>
             <SelectTrigger className="w-40" aria-label="Filter by assignee"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -264,6 +276,8 @@ export function TasksPage(props: any) {
       {view === 'timeline' && <TaskGantt tasks={shown} onOpen={setViewTaskId} />}
       {view === 'insights' && (
         <Insights
+          onOpen={setViewTaskId}
+          timeZone={teams.find((t: any) => t.id === currentUser?.team_id)?.timezone}
           tasks={visible}
           members={members}
           scope={who === 'all' ? (query.trim() ? 'Matching your search' : 'Whole team') : who === 'mine' ? 'Assigned to you' : `Assigned to ${members.find((m: any) => String(m.id) === who)?.name ?? 'them'}`}
@@ -369,11 +383,12 @@ function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKe
   const inc = useIncrementalGroups(40, `${filterKey}|${group}`);
   const [moved, setMoved] = useState<Set<number>>(() => new Set());
   const keepMoved = (t: any) => moved.has(t.id);
+  const justDone = useJustCompleted(tasks);
   const moveTo = (t: any, colId: string) => {
     setMoved((s) => new Set(s).add(t.id));
     void ctl.setPriority(t.id, colId === 'none' ? null : colId);
   };
-  /** Arrows move between cards; in Priority columns Shift + Left/Right moves the card; X selects it. */
+  /** Arrows move between cards; in Priority columns Alt (Option) or Shift + Left/Right moves the card; X selects it. */
   const onKey = (e: React.KeyboardEvent<HTMLButtonElement>, t: any) => {
     const col = Number(e.currentTarget.dataset.gcol);
     const row = Number(e.currentTarget.dataset.grow);
@@ -383,7 +398,7 @@ function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKe
       cards[Math.max(0, Math.min(r, cards.length - 1))].focus();
       return true;
     };
-    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    if ((e.shiftKey || e.altKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       if (!canDrag) return;
       const next = groups[col + (e.key === 'ArrowLeft' ? -1 : 1)];
       if (!next) return;
@@ -431,7 +446,7 @@ function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKe
                 <button
                   type="button"
                   data-grouped-card data-id={t.id} data-gcol={groups.indexOf(col)} data-grow={rowIdx}
-                  aria-keyshortcuts={canDrag ? 'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X' : 'ArrowUp ArrowDown ArrowLeft ArrowRight X'}
+                  aria-keyshortcuts={canDrag ? 'ArrowUp ArrowDown ArrowLeft ArrowRight Alt+ArrowLeft Alt+ArrowRight Shift+ArrowLeft Shift+ArrowRight X' : 'ArrowUp ArrowDown ArrowLeft ArrowRight X'}
                   onKeyDown={(e) => onKey(e, t)}
                   draggable={canDrag}
                   onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
@@ -439,8 +454,9 @@ function GroupedBoard({ tasks, groups, group, ctl, assigneesOf, onOpen, filterKe
                   onClick={() => onOpen(t.id)}
                   data-cm-type="task-card" data-cm-id={t.id}
                   aria-label={`${t.title}, ${STATUS_META[t.status]?.label ?? t.status}`}
-                  className={cn('w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow]', 'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60', dragId === t.id && 'opacity-50', sel && 'pr-9', sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40')}
+                  className={cn('w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow]', 'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60', dragId === t.id && 'opacity-50', sel && 'pr-9', sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40', justDone.has(t.id) && 'task-done-pop')}
                 >
+                  {justDone.has(t.id) && <CheckCircle2 aria-hidden className="task-done-check pointer-events-none absolute -left-1.5 -top-1.5 size-5 rounded-full bg-card text-success" />}
                   <span className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className={cn('size-2 rounded-full', STATUS_META[t.status]?.dot)} />{STATUS_META[t.status]?.label ?? t.status}</span>
                   <TaskCardBody task={t} people={assigneesOf(t)} byId={ctl.taskById} />
                 </button>
@@ -523,7 +539,7 @@ function CompletedView({ tasks, filter, onFilter, members, onOpen, sel }: {
   );
 }
 
-/** Board keyboard: arrows move between cards, Shift+Left/Right moves the card. */
+/** Board keyboard: arrows move between cards, Alt (Option) or Shift + Left/Right moves the card. */
 function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: ReturnType<typeof useTasksController>, sel: Selection | null, columns: readonly BoardColumn[]) {
   const card = e.currentTarget;
   const col = Number(card.dataset.col);
@@ -534,7 +550,7 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
     cards[Math.max(0, Math.min(r, cards.length - 1))].focus();
     return true;
   };
-  if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+  if ((e.shiftKey || e.altKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     const next = columns[col + (e.key === 'ArrowLeft' ? -1 : 1)];
     if (!next || !canMoveBetween(task.status, next.id, ctl.canManageTasks)) return;
     e.preventDefault();
@@ -556,6 +572,8 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
   }
 }
 
+const altKey = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent) ? 'Option' : 'Alt';
+
 function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel, wipLimits }: {
   tasks: any[]; columns: readonly BoardColumn[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
   sel: Selection | null;
@@ -569,9 +587,10 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel, wipLi
   const inc = useIncrementalGroups(40, filterKey);
   const [moved, setMoved] = useState<Set<number>>(() => new Set());
   const keepMoved = (t: any) => moved.has(t.id);
+  const justDone = useJustCompleted(tasks);
   return (
     <LayoutGroup>
-      <p className="mb-2 hidden text-xs text-muted-foreground md:block">Keyboard: arrow keys move between cards, Shift + Left/Right moves a card to the next column, X selects it.</p>
+      <p className="mb-2 hidden text-xs text-muted-foreground md:block">Keyboard: arrow keys move between cards, <kbd className="rounded border border-border px-1 font-sans">{altKey}</kbd> + <kbd className="rounded border border-border px-1 font-sans">←</kbd>/<kbd className="rounded border border-border px-1 font-sans">→</kbd> (or Shift) moves a card to the next column, X selects it.</p>
       <div className={cn('-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:overflow-visible md:px-0', columns.length > 3 ? 'md:grid-cols-4' : 'md:grid-cols-3')}>
         {columns.map((col) => {
           const items = tasks.filter((t) => t.status === col.id);
@@ -643,7 +662,7 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel, wipLi
                           draggable
                           data-cm-type="task-card" data-cm-id={t.id}
                           data-task-card data-id={t.id} data-col={columns.findIndex((c) => c.id === col.id)} data-row={rowIdx}
-                          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X"
+                          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Alt+ArrowLeft Alt+ArrowRight Shift+ArrowLeft Shift+ArrowRight X"
                           onKeyDown={(e) => onCardKey(e, t, ctl, sel, columns)}
                           onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
                           onDragEnd={() => { setDragId(null); setOverCol(null); }}
@@ -655,8 +674,10 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel, wipLi
                             dragId === t.id && 'opacity-50',
                             sel && 'pr-9',
                             sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40',
+                            justDone.has(t.id) && 'task-done-pop',
                           )}
                         >
+                          {justDone.has(t.id) && <CheckCircle2 aria-hidden className="task-done-check pointer-events-none absolute -left-1.5 -top-1.5 size-5 rounded-full bg-card text-success" />}
                           <TaskCardBody task={t} people={people} byId={ctl.taskById} />
                         </button>
                       </motion.li>
@@ -742,13 +763,37 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
 // Insights
 // ---------------------------------------------------------------------------
 
-function Insights({ tasks, members, scope }: { tasks: any[]; members: any[]; scope: string }) {
+/** "Needs attention" card: a count and the first few tasks, each opens its sheet. */
+function AttentionList({ title, tone, tasks, onOpen, empty }: { title: string; tone: string; tasks: any[]; onOpen: (id: number) => void; empty: string }) {
+  const [all, setAll] = useState(false);
+  const list = all ? tasks : tasks.slice(0, 4);
+  return (
+    <section aria-label={`Needs attention: ${title}`} className="rounded-xl border border-border bg-card p-4">
+      <p className="text-sm text-muted-foreground">{title}</p>
+      <p className={cn('mt-1 font-display text-3xl font-semibold tabular-nums', tasks.length ? tone : 'text-foreground')}><AnimatedValue value={String(tasks.length)} /></p>
+      {tasks.length === 0 ? <p className="mt-1 text-xs text-muted-foreground">{empty}</p> : (
+        <ul className="mt-2 space-y-1">
+          {list.map((t) => <li key={t.id}><button type="button" onClick={() => onOpen(t.id)} className="block w-full truncate text-left text-sm hover:underline">{t.title}</button></li>)}
+          {tasks.length > 4 && <li><Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setAll((v) => !v)}>{all ? 'Show fewer' : `Show all ${tasks.length}`}</Button></li>}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function Insights({ tasks, members, scope, onOpen, timeZone }: { tasks: any[]; members: any[]; scope: string; onOpen: (id: number) => void; timeZone?: string | null }) {
   // Every figure here uses the same filtered tasks as the board/list.
   const trends = useMemo(() => completionTrendsOf(tasks), [tasks]);
   const capacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
   const avg = useMemo(() => avgCompletionDaysOf(tasks), [tasks]);
   const openCount = tasks.filter((t) => isOpenStatus(t.status)).length;
   const doneThisWeek = trends.reduce((a: number, d: any) => a + d.completed, 0);
+  // Same rule as Bruno's facts: finished in the last 30 days, with a due date, on or before
+  // it, counted in the team's timezone so every teammate (and Bruno) sees the same rate.
+  const onTime = useMemo(() => onTimeStats(tasks, { since: new Date(Date.now() - ON_TIME_WINDOW_DAYS * 86400000), localDate: localDateIn(timeZone) }), [tasks, timeZone]);
+  const onTimePct = onTimePercent(onTime);
+  const overdueList = tasks.filter((t) => isOpenStatus(t.status) && isOverdue(t));
+  const undatedList = tasks.filter((t) => isOpenStatus(t.status) && !t.due_date);
   return (
     <>
       <p className="mb-3 text-sm text-muted-foreground">Showing: <span className="font-medium text-foreground">{scope}</span></p>
@@ -756,6 +801,15 @@ function Insights({ tasks, members, scope }: { tasks: any[]; members: any[]; sco
         <div className="px-5"><p className="text-sm text-muted-foreground">Open</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums"><AnimatedValue value={String(openCount)} /></p></div>
         <div className="px-5"><p className="text-sm text-muted-foreground">Done this week</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums text-success"><AnimatedValue value={String(doneThisWeek)} /></p></div>
         <div className="px-5"><p className="text-sm text-muted-foreground">Avg. time to done</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums"><AnimatedValue value={`${avg}`} /><span className="ml-1 text-base font-normal text-muted-foreground">days</span></p></div>
+      </div>
+      <div className="mb-8 grid gap-4 sm:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-sm text-muted-foreground">On time</p>
+          <p className="mt-1 font-display text-3xl font-semibold tabular-nums">{onTimePct == null ? '—' : <AnimatedValue value={`${onTimePct}%`} />}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{onTime.total ? `${onTime.onTime} of ${onTime.total} tasks with a due date, finished in the last ${ON_TIME_WINDOW_DAYS} days` : `No tasks with a due date finished in the last ${ON_TIME_WINDOW_DAYS} days`}</p>
+        </div>
+        <AttentionList title="Overdue" tone="text-destructive" tasks={overdueList} onOpen={onOpen} empty="Nothing overdue" />
+        <AttentionList title="No due date" tone="text-foreground" tasks={undatedList} onOpen={onOpen} empty="Every open task has a due date" />
       </div>
       <div className="grid gap-x-10 lg:grid-cols-2">
         <Section title="Completed per day" description="Last 7 days">
