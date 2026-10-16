@@ -528,6 +528,15 @@ describe("workspace members (Control Scout's Members settings)", () => {
     }
   });
 
+  it("leaving with two rows (an admin one and a plain one) removes both, with another admin left", async () => {
+    const w = await workspace("tworows");
+    const dup = await seedMember(on.db, w.teamId, "Ada Again", "ADMIN.tworows@ws.test ");
+    await seedMember(on.db, w.teamId, "Other Admin", "other.tworows@ws.test", "admin");
+    expect(await remove(w.teamId, { accountId: w.admin, actorAccountId: w.admin })).toEqual({ status: 200, body: { ok: true } });
+    expect(await active(w.adminMember)).toBe(0);
+    expect(await active(dup)).toBe(0);
+  });
+
   it("a member can be removed while admins remain (removing a plain member is never a last-admin case)", async () => {
     const w = await workspace("plainself");
     expect((await remove(w.teamId, { accountId: w.member, actorAccountId: w.admin })).status).toBe(200);

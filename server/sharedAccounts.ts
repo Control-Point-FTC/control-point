@@ -446,29 +446,32 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
         return res.status(409).json({ error: "last_admin" });
       }
       // The checks above can be overtaken by a concurrent removal (two admins removing each other at
-      // once), so each row is first deactivated by one guarded statement: only while the actor is
-      // still an active admin and, for an admin target, another active admin remains. SQLite runs
-      // each statement atomically, so two overlapping removals can't both pass.
+      // once), so all the target's rows are deactivated by one guarded statement: only while the actor
+      // is still an active admin and, when any target row is an admin, an active admin outside the
+      // target remains. The guard is one uncorrelated subquery, evaluated once for the statement, so
+      // the rows go together or not at all; SQLite runs the statement atomically, so overlapping
+      // removals can't both pass.
       const actorIds = actor.filter((m) => m.admin).map((m) => m.id);
-      for (const m of target) {
-        const r = await deps.dbRun(
-          `UPDATE members SET is_active = 0
-            WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1
-              AND EXISTS (SELECT 1 FROM members a WHERE a.id IN (${actorIds.map(() => "?").join(",")})
-                            AND COALESCE(a.is_active, 1) = 1 AND ${ADMIN_SQL("a")})
-              AND (NOT ${ADMIN_SQL("members")}
-                   OR EXISTS (SELECT 1 FROM members o WHERE o.team_id = ? AND o.id <> ? AND COALESCE(o.is_active, 1) = 1 AND ${ADMIN_SQL("o")}))`,
-          m.id, teamId, ...actorIds, teamId, m.id,
-        );
-        if (!r.changes) {
-          // Lost a race: say why, by what's true now.
-          if (!(await membershipsOf(teamId, actorAccountId)).some((x) => x.admin)) return res.status(403).json({ error: "not_admin" });
-          if (!(await membershipsOf(teamId, accountId)).some((x) => x.id === m.id)) continue; // already removed meanwhile
-          return res.status(409).json({ error: "last_admin" });
-        }
-        // Then Control Point's normal removal (roles, sessions, sticky notes, calendar, sockets).
-        await deps.removeMembership(teamId, m.id);
+      const targetIds = target.map((m) => m.id);
+      const inList = (ids: number[]) => ids.map(() => "?").join(",");
+      const r = await deps.dbRun(
+        `UPDATE members SET is_active = 0
+          WHERE id IN (${inList(targetIds)}) AND team_id = ? AND COALESCE(is_active, 1) = 1
+            AND 1 = (SELECT CASE WHEN
+                  EXISTS (SELECT 1 FROM members a WHERE a.id IN (${inList(actorIds)}) AND COALESCE(a.is_active, 1) = 1 AND ${ADMIN_SQL("a")})
+              AND (NOT EXISTS (SELECT 1 FROM members t WHERE t.id IN (${inList(targetIds)}) AND COALESCE(t.is_active, 1) = 1 AND ${ADMIN_SQL("t")})
+                   OR EXISTS (SELECT 1 FROM members o WHERE o.team_id = ? AND o.id NOT IN (${inList(targetIds)}) AND COALESCE(o.is_active, 1) = 1 AND ${ADMIN_SQL("o")}))
+              THEN 1 ELSE 0 END)`,
+        ...targetIds, teamId, ...actorIds, ...targetIds, teamId, ...targetIds,
+      );
+      if (!r.changes) {
+        // Lost a race: say why, by what's true now.
+        if (!(await membershipsOf(teamId, actorAccountId)).some((x) => x.admin)) return res.status(403).json({ error: "not_admin" });
+        if (!(await membershipsOf(teamId, accountId)).length) return res.status(404).json({ error: "not_member" });
+        return res.status(409).json({ error: "last_admin" });
       }
+      // Then Control Point's normal removal for each row (roles, sessions, sticky notes, calendar, sockets).
+      for (const m of target) await deps.removeMembership(teamId, m.id);
       // Control Point has no audit table: a log line with ids only (Scout keeps the full audit).
       console.info(`[shared-accounts] member removed from workspace ${teamId} by Control Scout: account ${accountId} (members ${target.map((m) => m.id).join(",")}) by account ${actorAccountId} at ${iso()}`);
       res.json({ ok: true });
