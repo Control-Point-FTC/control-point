@@ -168,6 +168,7 @@ import {
   matchKey,
 } from "./server/ftcEvents.js";
 import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
+import { ENGINE_VERSION, FITTED_MODEL } from "@control-scout/predict-engine";
 import { PredictStore } from "./server/predict/store.js";
 import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
 import { OfflinePackBuilder, buildPack, detectRegion, listRegions, type PackedEvent } from "./server/offline/pack.js";
@@ -2498,7 +2499,7 @@ async function startServer() {
 
   // Health check for Render/uptime monitors. Cheap, unauthenticated, no AI/DB writes.
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, time: new Date().toISOString(), uptimeSec: Math.round(process.uptime()) });
+    res.json({ ok: true, time: new Date().toISOString(), uptimeSec: Math.round(process.uptime()), engine: ENGINE_VERSION });
   });
   
   // Configure multer for file uploads
@@ -6730,7 +6731,7 @@ async function startServer() {
   app.get("/api/predict/status", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, dataAsOf: dataAsOf((s) => predictStore.lastSync(s), predictSeasons), syncError: predictSyncError, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy, live: predictLive });
+    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, dataAsOf: dataAsOf((s) => predictStore.lastSync(s), predictSeasons), syncError: predictSyncError, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy, live: predictLive, engineVersion: ENGINE_VERSION, probabilityModel: FITTED_MODEL.contextual?.id ?? "legacy" });
   });
 
   app.get("/api/predict/event", async (req, res) => {
@@ -6785,10 +6786,15 @@ async function startServer() {
     const list = (v: unknown) => String(v || "").split(",").map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 999999);
     const red = list(req.query.red), blue = list(req.query.blue);
     if (season == null || !red.length || !blue.length || red.length > 3 || blue.length > 3) return res.status(400).json({ error: "Season plus 1–3 red and blue team numbers are required" });
+    // Qualification or playoff feeds the engine's contextual win probability;
+    // a what-if with no level is treated as a qualification match.
+    const lv = req.query.level;
+    if (lv != null && lv !== "qual" && lv !== "playoff") return res.status(400).json({ error: "level must be qual or playoff" });
+    const level = lv === "playoff" ? "playoff" : "qual";
     if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
-    const p = predictEngine.match(season, red, blue);
+    const p = predictEngine.match(season, red, blue, { level });
     if (!p) return res.status(404).json({ error: "No ratings for that season yet." });
-    res.json({ season, red: { teams: red, ...p.red }, blue: { teams: blue, ...p.blue }, pRedWin: p.pRedWin });
+    res.json({ season, level, red: { teams: red, ...p.red }, blue: { teams: blue, ...p.blue }, pRedWin: p.pRedWin, probabilityModel: p.model ?? "legacy", engineVersion: ENGINE_VERSION });
   });
 
   /**

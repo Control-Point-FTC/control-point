@@ -245,3 +245,24 @@ describe("PredictStore sync", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("Prediction Engine 2.0 in Control Point", () => {
+  it("match odds use the contextual model, with the level; scores don't change", () => {
+    const q = engine.match(2025, [100, 103], [101, 102])!;
+    expect(q.model).toBe("contextual");
+    const pl = engine.match(2025, [100, 103], [101, 102], { level: "playoff" })!;
+    expect(pl.pRedWin).not.toBe(q.pRedWin);
+    expect(pl.red.mean).toBe(q.red.mean);
+  });
+
+  it("live forecasts read recorded bonus RPs from the stored FTC Scout records", async () => {
+    const flags = { movement: false, goal: true, pattern: true };
+    hist.M1.matches[0].red.bonusRp = flags;
+    try {
+      await engine.rebuild();
+      const recorded = (engine as unknown as { recordedBonus(s: number, c: string, k: string, x: "red" | "blue"): unknown }).recordedBonus;
+      expect(recorded.call(engine, 2025, "M1", "qual:0:1", "red")).toEqual(flags);
+      expect(recorded.call(engine, 2025, "M1", "qual:0:1", "blue")).toBeNull();
+    } finally { delete hist.M1.matches[0].red.bonusRp; }
+  });
+});

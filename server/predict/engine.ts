@@ -11,10 +11,10 @@
 import { RatingBook } from "./rating.js";
 import { indexAwards, MODELLED_AWARDS, type AwardRecord } from "./awards.js";
 import type { PredictStore } from "./store.js";
-import type { EventRecord } from "./types.js";
+import type { EventRecord, MatchRecord } from "./types.js";
 import { Forecaster, normType, type AdvancementRecord, type PredictModel } from "./forecast.js";
 import type { OfflinePredict } from "../../src/types/offlinePack.js";
-import { FITTED_MODEL } from "@control-scout/predict-engine";
+import { FITTED_MODEL, type BonusFlags } from "@control-scout/predict-engine";
 
 export * from "./forecast.js";
 
@@ -28,6 +28,8 @@ export class PredictEngine extends Forecaster {
   protected readonly model = M;
   private books = new Map<number, RatingBook>();
   private events = new Map<number, EventRecord[]>();
+  /** Stored matches by `season|code|level:series:number` (recorded bonus RPs for live payloads). */
+  private stored = new Map<string, MatchRecord>();
   protected awardHistory = new Map<number, AwardRecord[]>();
   private advancement = new Map<number, AdvancementRecord[]>();
   /** Event code → FTC region code (from FTC Scout's event list), and all known regions. */
@@ -96,10 +98,20 @@ export class PredictEngine extends Forecaster {
     // One synchronous swap (no await in between).
     this.books = books;
     this.events = events;
+    this.stored = new Map([...events.values()].flat().flatMap((e) => e.matches.map((m) => [`${m.season}|${m.eventCode}|${m.level}:${m.series}:${m.number}`, m] as [string, MatchRecord])));
     this.advancement = advancement;
     this.awardHistory = indexAwards(records);
     // Ready only once there are real ratings (a fresh install has no data yet).
     if (books.size && [...events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
+  }
+
+  /**
+   * Recorded bonus RPs of a stored match. The live FtcEventFull payload doesn't
+   * carry them, so a live forecast keeps the official flags from the synced
+   * FTC Scout record instead of guessing them from the score.
+   */
+  protected recordedBonus(season: number, code: string, key: string, side: "red" | "blue"): BonusFlags | null {
+    return this.stored.get(`${season}|${code}|${key}`)?.[side].bonusRp ?? null;
   }
 
   /** Ratings book for a season, with the clock set to now. */
