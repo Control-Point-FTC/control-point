@@ -10,7 +10,6 @@ import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
 import { parseTagList } from '../../types/taskTags';
-import { cleanWipLimits } from '../../types/taskStatus';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 import { recordedCompletions } from '../../utils/taskCompletions';
 
@@ -555,11 +554,9 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const setWipLimit = async (status: 'todo' | 'in-progress', limit: number | null): Promise<boolean> => {
     const team = teams.find((t: any) => String(t.id) === String(currentUser?.team_id));
     if (!team) return false;
-    const current = cleanWipLimits(team.task_wip_limits);
-    const next: Record<string, number> = { ...current };
-    if (limit == null) delete next[status]; else next[status] = limit;
     try {
-      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wip_limits: next }) });
+      // Only this column: the server merges it, so another column's save isn't undone.
+      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wip_limit: { column: status, limit } }) });
       if (!res.ok) { notify((await res.json().catch(() => ({})))?.error || 'Could not save the limit.', 'error'); return false; }
       return true;
     } catch {

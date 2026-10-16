@@ -31,9 +31,11 @@ export function TaskGantt({ tasks, onOpen, today = new Date() }: { tasks: any[];
   const end = days[days.length - 1];
   const rows = useMemo(() => tasks
     .map((t) => ({ t, span: taskSpan(t) }))
-    .filter((r) => r.span && r.span.to >= start && r.span.from <= end)
+    // Calendar days, not instants (dates are noon; the window ends at midnight of its last day).
+    .filter((r) => r.span && differenceInCalendarDays(r.span.to, start) >= 0 && differenceInCalendarDays(r.span.from, end) <= 0)
     .sort((a, b) => a.span!.from.getTime() - b.span!.from.getTime() || a.span!.to.getTime() - b.span!.to.getTime()), [tasks, start, end]);
   const undated = tasks.filter((t) => !taskSpan(t));
+  const [undatedShown, setUndatedShown] = useState(60);
   const todayIdx = differenceInCalendarDays(today, start);
 
   return (
@@ -96,10 +98,12 @@ export function TaskGantt({ tasks, onOpen, today = new Date() }: { tasks: any[];
         <section aria-label="Tasks without dates">
           <h2 className="mb-2 text-sm font-medium">No dates yet <span className="text-muted-foreground">{undated.length}</span></h2>
           <ul className="flex flex-wrap gap-2">
-            {undated.slice(0, 60).map((t) => (
+            {undated.slice(0, undatedShown).map((t) => (
               <li key={t.id}><button type="button" onClick={() => onOpen(t.id)} className="rounded-full border border-border px-3 py-1 text-xs hover:bg-muted">{t.title}</button></li>
             ))}
-            {undated.length > 60 && <li className="text-xs text-muted-foreground">+{undated.length - 60} more</li>}
+            {undated.length > undatedShown && (
+              <li><Button size="sm" variant="ghost" className="h-7" onClick={() => setUndatedShown((n) => n + 60)}>Show {Math.min(60, undated.length - undatedShown)} more</Button></li>
+            )}
           </ul>
         </section>
       )}

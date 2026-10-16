@@ -88,6 +88,23 @@ describe("task board limits", () => {
     expect((await dbGet("SELECT task_wip_limits FROM teams WHERE id = ?", team)).task_wip_limits).toBeNull();
   });
 
+  it("one column's save keeps the other; invalid input is refused, not cleared", async () => {
+    const limits = async () => JSON.parse((await dbGet("SELECT task_wip_limits FROM teams WHERE id = ?", team)).task_wip_limits ?? "null");
+    expect((await t.patch(`/api/teams/${team}`, { wip_limit: { column: "todo", limit: 8 } }, admin)).status).toBe(200);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limit: { column: "in-progress", limit: 3 } }, admin)).status).toBe(200);
+    expect(await limits()).toEqual({ todo: 8, "in-progress": 3 });
+    expect((await t.patch(`/api/teams/${team}`, { wip_limit: { column: "done", limit: 3 } }, admin)).status).toBe(400);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limit: { column: "todo", limit: 100 } }, admin)).status).toBe(400);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: false }, admin)).status).toBe(400);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: { todo: 100 } }, admin)).status).toBe(400);
+    const bad = await t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ wip_limits: { "in-progress": 100 } }] }] }, admin);
+    expect(bad.status).toBe(400);
+    expect(await limits()).toEqual({ todo: 8, "in-progress": 3 });
+    expect((await t.patch(`/api/teams/${team}`, { wip_limit: { column: "todo", limit: null } }, admin)).status).toBe(200);
+    expect(await limits()).toEqual({ "in-progress": 3 });
+    await t.patch(`/api/teams/${team}`, { wip_limits: null }, admin);
+  });
+
   it("facts say how full each limited column is; Bruno's card sets limits", async () => {
     const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ wip_limits: { "in-progress": 1 } }] }] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);

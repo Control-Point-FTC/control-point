@@ -32,7 +32,7 @@ export function WipLimit({ column, count, limit, canEdit, onSave }: {
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setDraft(limit ? String(limit) : ''); }}>
       <PopoverTrigger asChild>
-        {badge ? <button type="button" aria-label={`${column} limit: ${count} of ${limit}. Change`} className="rounded-full">{badge}</button>
+        {badge ? <button type="button" aria-label={`${column} limit: ${count} of ${limit}${over ? ', over the limit' : at ? ', at the limit' : ''}. Change`} className="rounded-full">{badge}</button>
           : <Button variant="ghost" size="icon-sm" aria-label={`Set a limit for ${column}`} title="Set a work-in-progress limit"><Gauge /></Button>}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 space-y-3">

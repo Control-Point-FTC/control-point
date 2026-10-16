@@ -1,6 +1,7 @@
 import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
 import { TEAM_MODULES } from '../types/teamModules';
 import { awardById } from '../types/taskTags';
+import { strictWipLimits } from '../types/taskStatus';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
@@ -101,9 +102,9 @@ export function workspaceSummary(it: any): string {
   if (on.length) parts.push(`Turn on ${on.join(', ')}`);
   if (Array.isArray(it?.subsystems)) parts.push(`Subsystems: ${it.subsystems.filter((n: unknown) => typeof n === 'string').join(', ').slice(0, 120)}`);
   if (it?.wip_limits !== undefined) {
-    const w = it.wip_limits || {};
-    const bits = [w.todo ? `To do ${w.todo}` : '', w['in-progress'] ? `In progress ${w['in-progress']}` : ''].filter(Boolean);
-    parts.push(bits.length ? `Board limits: ${bits.join(', ')}` : 'Remove board limits');
+    const w = strictWipLimits(it.wip_limits);
+    const bits = w ? [w.todo ? `To do ${w.todo}` : '', w['in-progress'] ? `In progress ${w['in-progress']}` : ''].filter(Boolean) : [];
+    parts.push(!w ? 'Board limits: not valid (whole numbers 1–99), nothing will change' : bits.length ? `Board limits: ${bits.join(', ')}` : 'Remove board limits');
   }
   return parts.join(' · ') || 'No change';
 }
