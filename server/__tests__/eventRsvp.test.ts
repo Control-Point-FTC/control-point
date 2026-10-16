@@ -126,6 +126,22 @@ describe("RSVP", () => {
     const noRsvp = (await t.post("/api/events", { title: "No RSVP", date: "2099-04-02" }, admin)).body.id;
     expect((await t.post("/api/ai/apply-actions", { actions: [{ kind: "event-rsvp", items: [{ id: noRsvp, status: "going" }] }] }, ben)).status).toBe(400);
     const out = await runLookups(((sql: string, ...a: any[]) => rows(sql, ...a)) as any, team, "UTC", [{ kind: "events", query: "Scrimmage day" } as any]);
-    expect(out).toMatch(/RSVP: 0 going, 0 maybe, 1 can't make it/);
+    expect(out).toMatch(/RSVP: 0 going, 0 maybe, 1 can't make it; can't make it: Ben\)/);
+    expect(out).not.toMatch(/Family trip/); // reasons stay private
+  });
+});
+
+describe("RSVP follow-through", () => {
+  it("counts who said going and who of them came; Bruno's facts say so", async () => {
+    const id = (await t.post("/api/events", { title: "Turnout night", date: "2026-10-10", rsvp_mode: "full" }, admin)).body.id;
+    await put(`/api/events/${id}/rsvp`, { status: "going" }, ana);
+    await put(`/api/events/${id}/rsvp`, { status: "going" }, ben);
+    await t.db.execute({ sql: "INSERT INTO attendance (team_id, member_id, date, status) VALUES (?, ?, '2026-10-10', 'P')", args: [team, anaId] });
+    const r = await t.api("/api/attendance/rsvp-turnout?from=2026-10-01&to=2026-10-31", { session: admin });
+    expect(r.body.find((x: any) => x.event_id === id)).toMatchObject({ said_going: 2, going_came: 1, came: 1 });
+    const { loadWorkspaceFacts, formatWorkspaceFacts } = await import("../workspaceFacts");
+    const db = { dbGet: async (sql: string, ...a: any[]) => (await t.db.execute({ sql, args: a })).rows[0], dbAll: async (sql: string, ...a: any[]) => (await t.db.execute({ sql, args: a })).rows as any[] };
+    const f = (await loadWorkspaceFacts(db as any, team, "UTC", new Date("2026-10-16T12:00:00Z")))!;
+    expect(formatWorkspaceFacts(f)).toMatch(/RSVP follow-through .*1 of 2 who said going came \(50%\)/);
   });
 });

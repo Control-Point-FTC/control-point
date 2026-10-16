@@ -207,6 +207,7 @@ import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js
 import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
+import { FOLLOW_THROUGH_SQL } from "./src/utils/eventAttendance.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -7490,6 +7491,22 @@ async function startServer() {
   });
 
   // Attendance — scoped to the caller's workspace
+  // RSVP follow-through: for full-RSVP events in a range (default the last 60 days),
+  // how many said going, how many of them came, and how many came in all.
+  app.get("/api/attendance/rsvp-turnout", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const to = isIsoDate(req.query.to) ? String(req.query.to) : new Date().toISOString().slice(0, 10);
+      const from = isIsoDate(req.query.from) ? String(req.query.from) : new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+      const rows = (await dbAll(FOLLOW_THROUGH_SQL, auth.teamId, from, to)) as any[];
+      res.json(rows.map((r) => ({ event_id: Number(r.id), title: String(r.title || ""), date: String(r.date), said_going: Number(r.said_going || 0), going_came: Number(r.going_came || 0), said_no: Number(r.said_no || 0), came: Number(r.came || 0) })));
+    } catch (error) {
+      console.error("Error loading RSVP turnout:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/attendance", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);

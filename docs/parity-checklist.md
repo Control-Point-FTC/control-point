@@ -106,9 +106,9 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] RSVP counts on the event (and who answered; reasons for managers)
 
 ### PR 2.3: Event-linked attendance
-- [~] Attendance by date (have) — link attendance sheets to a specific event
-- [ ] Sheet "waits until people have had a chance to turn up" (late window before marking absent)
-- [ ] Attendance rate vs RSVPs stat
+- [x] Attendance by date, linked to today's event (its RSVPs beside each name)
+- [x] Sheet "waits until people have had a chance to turn up" (15-minute late window, then one click marks the rest absent)
+- [x] Attendance rate vs RSVPs stat (RSVP follow-through in Insights and Bruno's facts)
 
 ### PR 2.4: Calendar polish
 - [x] Month / Week / Agenda views
