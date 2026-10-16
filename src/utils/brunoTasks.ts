@@ -9,7 +9,7 @@
 // and the browser (the confirm card shows exactly what will be saved).
 
 import { parseQuickAdd, readRecurrence, type Priority, type Recurrence } from './quickAdd';
-import { cleanAwards, cleanLabels, cleanRecordSubsystems } from '../types/taskTags';
+import { cleanAwards, cleanLabels, cleanRecordSubsystems, isRealDate } from '../types/taskTags';
 import { cleanSubsystems } from '../types/teamModules';
 
 /** One task as Bruno's ```tasks block may carry it (all optional but title). */
@@ -220,7 +220,8 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     const known = opts.roles ? matchRole(raw, opts.roles) : raw;
     if (known) { if (!roles.includes(known)) roles.push(known); } else if (!unmatchedRoles.includes(raw)) unmatchedRoles.push(raw);
   }
-  const start_date = typeof t.start_date === 'string' && ISO.test(t.start_date) && (!due_date || t.start_date <= due_date) ? t.start_date : null;
+  // A real date on or before the due date; anything else is left off rather than saved.
+  const start_date = isRealDate(t.start_date) && (!due_date || t.start_date <= due_date) ? t.start_date : null;
   return {
     title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), roles, unmatched, unmatchedRoles,
     start_date, subsystems: taskSubsystems(t.subsystems, opts.subsystems), awards: cleanAwards(t.awards), labels: cleanLabels(t.labels),
@@ -369,7 +370,7 @@ export function normalizeTaskUpdate(raw: any, roster: string[] | null, teamRoles
   }
   if (has('start_date')) {
     if (CLEARS(raw.start_date)) changes.start_date = null;
-    else if (typeof raw.start_date === 'string' && ISO.test(raw.start_date)) changes.start_date = raw.start_date;
+    else if (isRealDate(raw.start_date)) changes.start_date = raw.start_date;
   }
   if (has('subsystems')) changes.subsystems = taskSubsystems(CLEARS(raw.subsystems) ? [] : raw.subsystems, teamSubsystems ?? undefined);
   if (has('awards')) changes.awards = cleanAwards(CLEARS(raw.awards) ? [] : raw.awards);

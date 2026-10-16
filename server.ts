@@ -13464,6 +13464,26 @@ Rules:
           updateTargets.set(id, task);
         }
       }
+      // An edit can't leave a task due before it starts (the task API's rule),
+      // checked on the resulting dates before anything is written.
+      const dateEdits = new Map<number, { start?: string | null; due?: string | null }>();
+      for (const a of actions) {
+        if (a?.kind !== "task-update" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const raw of a.items) {
+          const u = normalizeTaskUpdate(raw, null);
+          if (!u || !updateTargets.has(u.id)) continue;
+          const d = dateEdits.get(u.id) ?? {};
+          if (u.changes.start_date !== undefined) d.start = u.changes.start_date;
+          if (u.changes.due_date !== undefined) d.due = u.changes.due_date;
+          dateEdits.set(u.id, d);
+        }
+      }
+      for (const [id, d] of dateEdits) {
+        const task = updateTargets.get(id);
+        const start = d.start !== undefined ? d.start : task.start_date;
+        const due = d.due !== undefined ? d.due : task.due_date;
+        if (startAfterDue(start, due)) return res.status(400).json({ error: `Task #${id} would be due before it starts — nothing was saved` });
+      }
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
       const created: Record<string, number[]> = {};
@@ -13555,7 +13575,8 @@ Rules:
           const subsystemList = await teamSubsystemList(auth.teamId);
           for (const raw of tasks) {
             const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false, roles: teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) })), subsystems: subsystemList });
-            const tags = taskTagColumns({ start_date: t.start_date, subsystems: t.subsystems, awards: t.awards, labels: t.labels }, subsystemList).cols;
+            // The normalizer only passes real dates, so this never errors; the tags are kept either way.
+            const tags = taskTagColumns({ start_date: t.start_date ?? undefined, subsystems: t.subsystems, awards: t.awards, labels: t.labels }, subsystemList).cols;
             const ids = t.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
             // Assigned by role: everyone holding it now.
             for (const role of t.roles) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
@@ -13611,8 +13632,8 @@ Rules:
             if (c.recurrence !== undefined) { sets.push("recurrence = ?"); vals.push(c.recurrence ? JSON.stringify(c.recurrence) : null); }
             if (c.due_date !== undefined) { sets.push("due_date = ?"); vals.push(c.due_date); }
             // Start date and tags, validated as PATCH does (a start after the due date is dropped).
+            // Dates were checked together above, before any write.
             const tagCols = taskTagColumns({ start_date: c.start_date, subsystems: c.subsystems, awards: c.awards, labels: c.labels }, subsystemList).cols;
-            if (tagCols.start_date !== undefined && startAfterDue(tagCols.start_date, c.due_date !== undefined ? c.due_date : task.due_date)) delete tagCols.start_date;
             for (const [col, v] of Object.entries(tagCols)) { sets.push(`${col} = ?`); vals.push(v); }
             if (c.due_time !== undefined || c.due_date !== undefined) {
               // The time belongs to the resulting date (as PATCH): none without one.

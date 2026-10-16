@@ -66,6 +66,14 @@ export function cleanRecordSubsystems(list: unknown, teamList: readonly string[]
   return cleanSubsystems(list).map((n) => byKey.get(n.toLowerCase())).filter((n): n is string => !!n);
 }
 
+/** A real YYYY-MM-DD calendar date (2026-02-30 is not). */
+export function isRealDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
 /** A stored JSON array of strings (bad input → []). */
 export function parseTagList(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.filter((v): v is string => typeof v === 'string');

@@ -105,6 +105,32 @@ describe("Bruno and task tags", () => {
     expect(await dbGet("SELECT awards, labels FROM tasks WHERE id = ?", id)).toMatchObject({ awards: '["reach","inspire"]', labels: null });
   });
 
+  it("an impossible start date is left off, and the other tags still save", async () => {
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{ title: "Bad start", start_date: "2026-02-30", labels: ["Keep"], awards: ["think"] }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const id = r.body.created.task[0];
+    expect(await dbGet("SELECT start_date, labels, awards FROM tasks WHERE id = ?", id)).toMatchObject({ start_date: null, labels: '["Keep"]', awards: '["think"]' });
+    const u = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id, start_date: "2026-13-01", labels: ["New"] }] }] }, admin);
+    expect(u.status, JSON.stringify(u.body)).toBe(200);
+    expect(await dbGet("SELECT start_date, labels FROM tasks WHERE id = ?", id)).toMatchObject({ start_date: null, labels: '["New"]' });
+  });
+
+  it("an edit that would make a task due before it starts is refused, and nothing is saved", async () => {
+    const r = await t.post("/api/tasks", { title: "Dated", start_date: "2026-10-18", due_date: "2026-10-20" }, admin);
+    const id = r.body.id;
+    const u = await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "task", items: [{ title: "Should not be created" }] },
+      { kind: "task-update", items: [{ id, due_date: "2026-10-10" }] },
+    ] }, admin);
+    expect(u.status).toBe(400);
+    expect(await dbGet("SELECT due_date FROM tasks WHERE id = ?", id)).toMatchObject({ due_date: "2026-10-20" });
+    expect(await dbAll("SELECT id FROM tasks WHERE title = 'Should not be created'")).toHaveLength(0);
+    // Moving both together is fine.
+    const ok = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id, due_date: "2026-10-10" }, { id, start_date: "2026-10-08" }] }] }, admin);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(await dbGet("SELECT start_date, due_date FROM tasks WHERE id = ?", id)).toMatchObject({ start_date: "2026-10-08", due_date: "2026-10-10" });
+  });
+
   it("the card context gives the team's subsystems", async () => {
     const r = await t.api("/api/ai/proposal-context", { session: admin });
     expect(r.body.subsystems).toEqual(["Drivetrain", "Intake", "Arm"]);

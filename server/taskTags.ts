@@ -1,18 +1,13 @@
 // Task start date and tags (subsystems, awards, labels): one validator for
 // POST/PATCH /api/tasks and Bruno's task proposals, so every path saves
 // the same thing. Tags are stored as JSON arrays; an empty list is NULL.
-import { cleanAwards, cleanLabels, cleanRecordSubsystems } from "../src/types/taskTags.js";
+import { cleanAwards, cleanLabels, cleanRecordSubsystems, isRealDate } from "../src/types/taskTags.js";
 
 export const TASK_TAG_FIELDS = ["start_date", "subsystems", "awards", "labels"] as const;
 export type TaskTagField = (typeof TASK_TAG_FIELDS)[number];
 
 /** A real YYYY-MM-DD calendar date. */
-export function isTaskDate(v: unknown): v is string {
-  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-  const [y, m, d] = v.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
-}
+export const isTaskDate = isRealDate;
 
 const asJson = (list: string[]) => (list.length ? JSON.stringify(list) : null);
 
