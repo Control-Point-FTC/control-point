@@ -22,12 +22,12 @@ const ICON = { going: Check, maybe: CircleHelp, not_going: X } as const;
 
 export function RsvpButtons({ event, compact = false, onChanged }: { event: any; compact?: boolean; onChanged?: () => void }) {
   const mode = cleanRsvpMode(event?.rsvp_mode) ?? 'none';
-  const [mine, setMine] = useState<{ status: RsvpStatus; reason: string } | null>(event?.my_rsvp ?? null);
+  const [mine, setMine] = useState<{ status: RsvpStatus; reason: string; excused?: boolean } | null>(event?.my_rsvp ?? null);
   const [reason, setReason] = useState<string>(event?.my_rsvp?.reason ?? '');
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   // A newer answer from elsewhere (another tab, Bruno) replaces ours.
-  useEffect(() => { setMine(event?.my_rsvp ?? null); setReason(event?.my_rsvp?.reason ?? ''); }, [event?.id, event?.my_rsvp?.status, event?.my_rsvp?.reason]);
+  useEffect(() => { setMine(event?.my_rsvp ?? null); setReason(event?.my_rsvp?.reason ?? ''); }, [event?.id, event?.my_rsvp?.status, event?.my_rsvp?.reason, event?.my_rsvp?.excused]);
   if (mode === 'none' || event?.invited === false) return null;
 
   const send = async (status: RsvpStatus | null, why = '') => {
@@ -37,7 +37,10 @@ export function RsvpButtons({ event, compact = false, onChanged }: { event: any;
     setMine(status ? { status, reason: why } : null);
     try {
       const res = await apiFetch(`/api/events/${event.id}/rsvp`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, reason: why }) });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || '');
+      // Whether attendance really shows the excuse (not when a record already existed).
+      setMine(status ? { status, reason: why, excused: !!d?.excused } : null);
       setAsking(false);
       onChanged?.();
     } catch (err: any) {
@@ -81,7 +84,11 @@ export function RsvpButtons({ event, compact = false, onChanged }: { event: any;
           <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(false)}>Cancel</Button>
         </form>
       )}
-      {mine?.status === 'not_going' && mine.reason && !asking && <p className="text-xs text-muted-foreground">Excused: {mine.reason}</p>}
+      {mine?.status === 'not_going' && mine.reason && !asking && (
+        <p className="text-xs text-muted-foreground">
+          Reason: {mine.reason}{mine.excused ? ' · excused on attendance' : ''}
+        </p>
+      )}
     </div>
   );
 }

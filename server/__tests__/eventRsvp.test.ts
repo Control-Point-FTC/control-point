@@ -50,18 +50,47 @@ describe("RSVP", () => {
     expect(await rows("SELECT * FROM event_rsvps WHERE event_id = ? AND member_id = ?", id, anaId)).toHaveLength(0);
   });
 
-  it("can't-make-it only: a reason excuses that day; changing the answer takes the excuse back", async () => {
+  it("can't-make-it only: a reason excuses that day (without copying the reason); taking it back removes the excuse", async () => {
     const id = (await t.post("/api/events", { title: "Practice", date: "2099-03-05", rsvp_mode: "decline_only" }, admin)).body.id;
     expect((await put(`/api/events/${id}/rsvp`, { status: "going" }, ana)).status).toBe(400);
-    expect((await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Dentist" }, ana)).status).toBe(200);
-    expect((await rows("SELECT status, reason, is_excused FROM attendance WHERE member_id = ? AND date = '2099-03-05'", anaId))[0]).toMatchObject({ status: "E", reason: "RSVP: Dentist", is_excused: 1 });
+    const r = await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Dentist" }, ana);
+    expect(r.body).toMatchObject({ success: true, excused: true });
+    // The private reason stays in the RSVP; attendance (team-readable) only says it came from an RSVP.
+    expect((await rows("SELECT status, reason, is_excused, rsvp_event_id FROM attendance WHERE member_id = ? AND date = '2099-03-05'", anaId))[0]).toMatchObject({ status: "E", reason: "Can't make it (RSVP)", is_excused: 1, rsvp_event_id: id });
     expect((await put(`/api/events/${id}/rsvp`, { status: null }, ana)).status).toBe(200);
     expect(await rows("SELECT id FROM attendance WHERE member_id = ? AND date = '2099-03-05'", anaId)).toHaveLength(0);
-    // A record someone already took is never overwritten (or removed).
-    await t.db.execute({ sql: "INSERT INTO attendance (team_id, member_id, date, status) VALUES (?, ?, '2099-03-05', 'P')", args: [team, benId] });
-    expect((await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Sick" }, ben)).status).toBe(200);
+    // A record that already existed is never overwritten or removed, and the answer says so.
+    await t.db.execute({ sql: "INSERT INTO attendance (team_id, member_id, date, status) VALUES (?, ?, '2099-03-05', 'A')", args: [team, benId] });
+    expect((await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Sick" }, ben)).body.excused).toBe(false);
     expect((await put(`/api/events/${id}/rsvp`, { status: null }, ben)).status).toBe(200);
-    expect((await rows("SELECT status FROM attendance WHERE member_id = ? AND date = '2099-03-05'", benId))[0].status).toBe("P");
+    expect((await rows("SELECT status FROM attendance WHERE member_id = ? AND date = '2099-03-05'", benId))[0].status).toBe("A");
+  });
+
+  it("an excuse follows its event when it moves, goes when it's deleted, and becomes a manager's once they mark that day", async () => {
+    const id = (await t.post("/api/events", { title: "Field day", date: "2099-05-01", rsvp_mode: "decline_only" }, admin)).body.id;
+    await put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "Trip" }, ana);
+    expect((await t.patch(`/api/events/${id}`, { date: "2099-05-02" }, admin)).status).toBe(200);
+    expect((await rows("SELECT date FROM attendance WHERE member_id = ? AND rsvp_event_id = ?", anaId, id)).map((r) => r.date)).toEqual(["2099-05-02"]);
+    expect((await t.api(`/api/events/${id}`, { method: "DELETE", session: admin, headers: { "x-cp-client": "1" } })).status).toBe(200);
+    expect(await rows("SELECT id FROM attendance WHERE member_id = ? AND date IN ('2099-05-01', '2099-05-02')", anaId)).toHaveLength(0);
+    // A manager marking the day takes the record over: taking the RSVP back leaves their mark.
+    const id2 = (await t.post("/api/events", { title: "Field day 2", date: "2099-05-08", rsvp_mode: "decline_only" }, admin)).body.id;
+    await put(`/api/events/${id2}/rsvp`, { status: "not_going", reason: "Trip" }, ana);
+    expect((await t.post("/api/attendance/batch", { date: "2099-05-08", records: [{ member_id: anaId, status: "E" }] }, admin)).status).toBe(200);
+    await put(`/api/events/${id2}/rsvp`, { status: null }, ana);
+    expect((await rows("SELECT status, rsvp_event_id FROM attendance WHERE member_id = ? AND date = '2099-05-08'", anaId))[0]).toMatchObject({ status: "E", rsvp_event_id: null });
+  });
+
+  it("answers saved at the same time leave the excuse matching the last one", async () => {
+    const id = (await t.post("/api/events", { title: "Race day", date: "2099-05-20", rsvp_mode: "full" }, admin)).body.id;
+    await Promise.all([
+      put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "R1" }, ana),
+      put(`/api/events/${id}/rsvp`, { status: "not_going", reason: "R2" }, ana),
+      put(`/api/events/${id}/rsvp`, { status: "going" }, ana),
+    ]);
+    const [rsvp] = await rows("SELECT status FROM event_rsvps WHERE event_id = ? AND member_id = ?", id, anaId);
+    const owned = await rows("SELECT id FROM attendance WHERE rsvp_event_id = ? AND member_id = ?", id, anaId);
+    expect(owned.length).toBe(rsvp.status === "not_going" ? 1 : 0);
   });
 
   it("an event for chosen roles: only they can answer, and only they are notified", async () => {

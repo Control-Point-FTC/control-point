@@ -25,6 +25,17 @@ describe('RsvpButtons', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events/4/rsvp', expect.objectContaining({ method: 'PUT' })));
     expect(body()).toEqual({ status: 'not_going', reason: 'Dentist' });
+    // The default mock says nothing was excused (a record already existed): no claim of an excuse.
+    expect(await screen.findByText('Reason: Dentist')).toBeTruthy();
+  });
+
+  it('says "excused on attendance" only when the server actually excused it', async () => {
+    api.apiFetch.mockResolvedValue({ ok: true, json: async () => ({ success: true, excused: true }) });
+    render(<RsvpButtons event={{ id: 6, title: 'Practice', rsvp_mode: 'decline_only', invited: true, my_rsvp: null }} />);
+    fireEvent.click(screen.getByRole('button', { name: /Can't make it/ }));
+    fireEvent.change(screen.getByLabelText("Reason you can't make it"), { target: { value: 'Sick' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Reason: Sick · excused on attendance')).toBeTruthy();
   });
 
   it('full RSVP: Going, then tap again to take it back; a failed save rolls back', async () => {
