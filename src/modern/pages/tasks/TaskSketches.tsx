@@ -2,7 +2,7 @@
 // highlighter, its colours, pressure-shaped strokes) for the geometry, wiring or
 // field plan behind a task. Anyone who can see the task adds one; the author or
 // a task manager edits or removes it. Saved as strokes, so it stays editable.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { Highlighter, Pen, PenLine, Plus, Trash2, Undo2 } from 'lucide-react';
 import { inkPath, simplifyInk } from '../../../notebook/canvasGeometry';
@@ -12,7 +12,7 @@ import { cn } from '../../../components/cn';
 import {
   Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label,
 } from '../../../components/ui-kit';
-import { MAX_SKETCH_TITLE, MAX_SKETCHES_PER_TASK, SKETCH_COLORS, SKETCH_H, SKETCH_W, SKETCH_WIDTHS, type SketchStroke } from '../../../types/taskSketch';
+import { MAX_SKETCH_POINTS, MAX_SKETCH_STROKES, MAX_SKETCH_TITLE, MAX_SKETCHES_PER_TASK, SKETCH_COLORS, SKETCH_H, SKETCH_W, SKETCH_WIDTHS, type SketchStroke } from '../../../types/taskSketch';
 
 export type TaskSketch = { id: number; member_id: number | null; title: string; strokes: SketchStroke[]; created_at: string; updated_at: string | null };
 
@@ -52,6 +52,11 @@ function SketchPad({ open, onOpenChange, initial, onSave }: {
   const [saving, setSaving] = useState(false);
   const board = useRef<SVGSVGElement>(null);
   const drawing = useRef<SketchStroke | null>(null);
+  // One pointer draws at a time: a resting palm or second finger is ignored until the stroke ends.
+  const pointer = useRef<number | null>(null);
+  // What the server will take (shared limits): the board stops short of them and says so.
+  const usedPoints = strokes.reduce((n, s) => n + s.points.length, 0);
+  const full = strokes.length >= MAX_SKETCH_STROKES || usedPoints >= MAX_SKETCH_POINTS;
 
   const at = (e: React.PointerEvent): [number, number, number] => {
     const r = board.current!.getBoundingClientRect();
@@ -62,23 +67,30 @@ function SketchPad({ open, onOpenChange, initial, onSave }: {
     return [Math.round(x * 10) / 10, Math.round(y * 10) / 10, p];
   };
   const down = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || pointer.current !== null || full) return;
+    pointer.current = e.pointerId;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     drawing.current = { tool, color, width, points: [at(e)] };
     setLive(drawing.current);
   };
   const move = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!drawing.current) return;
+    if (!drawing.current || e.pointerId !== pointer.current) return;
+    // Room left on the board: the stroke stops growing there instead of making the sketch unsaveable.
+    if (usedPoints + drawing.current.points.length >= MAX_SKETCH_POINTS) return;
     drawing.current = { ...drawing.current, points: [...drawing.current.points, at(e)] };
     setLive(drawing.current);
   };
-  const up = () => {
+  const up = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerId !== pointer.current) return;
+    pointer.current = null;
     const s = drawing.current;
     drawing.current = null;
     setLive(null);
     if (!s) return;
     // A tap is a dot: give it a second point so it has a shape.
-    const pts = s.points.length === 1 ? [s.points[0], [s.points[0][0] + 0.5, s.points[0][1] + 0.5, s.points[0][2]] as [number, number, number]] : simplifyInk(s.points);
+    const pts = (s.points.length === 1 ? [s.points[0], [s.points[0][0] + 0.5, s.points[0][1] + 0.5, s.points[0][2]] as [number, number, number]] : simplifyInk(s.points))
+      .slice(0, Math.max(0, MAX_SKETCH_POINTS - usedPoints));
+    if (pts.length < 2) return;
     setStrokes((list) => [...list, { ...s, points: pts }]);
   };
   const undo = () => setStrokes((list) => list.slice(0, -1));
@@ -86,12 +98,18 @@ function SketchPad({ open, onOpenChange, initial, onSave }: {
   const save = async () => {
     if (!strokes.length || saving) return;
     setSaving(true);
-    try { if (await onSave(title, strokes)) onOpenChange(false); } finally { setSaving(false); }
+    try { if (await onSave(title, strokes)) onOpenChange(false); }
+    catch { notify('Could not save the sketch — check your connection and try again. Your drawing is still here.', 'error'); }
+    finally { setSaving(false); }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl" onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); } }}>
+      <DialogContent className="max-w-3xl" onKeyDown={(e) => {
+        // In the title box, Ctrl/⌘ + Z is the browser's text undo.
+        if ((e.target as HTMLElement).closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) return;
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+      }}>
         <DialogHeader>
           <DialogTitle>{initial ? 'Edit sketch' : 'New sketch'}</DialogTitle>
           <DialogDescription>Draw with a mouse, finger or pen. Ctrl/⌘ + Z undoes the last stroke.</DialogDescription>
@@ -136,6 +154,7 @@ function SketchPad({ open, onOpenChange, initial, onSave }: {
             {strokes.map((s, i) => <StrokePath key={i} s={s} />)}
             {live && <StrokePath s={live} />}
           </svg>
+          {full && <p role="status" className="text-xs text-destructive">This sketch is as big as one can be. Save it, or Undo a few strokes to keep drawing.</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -156,7 +175,10 @@ export function TaskSketches({ taskId, sketches, reload, members, currentUserId,
   canModerate: boolean;
 }) {
   const [editing, setEditing] = useState<TaskSketch | 'new' | null>(null);
-  const [viewing, setViewing] = useState<TaskSketch | null>(null);
+  // The open sketch by id, read from the live list (a teammate's edit shows; a removal closes it).
+  const [viewingId, setViewingId] = useState<number | null>(null);
+  const viewing = viewingId == null ? null : sketches.find((s) => s.id === viewingId) ?? null;
+  useEffect(() => { if (viewingId != null && !sketches.some((s) => s.id === viewingId)) setViewingId(null); }, [sketches, viewingId]);
   const nameOf = (id: number | null) => members.find((m: any) => Number(m.id) === Number(id))?.name || 'Someone';
   const canChange = (s: TaskSketch) => canModerate || (currentUserId != null && Number(s.member_id) === Number(currentUserId));
   const full = sketches.length >= MAX_SKETCHES_PER_TASK;
@@ -172,9 +194,14 @@ export function TaskSketches({ taskId, sketches, reload, members, currentUserId,
   };
   const remove = async (s: TaskSketch) => {
     if (!(await confirmDialog({ title: 'Remove this sketch?', message: s.title ? `"${s.title}" will be removed from the task.` : 'The sketch will be removed from the task.', confirmLabel: 'Remove', danger: true }))) return;
-    const res = await apiFetch(`/api/tasks/${taskId}/sketches/${s.id}`, { method: 'DELETE' });
-    if (!res.ok) { notify((await res.json().catch(() => ({})))?.error || 'Could not remove the sketch.', 'error'); return; }
-    setViewing(null);
+    try {
+      const res = await apiFetch(`/api/tasks/${taskId}/sketches/${s.id}`, { method: 'DELETE' });
+      if (!res.ok) { notify((await res.json().catch(() => ({})))?.error || 'Could not remove the sketch.', 'error'); return; }
+    } catch {
+      notify('Could not remove the sketch — check your connection and try again.', 'error');
+      return;
+    }
+    setViewingId(null);
     await reload();
   };
 
@@ -190,7 +217,7 @@ export function TaskSketches({ taskId, sketches, reload, members, currentUserId,
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {sketches.map((s) => (
             <li key={s.id}>
-              <button type="button" onClick={() => setViewing(s)} className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+              <button type="button" onClick={() => setViewingId(s.id)} className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
                 <SketchView strokes={s.strokes} label={`Sketch${s.title ? ` "${s.title}"` : ''} by ${nameOf(s.member_id)}`} />
                 <span className="mt-1 block truncate text-xs font-medium">{s.title || 'Untitled sketch'}</span>
                 <span className="block truncate text-[11px] text-muted-foreground">{nameOf(s.member_id)} · {format(new Date(s.updated_at || s.created_at), 'MMM d')}</span>
@@ -199,7 +226,7 @@ export function TaskSketches({ taskId, sketches, reload, members, currentUserId,
           ))}
         </ul>
       )}
-      <Dialog open={!!viewing} onOpenChange={(o) => { if (!o) setViewing(null); }}>
+      <Dialog open={!!viewing} onOpenChange={(o) => { if (!o) setViewingId(null); }}>
         {viewing && (
           <DialogContent className="max-w-3xl">
             <DialogHeader>
@@ -210,7 +237,7 @@ export function TaskSketches({ taskId, sketches, reload, members, currentUserId,
             {canChange(viewing) && (
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => void remove(viewing)}><Trash2 /> Remove</Button>
-                <Button type="button" variant="outline" onClick={() => { setEditing(viewing); setViewing(null); }}><PenLine /> Edit</Button>
+                <Button type="button" variant="outline" onClick={() => { setEditing(viewing); setViewingId(null); }}><PenLine /> Edit</Button>
               </DialogFooter>
             )}
           </DialogContent>

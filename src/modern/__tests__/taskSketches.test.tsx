@@ -45,6 +45,53 @@ describe('TaskSketches', () => {
     await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 
+  it('a second finger mid-stroke is ignored; Ctrl+Z in the title is the text undo, not the ink undo', () => {
+    render(<TaskSketches taskId={12} sketches={[]} reload={vi.fn(async () => {})} members={members} currentUserId={7} canModerate={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /New sketch/ }));
+    const board = screen.getByRole('img', { name: /Drawing board, 0 strokes/ });
+    fireEvent.pointerDown(board, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    fireEvent.pointerDown(board, { button: 0, pointerId: 2, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(board, { pointerId: 2 });
+    fireEvent.pointerMove(board, { pointerId: 1, clientX: 3, clientY: 3 });
+    fireEvent.pointerUp(board, { pointerId: 1 });
+    expect(screen.getByRole('img', { name: /Drawing board, 1 stroke$/ })).toBeTruthy();
+    fireEvent.keyDown(screen.getByLabelText(/Title/), { key: 'z', ctrlKey: true });
+    expect(screen.getByRole('img', { name: /Drawing board, 1 stroke$/ })).toBeTruthy();
+    fireEvent.keyDown(board, { key: 'z', ctrlKey: true });
+    expect(screen.getByRole('img', { name: /Drawing board, 0 strokes/ })).toBeTruthy();
+  });
+
+  it("an open sketch follows a teammate's edit and closes when it's removed", () => {
+    const props = { taskId: 12, reload: vi.fn(async () => {}), members, currentUserId: 8, canModerate: false };
+    const { rerender } = render(<TaskSketches {...props} sketches={[sketch as any]} />);
+    fireEvent.click(screen.getByRole('button', { name: /Roller spacing/ }));
+    expect(screen.getByRole('heading', { name: 'Roller spacing' })).toBeTruthy();
+    rerender(<TaskSketches {...props} sketches={[{ ...sketch, title: 'Roller spacing v2' } as any]} />);
+    expect(screen.getByRole('heading', { name: 'Roller spacing v2' })).toBeTruthy();
+    rerender(<TaskSketches {...props} sketches={[]} />);
+    expect(screen.queryByRole('heading', { name: /Roller spacing/ })).toBeNull();
+  });
+
+  it('a sketch at the size limit says so and takes no more strokes (the server would refuse it)', () => {
+    const big = { ...sketch, strokes: Array.from({ length: 600 }, () => sketch.strokes[0]) };
+    render(<TaskSketches taskId={12} sketches={[big as any]} reload={vi.fn(async () => {})} members={members} currentUserId={7} canModerate={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /Roller spacing/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Edit/ }));
+    expect(screen.getByText(/as big as one can be/)).toBeTruthy();
+    draw(screen.getByRole('img', { name: /Drawing board/ }), [0, 0], [0, 0]);
+    expect(screen.getByRole('img', { name: /Drawing board, 600 strokes/ })).toBeTruthy();
+  });
+
+  it('a dropped connection on save keeps the drawing open and says so', async () => {
+    api.apiFetch.mockRejectedValue(new Error('offline'));
+    render(<TaskSketches taskId={12} sketches={[]} reload={vi.fn(async () => {})} members={members} currentUserId={7} canModerate={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /New sketch/ }));
+    draw(screen.getByRole('img', { name: /Drawing board/ }), [0, 0], [0, 0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save sketch' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith(expect.stringMatching(/check your connection/), 'error'));
+    expect(screen.getByRole('img', { name: /Drawing board, 1 stroke$/ })).toBeTruthy();
+  });
+
   it('the author can edit or remove; someone else only views', async () => {
     const reload = vi.fn(async () => {});
     const { unmount } = render(<TaskSketches taskId={12} sketches={[sketch as any]} reload={reload} members={members} currentUserId={8} canModerate={false} />);
