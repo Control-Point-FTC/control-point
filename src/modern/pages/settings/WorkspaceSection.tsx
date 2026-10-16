@@ -1,5 +1,5 @@
 // Settings → Workspace: team name + FTC team (with verify), default
-// interface, invite code, roles, and Google Calendar. Each card keeps the gate
+// interface, modules, robot subsystems, invite code, roles, and Google Calendar. Each card keeps the gate
 // it had before (team edits: admins; calendar team sync: manage_calendar or
 // President; personal calendar link: everyone).
 import { useEffect, useState } from 'react';
@@ -13,6 +13,7 @@ import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 import { AccessCode, AccessCodeHistory } from '../people/AccessCode';
 import { SubscribeDialog } from '../calendar/SubscribeDialog';
+import { ModulesGroup, SubsystemsGroup } from './ModulesGroups';
 
 interface TeamDraft { name: string; ftc: string }
 
@@ -138,6 +139,8 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       </form>
 
       <TimezoneGroup team={team} isAdmin={isAdmin} onTeamSaved={onTeamSaved} />
+      <ModulesGroup team={team} isAdmin={isAdmin} onTeamSaved={onTeamSaved} />
+      <SubsystemsGroup team={team} isAdmin={isAdmin} onTeamSaved={onTeamSaved} />
 
       {(isAdmin || hasPerm?.('invite_members')) && (
         <SettingsGroup title="Invites & access">

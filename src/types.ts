@@ -9,6 +9,10 @@ export interface Team {
   member_count?: number;
   navgpt_enabled?: number;
   ftc_team_number?: number | null;
+  /** JSON array of switched-off module ids (src/types/teamModules.ts); null = all on. */
+  disabled_modules?: string | null;
+  /** JSON array of robot subsystem names; null = the defaults. */
+  subsystems?: string | null;
 }
 
 export interface Member {

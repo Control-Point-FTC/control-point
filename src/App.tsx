@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+import { isNavIdDisabled, parseDisabledModules } from './types/teamModules';
 import { Routes, Route, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { LayoutDashboard, Users, Crown, Pencil, CalendarCheck, CheckSquare, Wallet, Globe, Newspaper, Mail, X, ChevronRight, ChevronDown, Plus, AtSign, TrendingUp, MessageSquare, Lock, Calendar, UserCheck, Zap, Trash2, Bolt, Code2, Check, ShieldCheck, UserX, Copy, Sparkles, Save, Trophy, Layers, Box, FileBox, ClipboardCheck, Package, ChevronUp, Phone, Video, ScanLine, Keyboard, BadgeCheck, Loader2, CheckCircle2, Clock3, ListTodo } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
@@ -1140,6 +1141,9 @@ export default function App() {
           refresh.budget();
         } else if (msg.type === 'events_changed') {
           refresh.events();
+        } else if (msg.type === 'team_settings_changed') {
+          // Module switches or subsystems changed: the sidebar follows live.
+          void refreshTeams();
         } else if (msg.type === 'member_roles_changed') {
           // Someone's roles changed — refresh the roster everywhere and
           // re-read my own permissions so the new role applies live.
@@ -1820,8 +1824,14 @@ export default function App() {
 
   // Students get a focused personal workspace; admins get everything
   const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'notebook', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  // Modules the workspace switched off (Settings → Workspace → Modules).
+  const disabledModules = useMemo(
+    () => parseDisabledModules(teams.find((t: any) => t.id === currentUser?.team_id)?.disabled_modules),
+    [teams, currentUser?.team_id],
+  );
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
+    if (isNavIdDisabled(t.id, disabledModules)) return false;
     if (t.perm) return hasPerm(t.perm);
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
@@ -1881,7 +1891,8 @@ export default function App() {
     if (isLoggedIn && activeTab !== 'bruno' && !allVisibleTabIds.has(activeTab)) {
       navigate('/dashboard', { replace: true });
     }
-  }, [isLoggedIn, currentUser, activeTab, ownerChecked, isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
+  // allVisibleTabIds: a module switched off while its page is open sends the viewer home.
+  }, [isLoggedIn, currentUser, activeTab, ownerChecked, isOwner, allVisibleTabIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Owner status drives the Owner tab; only Sushil's email(s) qualify
   useEffect(() => {

@@ -13,7 +13,7 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 ## Phase 0: Shared foundations (unblocks almost everything else)
 
 ### PR 0.1: Season-wide taxonomies
-- [ ] Subsystem list per team (defaults: Drivetrain, Intake, Outtake, Arm, Autonomous, Electrical, Chassis, Sensors), editable in settings
+- [x] Subsystem list per team (defaults: Drivetrain, Intake, Outtake, Arm, Autonomous, Electrical, Chassis, Sensors), editable in settings
 - [ ] FTC award taxonomy constant (Think, Connect, Reach, Sustain, Innovate, Control, Design, Inspire) with one-line "what judges look for" text per award, in `src/types` so the server can use it
 - [ ] Shared `<SubsystemChips>` and `<AwardChips>` pickers (award chip hover shows judging criteria)
 - [ ] Polymorphic tag tables: `subsystem_tags(entity_type, entity_id, subsystem)` and `award_tags(entity_type, entity_id, award)`
@@ -28,9 +28,10 @@ Source: the owner's private Robolyst teardown (`robolyst-deep-dive-60-page.md`, 
 - [ ] 403 page that says who can grant access ("A team manager can grant it from Settings → Roles")
 
 ### PR 0.3: Per-team module switches
-- [ ] `team_modules` setting: turn whole modules off (Tasks, Calendar, Notebook, Checklists, Printing, Practice, Scouting, Money, Outreach, Website, Library …)
-- [ ] Nav, CommandMenu, dashboard widgets and Bruno respect the switches
-- [ ] Settings page: toggles with one-line descriptions
+- [x] `teams.disabled_modules` setting: turn whole modules off (every current module; new modules join the list as they ship)
+- [x] Sidebar, mobile tabs, the ⌘K search menu and Bruno respect the switches (Bruno sees them in workspace facts and can flip them with a confirm card)
+- [ ] Dashboard widgets respect the switches (lands with the Phase 13 dashboard)
+- [x] Settings page: toggles with one-line descriptions
 
 ### PR 0.4: Notification engine upgrade
 - [~] Instant/digest/off prefs (have) — move to a per-event × per-channel matrix (in-app / email / push / Discord DM / webhook)
