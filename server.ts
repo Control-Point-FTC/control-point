@@ -2366,6 +2366,9 @@ async function startServer() {
   // /api/csp-report. The hand-off start is a top-level GET navigation.
   const sharedAccounts = createSharedAccounts({
     dbGet, dbAll, dbRun,
+    countAdmins,
+    // Declared further down with the member routes; only called per request, after startup.
+    removeMembership: (teamId, memberId) => removeMembership(teamId, memberId),
     sessionEmail: async (req) => {
       const auth = await getAuth(req);
       return auth ? (await authEmail(auth)) || null : null;
@@ -7148,6 +7151,24 @@ async function startServer() {
     res.json({ avatar_url: avatarUrl, user: sanitizeMember(user) });
   });
 
+  // Soft remove: the member loses access immediately, but their messages,
+  // tasks, attendance, and other history stay intact. Privileges do not
+  // survive removal — rejoining later starts over as a plain Member — and
+  // every session and live socket for the membership ends now.
+  // The one removal path: an admin's DELETE /api/members/:id and Control
+  // Scout's POST /internal/workspaces/:id/members/remove both use it.
+  const removeMembership = async (teamId: number, memberId: number) => {
+    await dbBatch([
+      { sql: "UPDATE members SET is_active = 0, account_type = 'student', is_board = 0, scopes = '[]', role = 'Member' WHERE id = ?", args: [memberId] },
+      { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
+      { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
+      { sql: "DELETE FROM sticky_notes WHERE member_id = ?", args: [memberId] },
+    ]);
+    await disconnectGoogleCalendar(memberId).catch((e) => console.error("[calendar] disconnect on removal failed:", e?.message || e));
+    await endMemberPresence(teamId, memberId);
+    broadcastToTeam(teamId, { type: "member_removed", id: memberId });
+  };
+
   app.delete("/api/members/:id", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
@@ -7162,19 +7183,7 @@ async function startServer() {
     if (target.account_type === 'admin') {
       if ((await countAdmins(auth.teamId)) <= 1) return res.status(400).json({ error: "You need at least one admin" });
     }
-    // Soft remove: the member loses access immediately, but their messages,
-    // tasks, attendance, and other history stay intact. Privileges do not
-    // survive removal — rejoining later starts over as a plain Member — and
-    // every session and live socket for the membership ends now.
-    await dbBatch([
-      { sql: "UPDATE members SET is_active = 0, account_type = 'student', is_board = 0, scopes = '[]', role = 'Member' WHERE id = ?", args: [memberId] },
-      { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
-      { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
-      { sql: "DELETE FROM sticky_notes WHERE member_id = ?", args: [memberId] },
-    ]);
-    await disconnectGoogleCalendar(memberId).catch((e) => console.error("[calendar] disconnect on removal failed:", e?.message || e));
-    await endMemberPresence(auth.teamId, memberId);
-    broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
+    await removeMembership(auth.teamId, memberId);
     res.json({ success: true });
   });
 
