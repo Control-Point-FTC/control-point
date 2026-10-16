@@ -90,6 +90,15 @@ describe("everyone completes it separately", () => {
     expect((await dbGet("SELECT status FROM tasks WHERE id = ?", pair)).status).toBe("done");
   });
 
+  it("a person added before the last part keeps the task open", async () => {
+    // Ben is added (outside the API) before Ana submits: her part is not the last.
+    const id = (await t.post("/api/tasks", { title: "Guarded each", assignee_ids: [ana], completion_mode: "each" }, admin)).body.id;
+    await t.db.execute({ sql: "INSERT INTO task_assignees (task_id, member_id) VALUES (?, ?)", args: [id, ben] });
+    const r = await complete(id, anaS);
+    expect(r.body).toMatchObject({ partial: true, done: 1, of: 2 });
+    expect((await dbGet("SELECT status FROM tasks WHERE id = ?", id)).status).toBe("in-progress");
+  });
+
   it("deleting a task removes its progress rows", async () => {
     const gone = (await t.post("/api/tasks", { title: "Gone each", assignee_ids: [ana, ben], completion_mode: "each" }, admin)).body.id;
     await complete(gone, anaS);

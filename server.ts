@@ -9797,12 +9797,13 @@ Rules:
       const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", mid)) as any;
       if (m && m.team_id === teamId) valid.push(mid);
     }
-    await dbRun("DELETE FROM task_assignees WHERE task_id = ?", taskId);
-    for (const mid of valid) {
-      await dbRun("INSERT OR IGNORE INTO task_assignees (task_id, member_id) VALUES (?, ?)", taskId, mid);
-    }
-    // Keep legacy column in sync (first assignee, for old clients)
-    await dbRun("UPDATE tasks SET assigned_to = ? WHERE id = ?", valid[0] || null, taskId);
+    // One transaction: no reader ever sees the task with nobody (or half) assigned.
+    await dbBatch([
+      { sql: "DELETE FROM task_assignees WHERE task_id = ?", args: [taskId] },
+      ...valid.map((mid) => ({ sql: "INSERT OR IGNORE INTO task_assignees (task_id, member_id) VALUES (?, ?)", args: [taskId, mid] })),
+      // Keep legacy column in sync (first assignee, for old clients)
+      { sql: "UPDATE tasks SET assigned_to = ? WHERE id = ?", args: [valid[0] || null, taskId] },
+    ]);
     return valid;
   };
   const withAssignees = async (tasks: any[]) => {
@@ -9820,6 +9821,19 @@ Rules:
   };
   /** A known completion mode ('each') or null (one shared deliverable). */
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
+  /**
+   * "Everyone still assigned has finished their part", checked inside the
+   * UPDATE that closes the task, so a person added at the same moment keeps
+   * it open. Same rule as getTaskAssigneeIds (task_assignees, else the legacy
+   * assigned_to). Use on the tasks table, unaliased.
+   */
+  const EVERYONE_DONE_SQL = `(
+    (EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id)
+      AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id
+        AND NOT EXISTS (SELECT 1 FROM task_assignee_done d WHERE d.task_id = ta.task_id AND d.member_id = ta.member_id)))
+    OR (NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = tasks.id) AND tasks.assigned_to IS NOT NULL
+      AND EXISTS (SELECT 1 FROM task_assignee_done d WHERE d.task_id = tasks.id AND d.member_id = tasks.assigned_to))
+  )`;
   /** Reopened from done: everyone's part starts over. */
   const clearAssigneeDone = (taskId: number) => dbRun("DELETE FROM task_assignee_done WHERE task_id = ?", taskId);
   /**
@@ -9837,7 +9851,7 @@ Rules:
     const now = new Date().toISOString();
     const lastBy = Number(done.find((d) => assignees.includes(Number(d.member_id)))?.member_id) || actorId;
     const r: any = await dbRun(
-      "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled')",
+      `UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status NOT IN ('done', 'cancelled') AND completion_mode = 'each' AND ${EVERYONE_DONE_SQL}`,
       now, lastBy, actorManages ? "approved" : "pending", actorManages ? actorId : null, actorManages ? now : null, taskId,
     );
     if (!Number(r?.changes ?? 0)) return;
@@ -10503,7 +10517,8 @@ Rules:
       // "Everyone completes it separately": an assignee finishes their own
       // part; the task is done once every current assignee has. A manager can
       // finish it for everyone with whole=1.
-      if (task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done") {
+      const eachPart = task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done";
+      if (eachPart) {
         const at = new Date().toISOString();
         await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
@@ -10530,14 +10545,28 @@ Rules:
       // Done isn't accepted yet: a manager reviews it (approve, or send it
       // back). A manager finishing a task approves their own work.
       const review = canManage ? "approved" : "pending";
-      await dbRun(
+      const closed: any = await dbRun(
         // Each finish is kept in completion_history (appended in SQL, so two
         // finishes at once both land), with just this finish's photos.
-        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ?, completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)) WHERE id = ?",
+        // The last part of an each-person task closes it only if everyone still
+        // assigned has finished at this moment (someone added meanwhile keeps it open).
+        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ?, completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)) WHERE id = ?" + (eachPart ? ` AND ${EVERYONE_DONE_SQL}` : ""),
         now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, review, canManage ? auth.memberId : null, canManage ? now : null,
         JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, images, review: canManage ? { status: "approved", by: auth.memberId, at: now, note: null } : null }),
         req.params.id
       );
+      if (eachPart && !Number(closed?.changes ?? 0)) {
+        // Someone was added meanwhile and hasn't finished: this was a part.
+        await dbRun(
+          "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
+          JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, images, part: true, review: null }), task.id,
+        );
+        const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
+        await withAssignees([partial]);
+        void broadcastTask(auth.teamId, "task_updated", partial);
+        const ids = partial.assignee_ids as number[];
+        return res.json({ success: true, partial: true, done: (partial.done_assignee_ids || []).length, of: ids.length, task: partial });
+      }
       // A repeating task rolls forward the moment it's done.
       try { await spawnNextRecurringTask({ ...task, id: Number(req.params.id) }, auth.teamId!, auth.memberId); }
       catch (e) { console.error("recurring task spawn failed:", e); }
