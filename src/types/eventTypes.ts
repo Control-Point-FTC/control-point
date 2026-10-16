@@ -36,7 +36,14 @@ export function eventExportNotes(e: { description?: string | null; agenda?: stri
 export function locationHref(location: unknown): { kind: 'link' | 'place'; href: string } | null {
   const s = typeof location === 'string' ? location.trim() : '';
   if (!s) return null;
-  const url = s.match(/https?:\/\/[^\s<>"']+/i)?.[0];
+  let url = s.match(/https?:\/\/[^\s<>"']+/i)?.[0];
+  // Sentence punctuation and unmatched closing brackets after a link aren't part of it.
+  while (url) {
+    const last = url.at(-1)!;
+    const unmatched = (open: string, close: string) => last === close && url!.split(close).length > url!.split(open).length;
+    if ('.,;:!?'.includes(last) || unmatched('(', ')') || unmatched('[', ']')) url = url.slice(0, -1);
+    else break;
+  }
   if (url) {
     try { const u = new URL(url); if (u.protocol === 'http:' || u.protocol === 'https:') return { kind: 'link', href: u.toString() }; } catch { /* not a URL */ }
   }

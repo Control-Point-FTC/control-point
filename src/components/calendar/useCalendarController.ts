@@ -265,7 +265,9 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     // one-off being made repeating, or "this and following".
     const rule = repeatFromForm(form);
     // Extra days only on a new, non-repeating event (the server checks too).
-    const extraDays = !editingId && !rule ? form.extra_days.filter((d) => d.date) : [];
+    const extraDays = !editingId && !rule ? form.extra_days : [];
+    // An added day with no date isn't dropped quietly: the editor stays open to fix it.
+    if (extraDays.some((d) => !d.date)) { notify('Pick a date for each added day, or remove it.', 'error'); return; }
     const extraError = extraDays.map((d) => eventTimeError(d.start_time, d.end_time)).find(Boolean);
     if (extraError) { notify(extraError, 'error'); return; }
     const payload = {

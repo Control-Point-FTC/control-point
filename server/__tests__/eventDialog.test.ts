@@ -22,6 +22,9 @@ describe("shared helpers", () => {
     expect(locationHref("Room 101, Main St")?.kind).toBe("place");
     expect(locationHref("javascript:alert(1)")?.kind).toBe("place");
     expect(locationHref("  ")).toBeNull();
+    // Punctuation around a link isn't part of it; brackets that belong to the URL stay.
+    expect(locationHref("Join (https://meet.google.com/abc-defg-hij).")?.href).toBe("https://meet.google.com/abc-defg-hij");
+    expect(locationHref("See https://en.wikipedia.org/wiki/Gear_(device), then")?.href).toBe("https://en.wikipedia.org/wiki/Gear_(device)");
   });
   it("calendar exports carry the agenda", () => {
     const ev = { id: 1, title: "Practice", date: "2099-03-01", start_time: "16:00", end_time: "18:00", description: "Bring batteries", agenda: "Drive practice" };

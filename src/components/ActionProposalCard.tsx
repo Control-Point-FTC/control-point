@@ -119,7 +119,10 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
     const when = it.time ? `${it.date} at ${it.time}${end ? `–${end}` : ''}` : it.date ? `${it.date} (all day)` : '';
     const type = cleanEventType(it.type ?? it.event_type);
     const where = typeof it.location === 'string' && it.location.trim() ? ` @ ${it.location.trim().slice(0, 60)}` : '';
-    const agenda = typeof it.agenda === 'string' && it.agenda.trim() ? ' · with agenda' : '';
+    // The agenda itself, so it can be checked before it's saved.
+    const items = typeof it.agenda === 'string' ? it.agenda.split('\n').map((l: string) => l.trim()).filter(Boolean) : [];
+    const agendaText = items.join('; ');
+    const agenda = items.length ? ` · Agenda: ${agendaText.length > 160 ? `${agendaText.slice(0, 159)}…` : agendaText}` : '';
     return `${title}${when ? ` — ${when}` : ''}${where}${type && type !== 'meeting' ? ` · ${EVENT_TYPE_LABELS[type]}` : ''}${agenda}`;
   }
   if (kind === 'delete-event') {

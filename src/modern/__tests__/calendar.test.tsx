@@ -80,6 +80,18 @@ describe('Modern Calendar', () => {
     expect(body.extra_days).toEqual([{ date: toDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)), start_time: '16:00', end_time: '18:00' }]);
   });
 
+  it('an added day with no date keeps the editor open instead of being dropped', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Regional' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add another day/ }));
+    fireEvent.change(screen.getByLabelText('Day 2'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create event' }));
+    expect(dialog.notify).toHaveBeenCalledWith('Pick a date for each added day, or remove it.', 'error');
+    expect(api.apiFetch).not.toHaveBeenCalledWith('/api/events', expect.anything());
+    expect(screen.getByLabelText('Title')).toHaveValue('Regional');
+  });
+
   it('a video-call location is a link; a place opens in maps; the agenda is listed', async () => {
     setup({ manage: false, events: [
       { id: 5, title: 'Online review', date: later, start_time: '23:00', event_type: 'meeting', location: 'https://meet.google.com/abc', agenda: 'Intake\nAuto', team_id: 1 } as any,
