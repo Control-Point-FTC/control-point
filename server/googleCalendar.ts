@@ -1,10 +1,12 @@
 // The Google Calendar copy of a team event. Times are the team's local wall
 // clock, so a timed event carries the team's IANA time zone: Google rejects a
 // dateTime with neither an offset nor a timeZone.
+import { eventExportNotes } from "../src/types/eventTypes.js";
 
 export type TeamEvent = {
   title?: string | null;
   description?: string | null;
+  agenda?: string | null;
   location?: string | null;
   date: string;          // YYYY-MM-DD
   start_time?: string | null; // HH:MM, "" for all-day
@@ -28,7 +30,7 @@ const clock = (total: number) => `${String(Math.floor(total / 60)).padStart(2, "
 export function googleEventBody(event: TeamEvent, timeZone: string) {
   const body: Record<string, unknown> = {
     summary: event.title || "Team event",
-    description: `${event.description || ""}\n\n— via Control Point`.trim(),
+    description: `${eventExportNotes(event)}\n\n— via Control Point`.trim(),
     location: event.location || "",
   };
   const start = (event.start_time || "").trim();

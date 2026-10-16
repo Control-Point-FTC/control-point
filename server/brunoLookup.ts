@@ -280,7 +280,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
     const args: any[] = [teamId, ...w.args];
-    let sql = `SELECT id, title, description, date, start_time, end_time, location, event_type FROM events WHERE team_id = ?${w.sql}`;
+    let sql = `SELECT id, title, description, agenda, date, start_time, end_time, location, event_type FROM events WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
     sql += " ORDER BY date ASC, start_time ASC LIMIT 61";
@@ -288,7 +288,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     more = c.more;
     for (const r of c.rows) {
       ids.push(`event:${r.id}`);
-      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);

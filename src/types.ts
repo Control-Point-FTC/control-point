@@ -123,7 +123,8 @@ export interface CalendarEvent {
   start_time: string; // HH:MM
   end_time: string; // HH:MM
   location: string;
-  event_type: 'meeting' | 'competition' | 'deadline' | 'social' | 'other';
+  event_type: 'meeting' | 'competition' | 'scrimmage' | 'outreach' | 'deadline' | 'social' | 'other';
+  agenda?: string;
   team_id: number | null;
   created_by: number | null;
   created_at: string;

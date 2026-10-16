@@ -91,11 +91,11 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ## Phase 2: Calendar, events and attendance
 
 ### PR 2.1: New Event dialog rebuild
-- [~] Event types (have meeting/competition/deadline/social/other) — add Outreach and Scrimmage
-- [ ] Start-time quick chips (3:30, 4:00, 5:00, 6:00, 7:00 PM) + "+2h from start"
-- [ ] Multi-day events ("+ Add another day")
-- [ ] Location accepts an address or a video-call link (clickable)
-- [ ] Agenda field
+- [x] Event types: meeting, competition, scrimmage, outreach, deadline, social, other
+- [x] Start-time quick chips (3:30, 4:00, 5:00, 6:00, 7:00 PM) + "+2h from start"
+- [x] Multi-day events ("+ Add another day"; one event per day, each with its own times)
+- [x] Location accepts an address or a video-call link (clickable)
+- [x] Agenda field (in exports, Bruno's lookup and Bruno's event cards)
 - [ ] Attendees default to whole team, with role chips to narrow
 - [x] Repeats weekly / recurring series
 - [ ] "Notify members" checkbox (uses PR 0.4)

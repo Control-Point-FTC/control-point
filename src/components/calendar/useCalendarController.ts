@@ -10,11 +10,16 @@ import { streamBuildHelper, extractActionProposals, applyActionProposals, notify
 import { useDraft, getDraft, newSessionId } from '../../modern/drafts';
 import { eventTimeError } from '../../utils/validation';
 import { readEventRepeat, cleanReminder, DEFAULT_COUNT, type EventRepeat } from '../../utils/eventSeries';
+import { EVENT_TYPE_IDS, EVENT_TYPE_LABELS, cleanEventType } from '../../types/eventTypes';
 
 export type RepeatChoice = '' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
 export interface EventForm {
   title: string; description: string; date: string; start_time: string; end_time: string;
   location: string; event_type: string; team_id: string;
+  /** The event's plan, one item per line (separate from the notes). */
+  agenda: string;
+  /** A new multi-day event: the other days, each with its own times. */
+  extra_days: { date: string; start_time: string; end_time: string }[];
   /** How often it repeats ('' = doesn't). 'custom' keeps a rule set elsewhere (Bruno). */
   repeat: RepeatChoice;
   /** The rule behind 'custom' (and the stored rule when editing). */
@@ -29,6 +34,7 @@ export interface EventForm {
 }
 const EMPTY_EVENT: EventForm = {
   title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '',
+  agenda: '', extra_days: [],
   repeat: '', repeat_rule: null, repeat_end: 'count', repeat_count: String(DEFAULT_COUNT), repeat_until: '', reminder: '', scope: 'one',
 };
 
@@ -73,13 +79,7 @@ export function repeatError(f: EventForm, editing?: any): string | null {
 }
 const EMPTY_LIST: any[] = [];
 
-export const EVENT_TYPES = [
-  { value: 'meeting', label: 'Meeting' },
-  { value: 'competition', label: 'Competition' },
-  { value: 'deadline', label: 'Deadline' },
-  { value: 'social', label: 'Social' },
-  { value: 'other', label: 'Other' },
-] as const;
+export const EVENT_TYPES = EVENT_TYPE_IDS.map((value) => ({ value, label: EVENT_TYPE_LABELS[value] }));
 
 export const toDateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -155,6 +155,9 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
           start_time: e.time || f.start_time,
           // "from 3 to 5pm": the end time lands in Ends, not in the notes.
           end_time: e.end || (e.time ? '' : f.end_time),
+          location: e.location || f.location,
+          event_type: cleanEventType(e.type ?? e.event_type) || f.event_type,
+          agenda: e.agenda || f.agenda,
         }));
         setAiNote('Bruno filled in the form below — review it and hit Create Event.');
         setAiOpen(false);
@@ -220,6 +223,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       start_time: e.start_time || '', end_time: e.end_time || '',
       location: e.location || '', event_type: e.event_type || 'meeting',
       team_id: e.team_id ? String(e.team_id) : '',
+      agenda: e.agenda || '', extra_days: [],
       ...repeatFields(readEventRepeat(e.recurrence)),
       reminder: cleanReminder(e.reminder_minutes) != null ? String(e.reminder_minutes) : '',
       scope: 'one',
@@ -253,15 +257,22 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     const following = inSeries && form.scope === 'following';
     const fields = {
       title: form.title, description: form.description, date: form.date, start_time: form.start_time, end_time: form.end_time,
-      location: form.location, event_type: form.event_type,
+      location: form.location, event_type: form.event_type, agenda: form.agenda,
       team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id,
       reminder_minutes: cleanReminder(form.reminder),
     };
     // The repeat rule is only sent where it can change: a new event, a
     // one-off being made repeating, or "this and following".
     const rule = repeatFromForm(form);
+    // Extra days only on a new, non-repeating event (the server checks too).
+    const extraDays = !editingId && !rule ? form.extra_days : [];
+    // An added day with no date isn't dropped quietly: the editor stays open to fix it.
+    if (extraDays.some((d) => !d.date)) { notify('Pick a date for each added day, or remove it.', 'error'); return; }
+    const extraError = extraDays.map((d) => eventTimeError(d.start_time, d.end_time)).find(Boolean);
+    if (extraError) { notify(extraError, 'error'); return; }
     const payload = {
       ...fields,
+      ...(extraDays.length ? { extra_days: extraDays } : {}),
       ...(!inSeries || following ? { repeat: rule } : {}),
       ...(following ? { scope: 'following' } : {}),
     };

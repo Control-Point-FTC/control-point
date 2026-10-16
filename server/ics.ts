@@ -5,11 +5,13 @@
 // VTIMEZONE block. Pure: server.ts does the I/O.
 
 import { eventStartMs, reminderDueMs, zonedToUtcMs } from '../src/utils/eventSeries.js';
+import { eventExportNotes } from '../src/types/eventTypes.js';
 
 export interface IcsEvent {
   id: number;
   title: string;
   description?: string | null;
+  agenda?: string | null;
   date: string;
   start_time?: string | null;
   end_time?: string | null;
@@ -74,7 +76,8 @@ export function buildIcs(opts: { calendarName: string; timeZone: string; host: s
       lines.push(`DTSTART;VALUE=DATE:${dateValue(e.date)}`, `DTEND;VALUE=DATE:${dateValue(nextDay(e.date))}`);
     }
     lines.push(`SUMMARY:${icsEscape(e.title || 'Event')}`);
-    if (e.description) lines.push(`DESCRIPTION:${icsEscape(e.description)}`);
+    const notes = eventExportNotes(e);
+    if (notes) lines.push(`DESCRIPTION:${icsEscape(notes)}`);
     if (e.location) lines.push(`LOCATION:${icsEscape(e.location)}`);
     if (e.event_type) lines.push(`CATEGORIES:${icsEscape(e.event_type)}`);
     const due = reminderDueMs(e, timeZone);

@@ -2,7 +2,7 @@
 // create/edit form (Bruno quick-add first) for calendar managers. Open state
 // and form values live in the shared draft store via useCalendarController.
 import { useEffect, useState } from 'react';
-import { Bell, CalendarDays, Clock, Loader2, MapPin, Pencil, Repeat, Sparkles, Trash2, Users, Wand2, X } from 'lucide-react';
+import { Bell, CalendarDays, Clock, Loader2, MapPin, Pencil, Plus, Repeat, Sparkles, Trash2, Users, Wand2, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Popover, PopoverContent, PopoverTrigger, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Textarea,
@@ -12,6 +12,7 @@ import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { EVENT_TYPES, repeatError, type useCalendarController } from '../../../components/calendar/useCalendarController';
 import { eventTimeError } from '../../../utils/validation';
 import { everyLabel, readEventRepeat, repeatLabel, reminderLabel, REMINDER_CHOICES } from '../../../utils/eventSeries';
+import { locationHref, MAX_AGENDA } from '../../../types/eventTypes';
 
 type Ctl = ReturnType<typeof useCalendarController>;
 
@@ -20,6 +21,8 @@ export const TYPE_META: Record<string, { label: string; dot: string; chip: strin
   meeting: { label: 'Meeting', dot: 'bg-info', chip: 'bg-info/12 text-info', bar: 'border-l-info' },
   competition: { label: 'Competition', dot: 'bg-chart-4', chip: 'bg-chart-4/12 text-chart-4', bar: 'border-l-chart-4' },
   deadline: { label: 'Deadline', dot: 'bg-warning', chip: 'bg-warning/12 text-warning', bar: 'border-l-warning' },
+  scrimmage: { label: 'Scrimmage', dot: 'bg-pink-400', chip: 'bg-pink-400/12 text-pink-600 dark:text-pink-300', bar: 'border-l-pink-400' },
+  outreach: { label: 'Outreach', dot: 'bg-chart-1', chip: 'bg-chart-1/12 text-chart-1', bar: 'border-l-chart-1' },
   social: { label: 'Social', dot: 'bg-success', chip: 'bg-success/12 text-success', bar: 'border-l-success' },
   other: { label: 'Other', dot: 'bg-muted-foreground', chip: 'bg-muted text-muted-foreground', bar: 'border-l-muted-foreground' },
 };
@@ -75,7 +78,7 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
                 <dt className="flex items-center gap-2 text-muted-foreground"><Clock className="size-4" /> Time</dt>
                 <dd>{timeRange(event)}</dd>
                 <dt className="flex items-center gap-2 text-muted-foreground"><MapPin className="size-4" /> Where</dt>
-                <dd>{event.location || <span className="text-muted-foreground">No location</span>}</dd>
+                <dd><EventLocation location={event.location} /></dd>
                 <dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Team</dt>
                 <dd>{team ? `${team.name}${team.number ? ` #${team.number}` : ''}` : 'All teams'}</dd>
                 {readEventRepeat(event.recurrence) && (<>
@@ -88,6 +91,14 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
                 </>)}
               </dl>
               <Separator />
+              {event.agenda?.trim() && (
+                <div>
+                  <Label className="mb-2 block">Agenda</Label>
+                  <ol className="list-decimal space-y-1 pl-5 text-sm leading-relaxed text-foreground/90">
+                    {String(event.agenda).split('\n').map((line: string) => line.trim()).filter(Boolean).map((line: string, i: number) => <li key={i}>{line}</li>)}
+                  </ol>
+                </div>
+              )}
               <div>
                 <Label className="mb-2 block">Notes</Label>
                 {event.description
@@ -257,6 +268,20 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                   </SelectContent>
                 </Select>
               </div>
+              {!allDay && (
+                <div className="flex flex-wrap items-center gap-1 sm:col-span-3" role="group" aria-label="Start time shortcuts">
+                  {START_CHIPS.map((t) => (
+                    <button key={t} type="button" aria-pressed={f.start_time === t} onClick={() => set({ start_time: t, ...(f.end_time && f.end_time <= t ? { end_time: '' } : {}) })}
+                      className={cn('rounded-full border px-2.5 py-0.5 text-xs', f.start_time === t ? 'border-accent bg-accent/15' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground')}>
+                      {localTime(t)}
+                    </button>
+                  ))}
+                  <button type="button" disabled={!f.start_time || !plusTwoHours(f.start_time)} onClick={() => set({ end_time: plusTwoHours(f.start_time) })}
+                    className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50">
+                    Ends +2h
+                  </button>
+                </div>
+              )}
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -318,12 +343,18 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="event-location">Location</Label>
-              <Input id="event-location" value={f.location} onChange={(e) => set({ location: e.target.value })} placeholder="Where?" />
+              <Input id="event-location" value={f.location} onChange={(e) => set({ location: e.target.value })} placeholder="An address, or a video-call link" />
+              {f.location.trim() && <p className="text-xs text-muted-foreground">{locationHref(f.location)?.kind === 'link' ? 'Shows as a link people can click to join.' : 'Shows as a place that opens in maps.'}</p>}
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="event-agenda">Agenda <span className="font-normal text-muted-foreground">(optional)</span></Label>
+              <Textarea id="event-agenda" value={f.agenda} maxLength={MAX_AGENDA} onChange={(e) => set({ agenda: e.target.value })} placeholder={'One item per line, e.g.\n4:00 Drive practice\n5:00 Intake review'} className="min-h-20" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="event-desc">Notes</Label>
-              <Textarea id="event-desc" value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder="Agenda, what to bring…" className="min-h-24" />
+              <Textarea id="event-desc" value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder="What to bring, parking…" className="min-h-24" />
             </div>
+            {!editing && !f.repeat && <ExtraDays f={f} set={set} />}
           </div>
           {inSeries && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-6 py-3">
@@ -348,5 +379,69 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
         </form>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** The start-time chips: the usual after-school slots. */
+export const START_CHIPS = ['15:30', '16:00', '17:00', '18:00', '19:00'] as const;
+
+/** "HH:MM" two hours later, or '' when that runs past midnight. */
+export function plusTwoHours(start: string): string {
+  const m = /^(\d{2}):(\d{2})$/.exec(start || '');
+  if (!m) return '';
+  const total = Number(m[1]) * 60 + Number(m[2]) + 120;
+  if (total >= 24 * 60) return '';
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** A location as a link: a video call opens as is, a place opens in maps. */
+export function EventLocation({ location }: { location?: string | null }) {
+  const href = locationHref(location);
+  if (!href) return <span className="text-muted-foreground">No location</span>;
+  return (
+    <a href={href.href} target="_blank" rel="noopener noreferrer" className="break-words text-accent underline-offset-2 hover:underline">
+      {String(location).trim()}<span className="sr-only">{href.kind === 'link' ? ' (opens the link)' : ' (opens in maps)'}</span>
+    </a>
+  );
+}
+
+/** "+ Add another day": a multi-day event, each day with its own times. */
+function ExtraDays({ f, set }: { f: Ctl['form']; set: (patch: Partial<Ctl['form']>) => void }) {
+  const days = f.extra_days;
+  const update = (i: number, patch: Partial<(typeof days)[number]>) => set({ extra_days: days.map((d, j) => (j === i ? { ...d, ...patch } : d)) });
+  const nextDate = () => {
+    const last = [f.date, ...days.map((d) => d.date)].filter(Boolean).sort().at(-1);
+    if (!last) return '';
+    const d = new Date(`${last}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+  return (
+    <div className="space-y-2">
+      {days.map((d, i) => (
+        <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-2">
+          <div className="grid gap-1">
+            <Label htmlFor={`extra-day-${i}`} className="text-xs">Day {i + 2}</Label>
+            <Input id={`extra-day-${i}`} type="date" value={d.date} min={f.date || undefined} onChange={(e) => update(i, { date: e.target.value })} className="w-auto" />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor={`extra-start-${i}`} className="text-xs">Starts</Label>
+            <Input id={`extra-start-${i}`} type="time" value={d.start_time} onChange={(e) => update(i, { start_time: e.target.value })} className="w-28" />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor={`extra-end-${i}`} className="text-xs">Ends</Label>
+            <Input id={`extra-end-${i}`} type="time" value={d.end_time} onChange={(e) => update(i, { end_time: e.target.value })} className="w-28" />
+          </div>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove day ${i + 2}`} onClick={() => set({ extra_days: days.filter((_, j) => j !== i) })}><X /></Button>
+        </div>
+      ))}
+      {days.length < 13 && (
+        <Button type="button" variant="outline" size="sm" disabled={!f.date}
+          onClick={() => set({ extra_days: [...days, { date: nextDate(), start_time: f.start_time, end_time: f.end_time }] })}>
+          <Plus /> Add another day
+        </Button>
+      )}
+      {days.length > 0 && <p className="text-xs text-muted-foreground">Each day is saved as its own event with the same details.</p>}
+    </div>
   );
 }

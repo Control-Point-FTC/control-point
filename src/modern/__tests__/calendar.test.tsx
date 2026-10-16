@@ -62,6 +62,46 @@ describe('Modern Calendar', () => {
     expect(within(sheet).queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument();
   });
 
+  it('start chips, Ends +2h, an agenda and another day go out together', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Regional' } });
+    const chips = screen.getByRole('group', { name: 'Start time shortcuts' });
+    fireEvent.click(within(chips).getAllByRole('button')[1]); // 16:00
+    fireEvent.click(within(chips).getByRole('button', { name: 'Ends +2h' }));
+    expect((screen.getByLabelText(/^Ends/) as HTMLInputElement).value).toBe('18:00');
+    fireEvent.click(screen.getByRole('radio', { name: /Scrimmage/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Agenda/ }), { target: { value: 'Inspection\nMatches' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add another day/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create event' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
+    const body = JSON.parse(api.apiFetch.mock.calls[0][1].body);
+    expect(body).toMatchObject({ title: 'Regional', start_time: '16:00', end_time: '18:00', event_type: 'scrimmage', agenda: 'Inspection\nMatches' });
+    expect(body.extra_days).toEqual([{ date: toDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)), start_time: '16:00', end_time: '18:00' }]);
+  });
+
+  it('an added day with no date keeps the editor open instead of being dropped', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Regional' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add another day/ }));
+    fireEvent.change(screen.getByLabelText('Day 2'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create event' }));
+    expect(dialog.notify).toHaveBeenCalledWith('Pick a date for each added day, or remove it.', 'error');
+    expect(api.apiFetch).not.toHaveBeenCalledWith('/api/events', expect.anything());
+    expect(screen.getByLabelText('Title')).toHaveValue('Regional');
+  });
+
+  it('a video-call location is a link; a place opens in maps; the agenda is listed', async () => {
+    setup({ manage: false, events: [
+      { id: 5, title: 'Online review', date: later, start_time: '23:00', event_type: 'meeting', location: 'https://meet.google.com/abc', agenda: 'Intake\nAuto', team_id: 1 } as any,
+    ] });
+    fireEvent.click(screen.getAllByRole('button', { name: /Online review/ })[0]);
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByRole('link', { name: /meet\.google\.com\/abc/ })).toHaveAttribute('href', 'https://meet.google.com/abc');
+    expect(within(sheet).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Intake', 'Auto']);
+  });
+
   it('managers create with the same POST body as Legacy', async () => {
     const { props } = setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
@@ -72,7 +112,7 @@ describe('Modern Calendar', () => {
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
     expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toEqual({
       title: 'Scrimmage', description: '', date: today, start_time: '18:00', end_time: '', location: '',
-      event_type: 'competition', team_id: null, created_by: 7, reminder_minutes: null, repeat: null,
+      event_type: 'competition', agenda: '', team_id: null, created_by: 7, reminder_minutes: null, repeat: null,
     });
     expect(props.setEvents).toHaveBeenCalled();
     await waitFor(() => expect(props.refresh.events).toHaveBeenCalled());

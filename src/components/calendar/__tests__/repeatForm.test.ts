@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { repeatChoiceOf, repeatFromForm, repeatError, type EventForm } from '../useCalendarController';
 
 const form = (patch: Partial<EventForm>): EventForm => ({
-  title: 'Build', description: '', date: '2026-10-10', start_time: '10:00', end_time: '', location: '', event_type: 'meeting', team_id: '',
+  title: 'Build', description: '', date: '2026-10-10', start_time: '10:00', end_time: '', location: '', event_type: 'meeting', team_id: '', agenda: '', extra_days: [],
   repeat: '', repeat_rule: null, repeat_end: 'count', repeat_count: '10', repeat_until: '', reminder: '', scope: 'one', ...patch,
 });
 

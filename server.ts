@@ -205,6 +205,7 @@ import { isTaskStatus, strictWipLimits, WIP_COLUMNS, MAX_WIP } from "./src/types
 import { smartGroups } from "./src/utils/assigneeGroups.js";
 import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js";
 import { parseTagList } from "./src/types/taskTags.js";
+import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -10857,12 +10858,13 @@ Rules:
   interface TeamEventFields {
     title: string; date: string; time?: string; end?: string; notes?: string;
     location?: string; event_type?: string; reminder_minutes?: number | null;
-    recurrence?: string | null; series_id?: number | null;
+    recurrence?: string | null; series_id?: number | null; agenda?: string;
   }
-  const EVENT_INSERT_SQL = "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, reminder_minutes, recurrence, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  // series_id stays the last column: a series' followers swap its "?" for the head's id.
+  const EVENT_INSERT_SQL = "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, reminder_minutes, recurrence, agenda, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
   const eventInsertArgs = (teamId: number, memberId: number, e: TeamEventFields) => [
-    e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", e.location || "", e.event_type || "meeting",
-    teamId, memberId, e.reminder_minutes ?? null, e.recurrence ?? null, e.series_id ?? null,
+    e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", e.location || "", cleanEventType(e.event_type) || "meeting",
+    teamId, memberId, e.reminder_minutes ?? null, e.recurrence ?? null, cleanAgenda(e.agenda), e.series_id ?? null,
   ];
   async function insertTeamEvent(teamId: number, memberId: number, e: TeamEventFields) {
     const info = (await dbRun(EVENT_INSERT_SQL, ...eventInsertArgs(teamId, memberId, e))) as any;
@@ -10896,16 +10898,30 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const { title, description, date, start_time, end_time, location, event_type, repeat, reminder_minutes } = req.body;
+      const { title, description, date, start_time, end_time, location, event_type, repeat, reminder_minutes, agenda, extra_days } = req.body;
       const invalid = eventError({ title, date, start_time, end_time });
       if (invalid) return res.status(400).json({ error: invalid });
+      if (event_type !== undefined && event_type !== null && event_type !== "" && !cleanEventType(event_type)) return res.status(400).json({ error: "Pick a known event type" });
       const rep = repeatFrom(repeat, date);
       if ("error" in rep) return res.status(400).json({ error: rep.error });
+      // Multi-day: one event per extra day, each with its own times (not a repeating series).
+      const extras: { date: string; start_time: string; end_time: string }[] = [];
+      if (extra_days !== undefined && extra_days !== null) {
+        if (!Array.isArray(extra_days) || extra_days.length > 13) return res.status(400).json({ error: "Add up to 13 more days" });
+        if (rep.rule && extra_days.length) return res.status(400).json({ error: "An event can repeat or span several days, not both" });
+        for (const d of extra_days) {
+          const day = { date: String(d?.date || ""), start_time: String(d?.start_time || ""), end_time: String(d?.end_time || "") };
+          const bad = eventError({ title, ...day });
+          if (bad) return res.status(400).json({ error: `${bad} (on ${day.date || "an added day"})` });
+          if (day.date === date || extras.some((x) => x.date === day.date)) return res.status(400).json({ error: `${day.date} is already one of the days` });
+          extras.push(day);
+        }
+      }
       // The creator is the signed-in member (a client-supplied created_by is ignored).
       const fields: TeamEventFields = {
         title: String(title).trim(), date, time: start_time, end: end_time, notes: description,
-        location: location || "", event_type: event_type || "meeting", reminder_minutes: cleanReminder(reminder_minutes),
-        recurrence: rep.rule ? JSON.stringify(rep.rule) : null,
+        location: location || "", event_type: cleanEventType(event_type) || "meeting", reminder_minutes: cleanReminder(reminder_minutes),
+        recurrence: rep.rule ? JSON.stringify(rep.rule) : null, agenda: cleanAgenda(agenda),
       };
       let id: number;
       let count = 1;
@@ -10927,13 +10943,25 @@ Rules:
         ]);
         id = results[0].lastInsertRowid;
         await syncSeriesRows(auth.teamId, id);
+      } else if (extras.length) {
+        // Every day in one transaction, then each goes to linked calendars.
+        const results = await dbBatchResults([fields, ...extras.map((d) => ({ ...fields, date: d.date, time: d.start_time, end: d.end_time }))]
+          .map((f) => ({ sql: EVENT_INSERT_SQL, args: eventInsertArgs(auth.teamId, auth.memberId, f) })));
+        id = Number(results[0].lastInsertRowid);
+        count = results.length;
+        for (const r of results) {
+          const row = (await dbGet("SELECT * FROM events WHERE id = ?", Number(r.lastInsertRowid))) as any;
+          if (row) void syncEventToCalendars(row, auth.teamId);
+        }
       } else {
         id = Number(await insertTeamEvent(auth.teamId, auth.memberId, fields));
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
       void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
-        count > 1
+        extras.length
+          ? `New ${count}-day event: ${fields.title}, ${[date, ...extras.map((d) => d.date)].sort().join(", ")}`
+          : count > 1
           ? `New repeating event: ${fields.title}, ${count} times from ${date}${start_time ? ` at ${start_time}` : ""}`
           : `New calendar event: ${fields.title} on ${date}${start_time ? ` at ${start_time}` : ""}`,
         { event_id: id }, count);
@@ -10988,9 +11016,10 @@ Rules:
       // not hold up the team's other calendar edits).
       let cleanup: { member_id: number; google_event_id: string }[] = [];
       await withCalendarLock(auth.teamId, async () => {
-      const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope } = req.body;
+      const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope, agenda } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
+      if (event_type !== undefined && event_type !== null && !cleanEventType(event_type)) return res.status(400).json({ error: "Pick a known event type" });
       // Validate the event as it will be stored (patch merged over the row).
       const invalid = eventError({
         title: title ?? existing.title,
@@ -11035,8 +11064,9 @@ Rules:
           start_time: start_time ?? r.start_time,
           end_time: end_time ?? r.end_time,
           location: location ?? r.location,
-          event_type: event_type ?? r.event_type,
+          event_type: cleanEventType(event_type) ?? r.event_type,
           reminder_minutes: reminder !== undefined ? reminder : r.reminder_minutes,
+          agenda: agenda !== undefined ? cleanAgenda(agenda) : String(r.agenda ?? ""),
         },
       }));
       // Each later occurrence keeps its own fields where the edit leaves them
@@ -11049,8 +11079,8 @@ Rules:
         // A new time (or lead time) means the reminder should go out again.
         const retime = next.date !== r.date || (next.start_time || "") !== (r.start_time || "") || (next.reminder_minutes ?? null) !== (r.reminder_minutes ?? null);
         stmts.push({
-          sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
-          args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, r.id],
+          sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?, agenda = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
+          args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, next.agenda, r.id],
         });
       }
       const seriesId = Number(existing.series_id || existing.id);
@@ -11063,7 +11093,7 @@ Rules:
             sql: EVENT_INSERT_SQL,
             args: eventInsertArgs(auth.teamId, existing.created_by ?? auth.memberId, {
               title: head.title, date: d, time: head.start_time, end: head.end_time, notes: head.description,
-              location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence, series_id: seriesId,
+              location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence, series_id: seriesId, agenda: head.agenda,
             }),
           });
         }
@@ -11258,7 +11288,7 @@ Rules:
       const team = (await dbGet("SELECT name, timezone FROM teams WHERE id = ?", feed.team_id)) as any;
       const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
       const events = (await dbAll(
-        "SELECT id, title, description, date, start_time, end_time, location, event_type, reminder_minutes FROM events WHERE team_id = ? AND date >= ? ORDER BY date ASC, start_time ASC LIMIT 3000",
+        "SELECT id, title, description, agenda, date, start_time, end_time, location, event_type, reminder_minutes FROM events WHERE team_id = ? AND date >= ? ORDER BY date ASC, start_time ASC LIMIT 3000",
         feed.team_id, since,
       )) as any[];
       let host = "tryctrlpoint.org";
@@ -12808,11 +12838,12 @@ Rules:
   // (a JSON object OR array) when the user confirms calendar events. Parse,
   // validate, strip. Events are only PROPOSED here — the client shows a
   // confirm button and the user confirms via POST /api/ai/apply-actions.
-  function extractEventBlock(fullText: string): { text: string; events: { title: string; date: string; time: string; end: string; notes: string }[] | null } {
+  type BrunoEventItem = { title: string; date: string; time: string; end: string; notes: string; location: string; event_type?: string; agenda: string };
+  function extractEventBlock(fullText: string): { text: string; events: BrunoEventItem[] | null } {
     const src = String(fullText || "");
     const m = src.match(EVENT_BLOCK_RE);
     if (!m) return { text: src, events: null };
-    let events: { title: string; date: string; time: string; end: string; notes: string }[] | null = null;
+    let events: BrunoEventItem[] | null = null;
     try {
       const raw = JSON.parse(m[1]);
       const arr = Array.isArray(raw) ? raw : [raw];
@@ -12830,8 +12861,12 @@ Rules:
           time,
           end,
           notes: typeof p.notes === "string" ? p.notes.trim().slice(0, 500) : "",
+          location: typeof p.location === "string" ? p.location.trim().slice(0, 200) : "",
+          // An unknown type falls back to the default rather than failing the event.
+          event_type: cleanEventType(p.type ?? p.event_type) ?? undefined,
+          agenda: cleanAgenda(p.agenda),
         };
-      }).filter(Boolean);
+      }).filter(Boolean) as BrunoEventItem[];
       if (valid.length && valid.length <= 20) events = valid;
     } catch { /* malformed JSON — treat as no events */ }
     return { text: src.replace(EVENT_BLOCK_RE, "").trim(), events };
