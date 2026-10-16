@@ -6,6 +6,7 @@
  * confirmed task-comment card.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import WebSocket from "ws";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { runLookups } from "../brunoLookup";
 import { mentionedMembers, taskEditActivity } from "../taskActivity";
@@ -85,6 +86,31 @@ describe("timeline", () => {
     const board = (await t.post("/api/tasks", { title: "Board money", is_board: 1 }, admin)).body.id;
     expect((await t.api(`/api/tasks/${board}/timeline`, { session: ana })).status).toBe(404);
     expect((await t.post(`/api/tasks/${board}/comments`, { body: "peek" }, ana)).status).toBe(404);
+  });
+});
+
+describe("live timeline events", () => {
+  it("a board task's timeline events reach only members who can see board tasks", async () => {
+    const listen = async (session: string) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${t.port}`);
+      const seen: any[] = [];
+      ws.on("message", (d) => { try { seen.push(JSON.parse(String(d))); } catch { /* ignore */ } });
+      await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+      ws.send(JSON.stringify({ type: "hello", sessionId: session }));
+      return { ws, seen };
+    };
+    const member = await listen(ana);
+    const manager = await listen(admin);
+    await new Promise((r) => setTimeout(r, 400));
+    const board = (await t.post("/api/tasks", { title: "Board-only plan", is_board: 1 }, admin)).body.id;
+    const open = (await t.post("/api/tasks", { title: "Open plan" }, admin)).body.id;
+    await t.post(`/api/tasks/${board}/comments`, { body: "private" }, admin);
+    await new Promise((r) => setTimeout(r, 600));
+    member.ws.close(); manager.ws.close();
+    const ids = (seen: any[]) => seen.filter((m) => m.type === "task_timeline").map((m) => m.task_id);
+    expect(ids(member.seen)).toContain(open);
+    expect(ids(member.seen)).not.toContain(board);
+    expect(ids(manager.seen)).toContain(board);
   });
 });
 

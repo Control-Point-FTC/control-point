@@ -2633,6 +2633,24 @@ async function startServer() {
   };
   /** task_created / task_updated: a board task reaches only those who may see
    *  it; everyone else gets task_deleted (it may have just become board-only). */
+  /** "This task's timeline changed": a board task's only reaches members who can see board tasks. */
+  const broadcastTaskTimeline = (teamId: number | null | undefined, taskId: number) => {
+    if (teamId == null) return Promise.resolve();
+    return queueTaskEvent(teamId, async () => {
+      const t = (await dbGet("SELECT is_board FROM tasks WHERE id = ?", taskId)) as any;
+      const msg = { type: "task_timeline", task_id: taskId };
+      if (!t || !Number(t.is_board)) return broadcastToTeam(teamId, msg);
+      const text = JSON.stringify(msg);
+      const seen = new Map<number, boolean>();
+      for (const client of [...clients]) {
+        const c = client as any;
+        if (client.readyState !== WebSocket.OPEN || c.teamId !== teamId) continue;
+        if (!seen.has(c.memberId)) seen.set(c.memberId, await canSeeBoardTasks(c.memberId, teamId).catch(() => false));
+        if (!seen.get(c.memberId)) continue;
+        try { client.send(text); } catch { /* socket closed meanwhile */ }
+      }
+    });
+  };
   const broadcastTask = (teamId: number | null | undefined, type: "task_created" | "task_updated", task: any) => {
     if (teamId == null || !task) return Promise.resolve();
     return queueTaskEvent(teamId, async () => {
@@ -9828,7 +9846,7 @@ Rules:
   async function recordActivity(teamId: number | null, taskId: number, memberId: number | null, entries: Parameters<typeof logTaskActivity>[4], via?: "bruno"): Promise<void> {
     if (!entries.length) return;
     await logTaskActivity(dbRun, teamId, taskId, memberId, entries, via);
-    void broadcastTaskEvent(teamId, { type: "task_timeline", task_id: taskId });
+    void broadcastTaskTimeline(teamId, taskId);
   }
   /** A known completion mode ('each') or null (one shared deliverable). */
   const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
@@ -10435,7 +10453,7 @@ Rules:
     for (const mid of await taskWatcherIds(Number(task.id))) {
       if (mid !== auth.memberId && !mentioned.includes(mid)) void createNotification(mid, `${who} commented on "${task.title}": ${snippet}`, "task", { task_id: Number(task.id) });
     }
-    void broadcastTaskEvent(auth.teamId, { type: "task_timeline", task_id: Number(task.id) });
+    void broadcastTaskTimeline(auth.teamId, Number(task.id));
     return { id: Number(info?.lastInsertRowid), task_id: Number(task.id), member_id: auth.memberId, author_name: me?.name || null, body, created_at: at, edited_at: null };
   }
 
@@ -10496,7 +10514,7 @@ Rules:
         if (body.length > MAX_COMMENT) return res.status(400).json({ error: `Comments are up to ${MAX_COMMENT} characters` });
         await dbRun("UPDATE task_comments SET body = ?, edited_at = ? WHERE id = ?", body, now, c.id);
       }
-      void broadcastTaskEvent(auth.teamId, { type: "task_timeline", task_id: Number(task.id) });
+      void broadcastTaskTimeline(auth.teamId, Number(task.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error editing comment:", error);
