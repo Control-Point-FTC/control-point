@@ -237,6 +237,45 @@ describe('Modern Tasks', () => {
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
+  it('a change made while a save is in flight is saved next (saves run in order)', async () => {
+    const patches: string[] = [];
+    let release!: () => void;
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/tasks/1' && init?.method === 'PATCH') {
+        patches.push(init.body);
+        if (patches.length === 1) await new Promise<void>((r) => { release = r; });
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    const title = screen.getByLabelText(/^Title/);
+    fireEvent.change(title, { target: { value: 'B' } });
+    await waitFor(() => expect(patches).toHaveLength(1), { timeout: 4000 });
+    // Back to the original while the first save is still out.
+    fireEvent.change(title, { target: { value: 'Mount the climber hooks' } });
+    await new Promise((r) => setTimeout(r, 1400));
+    release();
+    await waitFor(() => expect(patches).toHaveLength(2), { timeout: 4000 });
+    expect(JSON.parse(patches[0])).toEqual({ title: 'B' });
+    expect(JSON.parse(patches[1])).toEqual({ title: 'Mount the climber hooks' });
+  }, 15000);
+
+  it('closing with a failed save keeps the editor open with the reason', async () => {
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => (url === '/api/tasks/1' && init?.method === 'PATCH'
+      ? { ok: false, json: async () => ({ error: 'Start date must be on or before the due date' }) }
+      : { ok: true, json: async () => ({}) }));
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Renamed' } });
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    expect(await screen.findByText('Start date must be on or before the due date')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('Renamed');
+  });
+
   it('due shortcuts in the editor, and "Move to tomorrow" on the sheet', async () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: /New task/ }));

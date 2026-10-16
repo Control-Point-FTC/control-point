@@ -148,6 +148,9 @@ export function editPayload(f: any, isBoard: boolean): Record<string, unknown> {
   };
 }
 
+/** Edit saves run one at a time (module-wide, so a remount keeps the order). */
+let saveChain: Promise<unknown> = Promise.resolve();
+
 export function useTasksController({ tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete }: {
   tasks: any[];
   setTasks: (v: any) => void;
@@ -248,15 +251,24 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     setShowAddTask(true);
   };
 
-  /** Save an edit's changed fields now (auto-save, and Done). False when it couldn't. */
-  const autosaveEdit = async (): Promise<boolean> => {
-    if (!editingTaskId) return true;
-    const id = editingTaskId;
+  /**
+   * Save an edit's changed fields (auto-save, Done and closing). Saves run one
+   * after another, and each reads the form as it is when it runs, so a change
+   * made while an earlier save was in flight is never lost. False when it couldn't.
+   */
+  const autosaveEdit = (): Promise<boolean> => {
+    const run = saveChain.then(() => saveEditNow());
+    saveChain = run.catch(() => false);
+    return run;
+  };
+  const saveEditNow = async (): Promise<boolean> => {
+    const id = getDraft<number | null>('tasks:editing-id', null);
+    if (!id) return true;
     const gen = getDraft<number>(EDITOR_GEN, 0);
     const base = getDraft<Record<string, unknown> | null>(EDIT_BASE, null) ?? {};
-    const payload = editPayload(newTask, isBoardTask);
+    const payload = editPayload(getDraft<TaskForm>('tasks:form', EMPTY_FORM), getDraft<boolean>('tasks:is-board', false));
     const diff = Object.fromEntries(Object.entries(payload).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(base[k])));
-    if (!Object.keys(diff).length) return true;
+    if (!Object.keys(diff).length) { if (getDraft<number>(EDITOR_GEN, 0) === gen && getDraft<any>('tasks:autosave', null)?.state === 'saving') setAutoSave({ state: 'saved' }); return true; }
     if ('title' in diff && !String(diff.title || '').trim()) { setAutoSave({ state: 'error', message: 'Add a title to save' }); return false; }
     // A due time only means something with its date.
     if ('due_time' in diff || 'due_date' in diff) { diff.due_date = payload.due_date; diff.due_time = payload.due_time; }
@@ -269,6 +281,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
         return false;
       }
       if (getDraft<number>(EDITOR_GEN, 0) === gen) {
+        // The baseline is what the server now has (what was sent), not the form.
         setDraft(EDIT_BASE, { ...base, ...diff });
         setAutoSave({ state: 'saved' });
       }

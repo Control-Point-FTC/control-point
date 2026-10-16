@@ -355,8 +355,11 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
     const t = window.setTimeout(() => { void ctl.autosaveEdit(); }, 1200);
     return () => window.clearTimeout(t);
   }, [f, ctl.isBoardTask, editing, ctl.showAddTask]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** Closing an edit saves anything still pending first. */
-  const closeEditor = () => { if (editing) void ctl.autosaveEdit(); ctl.closeTaskModal(); };
+  /** Closing an edit saves anything still pending first; if that fails it stays open with the reason. */
+  const closeEditor = async () => {
+    if (editing && !(await ctl.autosaveEdit())) return;
+    ctl.closeTaskModal();
+  };
   // A different task (or a fresh draft) starts with no AI tags.
   useEffect(() => { tagSuggest.reset(); }, [ctl.showAddTask, ctl.editingTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
   const saving = ctl.pendingIds.has(-1);
@@ -366,7 +369,7 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
   const chosenSubsystems = f.subsystems ?? [];
   const subsystemOptions = [...teamSubsystems, ...chosenSubsystems.filter((s) => !teamSubsystems.includes(s))].map((s) => ({ value: s, label: s }));
   return (
-    <Sheet open={ctl.showAddTask} onOpenChange={(o) => { if (!o) closeEditor(); }}>
+    <Sheet open={ctl.showAddTask} onOpenChange={(o) => { if (!o) void closeEditor(); }}>
       <SheetContent side={side} className={cn('gap-0 p-0', side === 'right' ? 'sm:max-w-lg' : '')}>
         <SheetHeader className="border-b border-border px-6 py-5 pr-12">
           <SheetTitle>{editing ? 'Edit task' : 'New task'}</SheetTitle>
