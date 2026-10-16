@@ -54,7 +54,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Labels
 - [x] Award tags on tasks (uses PR 0.1)
 - [x] Completion mode per task: "everyone assigned completes it separately" vs "one deliverable, closed once by whoever finishes"
-- [~] Assign-by-role (have) — add smart groups: Everyone, All members, Coaches & mentors, Alumni
+- [x] Assign-by-role plus smart groups: Everyone, Coaches & mentors, Alumni (from role names; "All members" is the team's Member role)
 
 ### PR 1.2: Task detail panel
 - [ ] Side panel/sheet with title, status chip, right rail (State, Priority, Start, Due + "Tomorrow" shortcut, Assignees, Completion, Labels, Subsystem, Awards, Checklist link)

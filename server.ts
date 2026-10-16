@@ -202,6 +202,7 @@ import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, 
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
 import { isTaskStatus, strictWipLimits, WIP_COLUMNS, MAX_WIP } from "./src/types/taskStatus.js";
+import { smartGroups } from "./src/utils/assigneeGroups.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
@@ -13783,7 +13784,20 @@ Rules:
       if (row.id != null) entry.members.push({ id: Number(row.id), name: String(row.name) });
       byRole.set(entry.id, entry);
     }
-    return [...byRole.values()];
+    // Smart groups (Everyone, Coaches & mentors, Alumni) work like roles for Bruno,
+    // by the task editor's picker's rule: a real role of the same name wins only
+    // when someone holds it (an empty one would assign nobody, so the group replaces it).
+    const active = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 ORDER BY name", teamId)) as any[];
+    const roleNamesOf = new Map<number, string[]>();
+    for (const r of byRole.values()) for (const m of r.members) roleNamesOf.set(m.id, [...(roleNamesOf.get(m.id) ?? []), r.name]);
+    const nameOf = new Map(active.map((m: any) => [Number(m.id), String(m.name)]));
+    const held = [...byRole.values()].filter((r) => r.members.length);
+    const groups = smartGroups(active.map((m: any) => ({ id: Number(m.id), roleNames: roleNamesOf.get(Number(m.id)) ?? [] })), held.map((r) => r.name));
+    const groupNames = new Set(groups.map((g) => g.name.toLowerCase()));
+    return [
+      ...[...byRole.values()].filter((r) => r.members.length || !groupNames.has(r.name.trim().toLowerCase())),
+      ...groups.map((g, i) => ({ id: -(i + 1), name: g.name, members: g.memberIds.map((id) => ({ id, name: nameOf.get(id) ?? "" })) })),
+    ];
   }
 
   app.get("/api/ai/proposal-context", async (req, res) => {
