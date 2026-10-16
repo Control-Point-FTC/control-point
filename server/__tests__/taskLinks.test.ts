@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 import { runLookups } from "../brunoLookup";
 import { loadWorkspaceFacts, formatWorkspaceFacts } from "../workspaceFacts";
-import { planLinkReplace } from "../taskLinks";
+import { planLinkChanges } from "../taskLinks";
 import { cleanTaskIds } from "../../src/types/taskLinks";
 import { normalizeTaskUpdate } from "../../src/utils/brunoTasks";
 
@@ -19,14 +19,22 @@ describe("link planning", () => {
   const all = () => true;
   it("refuses a loop, directly or through other tasks", () => {
     const rows = [{ from_id: 1, to_id: 2, kind: "blocks" }, { from_id: 2, to_id: 3, kind: "blocks" }];
-    expect(planLinkReplace(rows, 1, "blocked_by", [3], all)).toMatchObject({ error: expect.stringMatching(/loop/) });
-    expect(planLinkReplace(rows, 3, "blocks", [1], all)).toMatchObject({ error: expect.stringMatching(/loop/) });
+    expect(planLinkChanges(rows, [{ id: 1, kind: "blocked_by", ids: [3] }], all)).toMatchObject({ error: expect.stringMatching(/loop/) });
+    expect(planLinkChanges(rows, [{ id: 3, kind: "blocks", ids: [1] }], all)).toMatchObject({ error: expect.stringMatching(/loop/) });
     // Replacing a link removes it before the loop check.
-    expect(planLinkReplace(rows, 2, "blocked_by", [], all)).toEqual({ remove: [rows[0]], add: [] });
+    expect(planLinkChanges(rows, [{ id: 2, kind: "blocked_by", ids: [] }], all)).toEqual({ remove: [rows[0]], add: [] });
+  });
+  it("checks one card's changes together: two links that only loop together are refused", () => {
+    expect(planLinkChanges([], [{ id: 1, kind: "blocked_by", ids: [2] }, { id: 2, kind: "blocked_by", ids: [1] }], all)).toMatchObject({ error: expect.stringMatching(/loop/) });
+  });
+  it("caps links at both ends, counting links the viewer can't see", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ from_id: 100 + i, to_id: 1, kind: "blocks" }));
+    // Task 50 adding "blocks 1" would give task 1 its 21st blocker.
+    expect(planLinkChanges(rows, [{ id: 50, kind: "blocks", ids: [1] }], (o) => o === 50 || o === 1)).toMatchObject({ error: expect.stringMatching(/#1 would have more than 20/) });
   });
   it("related links are stored once, smaller id first; unknown tasks are refused", () => {
-    expect(planLinkReplace([], 7, "related", [3], all)).toEqual({ remove: [], add: [{ from_id: 3, to_id: 7, kind: "relates" }] });
-    expect(planLinkReplace([], 7, "related", [3], (o) => o !== 3)).toMatchObject({ error: expect.stringMatching(/#3/) });
+    expect(planLinkChanges([], [{ id: 7, kind: "related", ids: [3] }], all)).toEqual({ remove: [], add: [{ from_id: 3, to_id: 7, kind: "relates" }] });
+    expect(planLinkChanges([], [{ id: 7, kind: "related", ids: [3] }], (o) => o !== 3)).toMatchObject({ error: expect.stringMatching(/#3/) });
   });
   it("ids are cleaned for Bruno: '#12', duplicates and the task itself", () => {
     expect(cleanTaskIds(["#12", 12, "4", 0, -1, "x", 5], 5)).toEqual([12, 4]);
@@ -94,6 +102,26 @@ describe("task API", () => {
 });
 
 describe("Bruno and task links", () => {
+  it("a card whose two edits only loop together is refused, and nothing is saved", async () => {
+    const x = await task("Loop X");
+    const y = await task("Loop Y");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: x, blocked_by: [y], title: "X changed" }, { id: y, blocked_by: [x] }] }] }, admin);
+    expect(r.status).toBe(400);
+    expect(await dbAll("SELECT * FROM task_links WHERE from_id IN (?, ?) OR to_id IN (?, ?)", x, y, x, y)).toHaveLength(0);
+    expect((await dbGet("SELECT title FROM tasks WHERE id = ?", x)).title).toBe("Loop X");
+  });
+
+  it("two managers adding opposite links at once can't form a loop", async () => {
+    const x = await task("Race X");
+    const y = await task("Race Y");
+    const [a, b] = await Promise.all([
+      t.post(`/api/tasks/${x}/links`, { kind: "blocks", other_id: y }, admin),
+      t.post(`/api/tasks/${y}/links`, { kind: "blocks", other_id: x }, admin),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 400]);
+    expect(await dbAll("SELECT * FROM task_links WHERE kind = 'blocks' AND from_id IN (?, ?) AND to_id IN (?, ?)", x, y, x, y)).toHaveLength(1);
+  });
+
   it("a task-update card sets blocked_by; a loop refuses the whole card", async () => {
     const a = await task("Wire the hub");
     const b = await task("Test autonomous");

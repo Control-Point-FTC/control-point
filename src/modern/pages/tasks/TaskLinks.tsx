@@ -55,7 +55,8 @@ export function TaskLinksSection({ task, tasks, canEdit, onOpenTask, onAdd, onRe
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const lists: [LinkKind, number[]][] = [['blocked_by', ids(task.blocked_by)], ['blocks', ids(task.blocks)], ['related', ids(task.related)]];
-  const linked = new Set(lists.flatMap(([, l]) => l));
+  // A task can be related to one and also block it; only the chosen kind's list is excluded.
+  const linked = new Set(lists.find(([k]) => k === kind)?.[1] ?? []);
   const candidates = tasks.filter((t) => t.id !== task.id && !linked.has(Number(t.id)) && t.status !== 'cancelled');
   const blockers = openBlockers(task, byId);
   const any = lists.some(([, l]) => l.length);

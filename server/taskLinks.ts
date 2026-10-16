@@ -53,45 +53,66 @@ function otherOf(row: { from_id: number; to_id: number; kind: string }, id: numb
   return row.from_id === id ? row.to_id : row.to_id === id ? row.from_id : null;
 }
 
+type Row = { from_id: number; to_id: number; kind: string };
+export type LinkChange = { id: number; kind: "blocked_by" | "blocks" | "related"; ids: number[] };
+
 /**
- * Plan replacing one of a task's link lists with `ids`. `rows` are all the
- * team's links; `canLink(other)` says the other task exists in the team and
- * the viewer may see it. Links to tasks the viewer can't see are kept as they
- * are. Returns the rows to delete and insert, or an error (unknown task, a
- * dependency loop) — nothing is planned when there is an error.
+ * Plan a set of link-list replacements (one card or one click) against all
+ * of the team's links, applied in order to a working copy, then checked as a
+ * whole: the final "blocks" graph has no loop, and no task ends up with more
+ * than MAX_LINKS_PER_TASK links of a kind (hidden ones included). `canLink`
+ * says a task exists in the team and the viewer may see it; links to tasks
+ * the viewer can't see are kept as they are. Nothing is planned on an error.
  */
-export function planLinkReplace(
-  rows: { from_id: number; to_id: number; kind: string }[],
-  id: number,
-  kind: "blocked_by" | "blocks" | "related",
-  ids: number[],
-  canLink: (other: number) => boolean,
-): { error: string } | { remove: { from_id: number; to_id: number; kind: string }[]; add: { from_id: number; to_id: number; kind: "blocks" | "relates" }[] } {
-  for (const o of ids) if (!canLink(o)) return { error: `Task #${o} isn't one of this team's tasks` };
-  const mine = rows.filter((r) => { const o = otherOf(r, id, kind); return o !== null && canLink(o); });
-  const keepOthers = new Set(mine.map((r) => otherOf(r, id, kind)!));
-  const remove = mine.filter((r) => !ids.includes(otherOf(r, id, kind)!));
-  const add = ids.filter((o) => !keepOthers.has(o)).map((o) => linkRow(id, o, kind));
-  if (kind !== "related") {
-    // The blocks graph after the change must have no loop.
-    const removed = new Set(remove.map((r) => `${r.from_id}>${r.to_id}`));
-    const edges = rows.filter((r) => r.kind === "blocks" && !removed.has(`${r.from_id}>${r.to_id}`)).map((r) => [Number(r.from_id), Number(r.to_id)] as const);
-    const next = new Map<number, number[]>();
-    const push = (a: number, b: number) => (next.get(a) ?? next.set(a, []).get(a)!).push(b);
-    for (const [a, b] of edges) push(a, b);
-    for (const r of add) {
-      // Adding a -> b loops when b already reaches a.
-      const seen = new Set<number>();
-      const stack = [r.to_id];
-      while (stack.length) {
-        const n = stack.pop()!;
-        if (n === r.from_id) return { error: `That would make a loop: task #${r.to_id} already leads to task #${r.from_id}` };
-        if (seen.has(n)) continue;
-        seen.add(n);
-        for (const m of next.get(n) ?? []) stack.push(m);
-      }
-      push(r.from_id, r.to_id);
+export function planLinkChanges(rows: Row[], changes: LinkChange[], canLink: (other: number) => boolean, max = 20): { error: string } | { remove: Row[]; add: Row[] } {
+  const key = (r: Row) => `${r.from_id}>${r.to_id}>${r.kind}`;
+  const start = new Map(rows.map((r) => [key(r), r]));
+  const work = new Map(start);
+  const touched = new Set<number>();
+  for (const c of changes) {
+    if (!canLink(c.id)) return { error: `Task #${c.id} isn't one of this team's tasks` };
+    for (const o of c.ids) if (!canLink(o)) return { error: `Task #${o} isn't one of this team's tasks` };
+    touched.add(c.id);
+    for (const r of [...work.values()]) {
+      const o = otherOf(r, c.id, c.kind);
+      if (o !== null && canLink(o) && !c.ids.includes(o)) work.delete(key(r));
+    }
+    for (const o of c.ids) {
+      const r = linkRow(c.id, o, c.kind);
+      work.set(key(r), r);
+      touched.add(o);
     }
   }
-  return { remove, add };
+  // No loop in the final blocks graph.
+  const next = new Map<number, number[]>();
+  for (const r of work.values()) if (r.kind === "blocks") (next.get(r.from_id) ?? next.set(r.from_id, []).get(r.from_id)!).push(r.to_id);
+  const state = new Map<number, 1 | 2>();
+  const visit = (n: number, path: number[]): number[] | null => {
+    if (state.get(n) === 2) return null;
+    if (state.get(n) === 1) return [...path, n];
+    state.set(n, 1);
+    for (const m of next.get(n) ?? []) { const loop = visit(m, [...path, n]); if (loop) return loop; }
+    state.set(n, 2);
+    return null;
+  };
+  for (const n of next.keys()) {
+    const loop = visit(n, []);
+    if (loop) {
+      const at = loop.indexOf(loop[loop.length - 1]);
+      return { error: `That would make a loop: ${loop.slice(at).map((x) => `#${x}`).join(" → ")}` };
+    }
+  }
+  // At most `max` links of each kind at both ends of every touched task.
+  for (const id of touched) {
+    let blockedBy = 0, blocks = 0, related = 0;
+    for (const r of work.values()) {
+      if (r.kind === "blocks") { if (r.to_id === id) blockedBy++; if (r.from_id === id) blocks++; }
+      else if (r.from_id === id || r.to_id === id) related++;
+    }
+    if (blockedBy > max || blocks > max || related > max) return { error: `Task #${id} would have more than ${max} links of one kind` };
+  }
+  return {
+    remove: [...start.values()].filter((r) => !work.has(key(r))),
+    add: [...work.values()].filter((r) => !start.has(key(r))),
+  };
 }
