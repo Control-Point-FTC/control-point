@@ -70,7 +70,7 @@ export function resolveTaskItem(it: any) {
     title: t.title, description: t.description, due_date: t.due_date, due_time: t.due_time, priority: t.priority,
     assignees: c ? t.assignees : names.filter(Boolean), repeat: t.recurrence, unmatched: c ? t.unmatched : [],
     roles: t.roles, unmatchedRoles: t.unmatchedRoles,
-    start_date: t.start_date, subsystems: t.subsystems, awards: t.awards, labels: t.labels,
+    start_date: t.start_date, subsystems: t.subsystems, awards: t.awards, labels: t.labels, completion_mode: t.completion_mode,
     // Who each role covers, for the card ("Builders: Ana, Lee").
     roleMembers: Object.fromEntries(t.roles.map((r) => [r, c?.roles ? (c.roles.find((x) => x.name === r)?.members ?? []) : null])) as Record<string, string[] | null>,
   };

@@ -176,6 +176,7 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
 }) {
   const side = useSheetSide();
   const assignees = task ? members.filter((m) => taskAssigneeIds(task).includes(m.id)) : [];
+  const doneIds: number[] = Array.isArray(task?.done_assignee_ids) ? task.done_assignee_ids : [];
   const team = task ? teams.find((t) => String(t.id) === String(task.team_id)) : null;
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -232,6 +233,24 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams, onOpenT
               <dl className="grid grid-cols-[120px_1fr] gap-y-3 text-sm">
                 <dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Assignees</dt>
                 <dd>{assignees.length ? <span className="flex items-center gap-2"><AvatarStack members={assignees} max={5} /> <span className="truncate">{assignees.map((m) => m.name).join(', ')}</span></span> : <span className="text-muted-foreground">Unassigned</span>}</dd>
+                {task.completion_mode === 'each' && assignees.length > 0 && (<>
+                  <dt className="flex items-center gap-2 text-muted-foreground"><CheckCircle2 className="size-4" /> Each person</dt>
+                  <dd>
+                    <p className="mb-1.5 text-xs text-muted-foreground">Everyone assigned completes it separately · {doneIds.length} of {assignees.length} done</p>
+                    <ul className="space-y-1">
+                      {assignees.map((m) => (
+                        <li key={m.id} className="flex items-center gap-2">
+                          {doneIds.includes(m.id) ? <CheckCircle2 className="size-4 text-success" aria-hidden /> : <Circle className="size-4 text-muted-foreground" aria-hidden />}
+                          <span className={cn(doneIds.includes(m.id) && 'text-muted-foreground')}>{m.name}</span>
+                          <span className="sr-only">{doneIds.includes(m.id) ? 'done' : 'not done yet'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {ctl.canManageTasks && task.status !== 'done' && task.status !== 'cancelled' && (
+                      <Button size="sm" variant="outline" className="mt-2" onClick={() => ctl.completeForEveryone(task)}><CheckCircle2 /> Finish for everyone</Button>
+                    )}
+                  </dd>
+                </>)}
                 {task.start_date && (<>
                   <dt className="flex items-center gap-2 text-muted-foreground"><CalendarDays className="size-4" /> Starts</dt>
                   <dd>{format(new Date(String(task.start_date).slice(0, 10) + 'T12:00:00'), 'EEE, MMM d')}</dd>
@@ -394,6 +413,13 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               </div>
             </div>
             {f.repeat && !f.due_date && <p className="-mt-2 text-xs text-muted-foreground">Repeats start from the day it's finished. Add a due date to set the rhythm.</p>}
+            <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+              <span>
+                <span className="block text-sm font-medium">Everyone assigned completes it separately</span>
+                <span className="block text-xs text-muted-foreground">{f.completion_mode === 'each' ? 'Each person marks their own part done; the task is done once all have.' : 'One deliverable, closed once by whoever finishes it.'}</span>
+              </span>
+              <Switch checked={f.completion_mode === 'each'} onCheckedChange={(v: boolean) => set({ completion_mode: v ? 'each' : '' })} aria-label="Everyone assigned completes it separately" />
+            </label>
             <div className="grid gap-2">
               <Label htmlFor="task-subsystems">Subsystems</Label>
               <ToggleChips id="task-subsystems" label="Subsystems" options={subsystemOptions} selected={chosenSubsystems} onChange={(v) => set({ subsystems: v })} />

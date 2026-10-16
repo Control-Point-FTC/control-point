@@ -53,7 +53,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Subsystem tags (uses PR 0.1)
 - [x] Labels
 - [x] Award tags on tasks (uses PR 0.1)
-- [ ] Completion mode per task: "everyone assigned completes it separately" vs "one deliverable, closed once by whoever finishes"
+- [x] Completion mode per task: "everyone assigned completes it separately" vs "one deliverable, closed once by whoever finishes"
 - [~] Assign-by-role (have) — add smart groups: Everyone, All members, Coaches & mentors, Alumni
 
 ### PR 1.2: Task detail panel

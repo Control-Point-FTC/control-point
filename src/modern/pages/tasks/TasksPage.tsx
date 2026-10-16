@@ -312,6 +312,11 @@ function TaskMarks({ task, byId }: { task: any; byId: Map<number, any> }) {
   return (
     <>
       <TaskLinkMarks task={task} byId={byId} />
+      {task.completion_mode === 'each' && taskAssigneeIds(task).length > 0 && task.status !== 'done' && (
+        <span className="inline-flex items-center gap-0.5 text-xs tabular-nums text-muted-foreground" title="Everyone assigned completes it separately">
+          <CheckCircle2 className="size-3" aria-hidden /> {(task.done_assignee_ids || []).length}/{taskAssigneeIds(task).length}<span className="sr-only"> people done</span>
+        </span>
+      )}
       <PriorityBadge value={task.priority} />
       {rule && <span className="inline-flex items-center text-muted-foreground" title={recurrenceLabel(rule)}><Repeat className="size-3.5" /><span className="sr-only">{recurrenceLabel(rule)}</span></span>}
       <ReviewBadge task={task} />

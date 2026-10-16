@@ -2634,6 +2634,14 @@ async function startServer() {
   const broadcastTask = (teamId: number | null | undefined, type: "task_created" | "task_updated", task: any) => {
     if (teamId == null || !task) return Promise.resolve();
     return queueTaskEvent(teamId, async () => {
+      // Per-person progress travels with every live update (it changes on reopen too).
+      if (task.completion_mode === "each" && task.id) {
+        const assignees: number[] = Array.isArray(task.assignee_ids) ? task.assignee_ids : await getTaskAssigneeIds(Number(task.id));
+        const done = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
+        task = { ...task, assignee_ids: assignees, done_assignee_ids: done.filter((m) => assignees.includes(m)) };
+      } else if (task.id) {
+        task = { ...task, done_assignee_ids: undefined };
+      }
       if (!Number(task.is_board)) return broadcastToTeam(teamId, { type, task });
       const allowed = JSON.stringify({ type, task });
       const hidden = JSON.stringify({ type: "task_deleted", id: task.id });
@@ -9801,8 +9809,19 @@ Rules:
     for (const t of tasks) {
       t.assignee_ids = await getTaskAssigneeIds(t.id);
     }
+    // "Everyone completes it separately": who has finished their part.
+    const each = tasks.filter((t) => t.completion_mode === "each").map((t) => Number(t.id));
+    const done = each.length ? ((await dbAll(`SELECT task_id, member_id FROM task_assignee_done WHERE task_id IN (${each.map(() => "?").join(",")})`, ...each)) as any[]) : [];
+    for (const t of tasks) {
+      if (t.completion_mode !== "each") continue;
+      t.done_assignee_ids = done.filter((d) => Number(d.task_id) === Number(t.id) && t.assignee_ids.includes(Number(d.member_id))).map((d) => Number(d.member_id));
+    }
     return tasks;
   };
+  /** A known completion mode ('each') or null (one shared deliverable). */
+  const cleanCompletionMode = (v: unknown): "each" | null => (v === "each" ? "each" : null);
+  /** Reopened from done: everyone's part starts over. */
+  const clearAssigneeDone = (taskId: number) => dbRun("DELETE FROM task_assignee_done WHERE task_id = ?", taskId);
 
   app.get("/api/tasks", async (req, res) => {
     try {
@@ -9882,8 +9901,8 @@ Rules:
       await dbBatch([
         {
           // Tags carry over; a start date belongs to one occurrence, so it doesn't.
-          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, subsystems, awards, labels) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence, task.subsystems ?? null, task.awards ?? null, task.labels ?? null],
+          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, subsystems, awards, labels, completion_mode) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence, task.subsystems ?? null, task.awards ?? null, task.labels ?? null, task.completion_mode ?? null],
         },
         { sql: "UPDATE tasks SET next_task_id = last_insert_rowid() WHERE id = ? AND next_task_id = -1", args: [task.id] },
         ...assignees.map((mid) => ({
@@ -9943,9 +9962,9 @@ Rules:
       const legacyAssignedTo = validIds[0] || null;
 
       const info = (await dbRun(
-        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels, completion_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         auth.teamId, title, description ?? '', ['todo', 'in-progress', 'done'].includes(status) ? status : 'todo', legacyAssignedTo, due_date || null, dueTime, is_board ? 1 : 0, createdAt, priority, recurrence,
-        tags.cols.start_date ?? null, tags.cols.subsystems ?? null, tags.cols.awards ?? null, tags.cols.labels ?? null,
+        tags.cols.start_date ?? null, tags.cols.subsystems ?? null, tags.cols.awards ?? null, tags.cols.labels ?? null, cleanCompletionMode(req.body?.completion_mode),
       ));
 
       const taskId = Number(info.lastInsertRowid);
@@ -10157,8 +10176,8 @@ Rules:
       if (!canManage && (req.body?.status === 'cancelled' || (task.status === 'cancelled' && req.body?.status !== undefined))) {
         return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
       }
-      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence, completion_mode } = req.body;
+      if (!canManage && (completion_mode !== undefined || title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       if (title !== undefined && !String(title ?? '').trim()) return res.status(400).json({ error: "Add a title" });
@@ -10181,6 +10200,7 @@ Rules:
         if (status !== 'done') sets.push('review_status = NULL');
       }
       if (priority !== undefined) { sets.push('priority = ?'); vals.push(cleanPriority(priority)); }
+      if (completion_mode !== undefined) { sets.push('completion_mode = ?'); vals.push(cleanCompletionMode(completion_mode)); }
       if (recurrence !== undefined) { sets.push('recurrence = ?'); vals.push(cleanRecurrence(recurrence)); }
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
@@ -10216,6 +10236,7 @@ Rules:
       if (sets.length > 0) {
         (await dbRun(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...vals, req.params.id));
       }
+      if (status !== undefined && status !== 'done' && task.status === 'done') await clearAssigneeDone(Number(req.params.id));
 
       const notifyIds = await getTaskAssigneeIds(Number(req.params.id));
       for (const mid of notifyIds) {
@@ -10401,6 +10422,7 @@ Rules:
           auth.memberId, now, note, reviewEntry("changes_requested"), task.id, seen
         );
         if (!changed(r)) return reopened();
+        await clearAssigneeDone(Number(task.id));
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });
       } else {
         return res.status(400).json({ error: "Unknown review action" });
@@ -10452,6 +10474,26 @@ Rules:
       // Proof is required: a description, screenshots, or both.
       if (!notes && images.length === 0) {
         return res.status(400).json({ error: "Add a description or at least one screenshot as proof of completion." });
+      }
+      // "Everyone completes it separately": an assignee finishes their own
+      // part; the task is done once every current assignee has. A manager can
+      // finish it for everyone with whole=1.
+      if (task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done") {
+        const at = new Date().toISOString();
+        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
+        await dbRun(
+          "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
+          JSON.stringify({ by: auth.memberId, at, notes: notes || null, images, part: true, review: null }), task.id,
+        );
+        const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
+        const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
+        if (remaining.length) {
+          const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
+          await withAssignees([partial]);
+          void broadcastTask(auth.teamId, "task_updated", partial);
+          return res.json({ success: true, partial: true, done: taskAssignees.length - remaining.length, of: taskAssignees.length, task: partial });
+        }
+        // Last one in: the task is done (same review and repeat rules as below).
       }
       const prevImages = (() => { try { return JSON.parse(task.completion_images || "[]"); } catch { return []; } })();
       const allImages = [...prevImages, ...images].slice(0, 10);
@@ -12621,7 +12663,7 @@ Rules:
   // (a JSON array) when the user confirms task entries. Parse, validate, strip.
   // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
   const TASKS_BLOCK_RE = /```tasks\s*\r?\n([\s\S]*?)\r?\n```/;
-  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; roles?: string[]; repeat?: unknown; start_date?: string; subsystems?: unknown; awards?: unknown; labels?: unknown };
+  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; roles?: string[]; repeat?: unknown; start_date?: string; subsystems?: unknown; awards?: unknown; labels?: unknown; completion_mode?: unknown };
   function extractTasksBlock(fullText: string): { text: string; tasks: RawBrunoTask[] | null } {
     const src = String(fullText || "");
     const m = src.match(TASKS_BLOCK_RE);
@@ -12654,6 +12696,7 @@ Rules:
             ...(Array.isArray(t.subsystems) ? { subsystems: t.subsystems.slice(0, 20) } : {}),
             ...(Array.isArray(t.awards) ? { awards: t.awards.slice(0, 8) } : {}),
             ...(Array.isArray(t.labels) ? { labels: t.labels.slice(0, 10) } : {}),
+            ...(typeof t.completion_mode === "string" ? { completion_mode: t.completion_mode.slice(0, 20) } : {}),
           };
         }).filter((t): t is RawBrunoTask => !!t);
         if (valid.length) tasks = valid;
@@ -13740,9 +13783,9 @@ Rules:
             // Assigned by role: everyone holding it now.
             for (const role of t.roles) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
             const info = await dbRun(
-              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels, completion_mode) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
               auth.teamId, t.title, t.description, ids[0] ?? null, t.due_date, t.due_date ? t.due_time : null, createdAt, t.priority, t.recurrence ? JSON.stringify(t.recurrence) : null,
-              tags.start_date ?? null, tags.subsystems ?? null, tags.awards ?? null, tags.labels ?? null,
+              tags.start_date ?? null, tags.subsystems ?? null, tags.awards ?? null, tags.labels ?? null, t.completion_mode,
             );
             const taskId = Number(info.lastInsertRowid);
             made("task", taskId);
@@ -13788,6 +13831,7 @@ Rules:
             if (c.title !== undefined) { sets.push("title = ?"); vals.push(c.title); }
             if (c.description !== undefined) { sets.push("description = ?"); vals.push(c.description); }
             if (c.priority !== undefined) { sets.push("priority = ?"); vals.push(c.priority); }
+            if (c.completion_mode !== undefined) { sets.push("completion_mode = ?"); vals.push(c.completion_mode); }
             if (c.recurrence !== undefined) { sets.push("recurrence = ?"); vals.push(c.recurrence ? JSON.stringify(c.recurrence) : null); }
             if (c.due_date !== undefined) { sets.push("due_date = ?"); vals.push(c.due_date); }
             // Start date and tags, validated as PATCH does (a start after the due date is dropped).

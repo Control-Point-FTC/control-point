@@ -614,6 +614,8 @@ export default function App() {
       const form = new FormData();
       form.append('notes', completionNotes.trim());
       for (const f of completionFiles.slice(0, 5)) form.append('images', f);
+      // "Finish for everyone" on a task each assignee completes separately.
+      if (completingTask.__whole) form.append('whole', '1');
       const res = await apiFetch(`/api/tasks/${completingTask.id}/complete`, {
         method: 'POST',
         body: form,
@@ -626,7 +628,7 @@ export default function App() {
       } else {
         refresh.tasks();
       }
-      notify('Task marked done.', 'success');
+      notify(d.partial ? `Your part is done (${d.done} of ${d.of}).` : 'Task marked done.', 'success');
       closeCompleteDialog();
     } catch (e: any) {
       notify(e?.message || 'Could not complete task.', 'error');
