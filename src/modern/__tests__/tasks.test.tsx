@@ -276,6 +276,26 @@ describe('Modern Tasks', () => {
     expect(screen.getByLabelText(/^Title/)).toHaveValue('Renamed');
   });
 
+  it('a close whose save lands after a new editor opened leaves the new one alone', async () => {
+    let release!: () => void;
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/tasks/1' && init?.method === 'PATCH') await new Promise<void>((r) => { release = r; });
+      return { ok: true, json: async () => ({}) };
+    });
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /^Mount the climber hooks, To do/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Renamed' } });
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })));
+    // While that save is out, a new task is started (e.g. from the Dashboard's New task).
+    fireEvent.click(screen.getByRole('button', { name: /New task/, hidden: true }));
+    fireEvent.change(await screen.findByLabelText(/^Title/), { target: { value: 'Fresh idea' } });
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('Fresh idea');
+  });
+
   it('due shortcuts in the editor, and "Move to tomorrow" on the sheet', async () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: /New task/ }));

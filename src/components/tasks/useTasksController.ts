@@ -695,6 +695,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask, autosaveEdit, autoSave,
+    /** The editor's session: changes whenever it opens or closes (to drop late closes). */
+    editorSession: () => getDraft<number>(EDITOR_GEN, 0),
     // view state
     showAnalytics, setShowAnalytics, filterTeam, setFilterTeam, pendingIds: pendingView, filteredTasks,
     // bulk

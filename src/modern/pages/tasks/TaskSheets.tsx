@@ -357,8 +357,10 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
   }, [f, ctl.isBoardTask, editing, ctl.showAddTask]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Closing an edit saves anything still pending first; if that fails it stays open with the reason. */
   const closeEditor = async () => {
+    const session = ctl.editorSession();
     if (editing && !(await ctl.autosaveEdit())) return;
-    ctl.closeTaskModal();
+    // A slow save: if another editor opened meanwhile, it's left alone.
+    if (ctl.editorSession() === session) ctl.closeTaskModal();
   };
   // A different task (or a fresh draft) starts with no AI tags.
   useEffect(() => { tagSuggest.reset(); }, [ctl.showAddTask, ctl.editingTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
