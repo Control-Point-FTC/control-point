@@ -28,3 +28,18 @@ export function onTimeStats(
 export function onTimePercent(s: { onTime: number; total: number }): number | null {
   return s.total ? Math.round((s.onTime / s.total) * 100) : null;
 }
+
+/**
+ * YYYY-MM-DD of an instant in a timezone: the team's saved zone (as Bruno uses),
+ * else the browser's own zone when it isn't set or isn't a real zone.
+ */
+export function localDateIn(timeZone?: string | null): (iso: string) => string {
+  let fmt: Intl.DateTimeFormat;
+  try { fmt = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  catch { fmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  return (iso) => {
+    const parts = fmt.formatToParts(new Date(iso));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  };
+}

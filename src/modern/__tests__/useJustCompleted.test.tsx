@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useJustCompleted, CELEBRATE_MS } from '../pages/tasks/useJustCompleted';
-import { onTimeStats } from '../../utils/taskInsights';
+import { onTimeStats, localDateIn } from '../../utils/taskInsights';
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -33,5 +33,13 @@ describe('onTimeStats', () => {
       { status: 'done', due_date: '2026-09-01', completed_at: '2026-09-01T01:00:00Z' },
       { status: 'todo', due_date: '2026-10-01' },
     ], { since, localDate })).toEqual({ onTime: 1, total: 2 });
+  });
+});
+
+describe('localDateIn', () => {
+  it("uses the team's zone, so a late-evening finish stays on its local day", () => {
+    expect(localDateIn('America/New_York')('2026-10-02T02:00:00Z')).toBe('2026-10-01');
+    expect(localDateIn('UTC')('2026-10-02T02:00:00Z')).toBe('2026-10-02');
+    expect(localDateIn('Not/AZone')('2026-10-02T12:00:00Z')).toMatch(/^2026-10-0[23]$/);
   });
 });

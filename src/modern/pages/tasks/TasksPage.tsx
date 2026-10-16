@@ -31,7 +31,7 @@ import { TaskTagChips } from './TaskTags';
 import { TaskLinkMarks } from './TaskLinks';
 import { TaskGantt } from './TaskGantt';
 import { useJustCompleted } from './useJustCompleted';
-import { onTimeStats, onTimePercent, ON_TIME_WINDOW_DAYS } from '../../../utils/taskInsights';
+import { onTimeStats, onTimePercent, localDateIn, ON_TIME_WINDOW_DAYS } from '../../../utils/taskInsights';
 import { WipLimit } from './TaskWip';
 import { cleanWipLimits } from '../../../types/taskStatus';
 import { GroupBySelect, TaskFiltersButton } from './TaskFilterBar';
@@ -277,6 +277,7 @@ export function TasksPage(props: any) {
       {view === 'insights' && (
         <Insights
           onOpen={setViewTaskId}
+          timeZone={teams.find((t: any) => t.id === currentUser?.team_id)?.timezone}
           tasks={visible}
           members={members}
           scope={who === 'all' ? (query.trim() ? 'Matching your search' : 'Whole team') : who === 'mine' ? 'Assigned to you' : `Assigned to ${members.find((m: any) => String(m.id) === who)?.name ?? 'them'}`}
@@ -780,15 +781,16 @@ function AttentionList({ title, tone, tasks, onOpen, empty }: { title: string; t
   );
 }
 
-function Insights({ tasks, members, scope, onOpen }: { tasks: any[]; members: any[]; scope: string; onOpen: (id: number) => void }) {
+function Insights({ tasks, members, scope, onOpen, timeZone }: { tasks: any[]; members: any[]; scope: string; onOpen: (id: number) => void; timeZone?: string | null }) {
   // Every figure here uses the same filtered tasks as the board/list.
   const trends = useMemo(() => completionTrendsOf(tasks), [tasks]);
   const capacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
   const avg = useMemo(() => avgCompletionDaysOf(tasks), [tasks]);
   const openCount = tasks.filter((t) => isOpenStatus(t.status)).length;
   const doneThisWeek = trends.reduce((a: number, d: any) => a + d.completed, 0);
-  // Same rule as Bruno's facts: finished in the last 30 days, with a due date, on or before it.
-  const onTime = useMemo(() => onTimeStats(tasks, { since: new Date(Date.now() - ON_TIME_WINDOW_DAYS * 86400000), localDate: (iso) => format(new Date(iso), 'yyyy-MM-dd') }), [tasks]);
+  // Same rule as Bruno's facts: finished in the last 30 days, with a due date, on or before
+  // it, counted in the team's timezone so every teammate (and Bruno) sees the same rate.
+  const onTime = useMemo(() => onTimeStats(tasks, { since: new Date(Date.now() - ON_TIME_WINDOW_DAYS * 86400000), localDate: localDateIn(timeZone) }), [tasks, timeZone]);
   const onTimePct = onTimePercent(onTime);
   const overdueList = tasks.filter((t) => isOpenStatus(t.status) && isOverdue(t));
   const undatedList = tasks.filter((t) => isOpenStatus(t.status) && !t.due_date);
