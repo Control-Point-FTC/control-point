@@ -268,7 +268,11 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
         ...comments.map((c: any) => ({ at: String(c.created_at), line: `${when(Date.parse(c.created_at), tz)} — ${clip(c.author_name || nameOf(c.member_id), 40)} commented: ${clip(c.body, 400)}${c.edited_at ? " (edited)" : ""}` })),
         ...activity.map((a: any) => ({ at: String(a.created_at), line: `${when(Date.parse(a.created_at), tz)} — ${clip(describeActivity(a, nameOf), 200)}` })),
       ].sort((x, y) => x.at.localeCompare(y.at));
-      summary = `task #${task.id} ${clip(task.title, 120)}: ${comments.length} comment${comments.length === 1 ? "" : "s"}, ${activity.length} change${activity.length === 1 ? "" : "s"}`;
+      // Sketches: Bruno can't see the drawing, only who drew what (and its title).
+      const sketches = await db("SELECT member_id, title, created_at FROM task_sketches WHERE task_id = ? ORDER BY created_at, id", task.id).catch(() => [] as any[]);
+      for (const s of sketches) entries.push({ at: String(s.created_at), line: `${when(Date.parse(s.created_at), tz)} — sketch by ${clip(nameOf(s.member_id), 40)}${s.title ? `: ${clip(s.title, 80)}` : " (untitled)"} (a drawing on the task's sheet; its contents aren't readable as text)` });
+      entries.sort((x, y) => x.at.localeCompare(y.at));
+      summary = `task #${task.id} ${clip(task.title, 120)}: ${comments.length} comment${comments.length === 1 ? "" : "s"}, ${activity.length} change${activity.length === 1 ? "" : "s"}, ${sketches.length} sketch${sketches.length === 1 ? "" : "es"}`;
       const shownEntries = entries.slice(-60);
       more = entries.length > shownEntries.length;
       for (const e of shownEntries) lines.push(e.line);

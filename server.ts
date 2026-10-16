@@ -205,6 +205,7 @@ import { isTaskStatus, strictWipLimits, WIP_COLUMNS, MAX_WIP } from "./src/types
 import { smartGroups } from "./src/utils/assigneeGroups.js";
 import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js";
 import { parseTagList } from "./src/types/taskTags.js";
+import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
@@ -10513,7 +10514,9 @@ Rules:
       const comments = (await dbAll("SELECT id, member_id, author_name, body, created_at, edited_at, deleted_at FROM task_comments WHERE task_id = ? ORDER BY created_at, id", task.id)) as any[];
       const activity = (await dbAll("SELECT id, member_id, kind, detail, created_at FROM task_activity WHERE task_id = ? ORDER BY created_at, id", task.id)) as any[];
       const watchers = await taskWatcherIds(Number(task.id));
+      const sketches = (await dbAll("SELECT id, member_id, title, strokes, created_at, updated_at, updated_by FROM task_sketches WHERE task_id = ? ORDER BY created_at, id", task.id)) as any[];
       res.json({
+        sketches: sketches.map((s) => ({ ...s, strokes: parseSketch(s.strokes).strokes })),
         comments: comments.map((c) => (c.deleted_at ? { ...c, body: "" } : c)),
         activity: activity.map((a) => ({ ...a, detail: (() => { try { return a.detail ? JSON.parse(a.detail) : null; } catch { return null; } })() })),
         watchers, watching: watchers.includes(auth.memberId),
@@ -10569,6 +10572,62 @@ Rules:
   };
   app.patch("/api/tasks/:id/comments/:cid", editComment(false));
   app.delete("/api/tasks/:id/comments/:cid", editComment(true));
+
+  // Sketches on a task: anyone who can see it adds one; the author or a task
+  // manager edits or removes it. Live through the task's timeline.
+  app.post("/api/tasks/:id/sketches", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const sketch = cleanSketch(req.body);
+      if (!sketch) return res.status(400).json({ error: "Draw something first (or the sketch is too big to save)" });
+      const title = cleanSketchTitle(req.body?.title);
+      const at = new Date().toISOString();
+      // Count and insert in one statement, so two saves at once can't pass the cap together.
+      const info: any = await dbRun(
+        `INSERT INTO task_sketches (team_id, task_id, member_id, title, strokes, created_at)
+         SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM task_sketches WHERE task_id = ?) < ?`,
+        auth.teamId, task.id, auth.memberId, title, JSON.stringify(sketch), at, task.id, MAX_SKETCHES_PER_TASK,
+      );
+      if (!Number(info?.changes ?? info?.rowsAffected ?? 0)) return res.status(400).json({ error: `A task holds up to ${MAX_SKETCHES_PER_TASK} sketches` });
+      await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "sketch_added", detail: title ? { title } : undefined }]);
+      res.json({ id: Number(info?.lastInsertRowid), task_id: Number(task.id), member_id: auth.memberId, title, strokes: sketch.strokes, created_at: at, updated_at: null, updated_by: null });
+    } catch (error) {
+      console.error("Error saving sketch:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  const editSketch = (remove: boolean) => async (req: any, res: any) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = await visibleTask(auth, req.params.id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      const s = (await dbGet("SELECT * FROM task_sketches WHERE id = ? AND task_id = ?", Number(req.params.sid), task.id)) as any;
+      if (!s) return res.status(404).json({ error: "Sketch not found" });
+      if (Number(s.member_id) !== auth.memberId && !(await hasPerm(auth, "manage_tasks"))) {
+        return res.status(403).json({ error: remove ? "You can only remove your own sketches" : "You can only edit your own sketches" });
+      }
+      const title = req.body?.title !== undefined ? cleanSketchTitle(req.body.title) : String(s.title || "");
+      if (remove) {
+        await dbRun("DELETE FROM task_sketches WHERE id = ?", s.id);
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "sketch_removed", detail: s.title ? { title: String(s.title) } : undefined }]);
+      } else {
+        const sketch = req.body?.strokes !== undefined ? cleanSketch(req.body) : parseSketch(s.strokes);
+        if (!sketch || !sketch.strokes.length) return res.status(400).json({ error: "Draw something first (or the sketch is too big to save)" });
+        await dbRun("UPDATE task_sketches SET title = ?, strokes = ?, updated_at = ?, updated_by = ? WHERE id = ?", title, JSON.stringify(sketch), new Date().toISOString(), auth.memberId, s.id);
+        await recordActivity(auth.teamId, Number(task.id), auth.memberId, [{ kind: "sketch_edited", detail: title ? { title } : undefined }]);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error editing sketch:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+  app.patch("/api/tasks/:id/sketches/:sid", editSketch(false));
+  app.delete("/api/tasks/:id/sketches/:sid", editSketch(true));
 
   // Watch or stop watching a task.
   app.post("/api/tasks/:id/watch", async (req, res) => {

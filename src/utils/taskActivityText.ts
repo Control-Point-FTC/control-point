@@ -34,6 +34,9 @@ export function describeActivity(row: { kind: string; detail?: unknown; member_i
     case "approved": return `${who} approved the work${via}`;
     case "sent_back": return `${who} sent it back for changes${via}`;
     case "links": return `${who} changed its links${via}`;
+    case "sketch_added": return `${who} added a sketch${d.title ? ` "${String(d.title).slice(0, 80)}"` : ""}${via}`;
+    case "sketch_edited": return `${who} edited a sketch${d.title ? ` "${String(d.title).slice(0, 80)}"` : ""}${via}`;
+    case "sketch_removed": return `${who} removed a sketch${d.title ? ` "${String(d.title).slice(0, 80)}"` : ""}${via}`;
     default: return `${who} updated it${via}`;
   }
 }

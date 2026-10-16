@@ -12,6 +12,8 @@ import { describeActivity } from '../../../utils/taskActivityText';
 import { MemberAvatar } from './AssigneePicker';
 
 export interface Timeline {
+  /** Sketches on the task (TaskSketches.tsx), oldest first. */
+  sketches?: { id: number; member_id: number | null; title: string; strokes: any[]; created_at: string; updated_at: string | null }[];
   comments: { id: number; member_id: number | null; author_name: string | null; body: string; created_at: string; edited_at: string | null; deleted_at: string | null }[];
   activity: { id: number; member_id: number | null; kind: string; detail: any; created_at: string }[];
   watchers: number[];
