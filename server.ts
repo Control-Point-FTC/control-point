@@ -201,7 +201,7 @@ import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./s
 import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS, parseDisabledModules, parseSubsystems } from "./src/types/teamModules.js";
 import { nextDisabledModules, parseWorkspaceChange } from "./server/brunoWorkspace.js";
 import { startAfterDue, taskTagColumns, TASK_TAG_FIELDS } from "./server/taskTags.js";
-import { isTaskStatus } from "./src/types/taskStatus.js";
+import { cleanWipLimits, isTaskStatus } from "./src/types/taskStatus.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
 import { attachLinks, cleanTaskIds, LINK_KINDS, loadTaskLinks, planLinkChanges, type LinkChange, type LinkKind } from "./server/taskLinks.js";
@@ -5141,7 +5141,7 @@ async function startServer() {
     if (parseInt(req.params.id, 10) !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
-    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode, timezone, disabled_modules, subsystems } = req.body;
+    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode, timezone, disabled_modules, subsystems, wip_limits } = req.body;
     // Partial update: only touch columns the caller actually sent, so saving the
     // FTC team number alone can't wipe the workspace name or colors.
     const sets: string[] = [];
@@ -5197,6 +5197,13 @@ async function startServer() {
       if (clean && !clean.length) return res.status(400).json({ error: "Add at least one subsystem" });
       sets.push("subsystems = ?"); vals.push(clean ? JSON.stringify(clean) : null);
     }
+    if (wip_limits !== undefined) {
+      // Board column limits: {} or null clears them; bad values are refused.
+      const clean = cleanWipLimits(wip_limits ?? {});
+      const sent = wip_limits && typeof wip_limits === "object" ? Object.keys(wip_limits).filter((k) => (wip_limits as any)[k] !== null) : [];
+      if (sent.some((k) => !(k in clean))) return res.status(400).json({ error: "Limits are whole numbers from 1 to 99 for To do and In progress" });
+      sets.push("task_wip_limits = ?"); vals.push(Object.keys(clean).length ? JSON.stringify(clean) : null);
+    }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
     if (claimFtc !== null) {
@@ -5212,7 +5219,7 @@ async function startServer() {
       (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
     }
     // Everyone's sidebar follows the module switches live.
-    if (disabled_modules !== undefined || subsystems !== undefined) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
+    if (disabled_modules !== undefined || subsystems !== undefined || wip_limits !== undefined) broadcastToTeam(auth.teamId, { type: "team_settings_changed" });
     res.json({ success: true });
   });
 
@@ -14136,6 +14143,8 @@ Rules:
             if (!saved) continue;
           }
           if (subsystems) await dbRun("UPDATE teams SET subsystems = ? WHERE id = ?", JSON.stringify(subsystems), auth.teamId);
+          const wip = [...changes].reverse().find((c: any) => c.wipLimits !== undefined)?.wipLimits;
+          if (wip !== undefined) await dbRun("UPDATE teams SET task_wip_limits = ? WHERE id = ?", Object.keys(wip).length ? JSON.stringify(wip) : null, auth.teamId);
           applied.workspace = changes.length;
         }
       }

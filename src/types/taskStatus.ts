@@ -22,3 +22,21 @@ export function isOpenStatus(status: unknown): boolean {
   return !CLOSED_STATUSES.includes(String(status ?? 'todo'));
 }
 
+
+/** Work-in-progress limits for the board's open columns ({"in-progress": 4}). */
+export type WipLimits = Partial<Record<'todo' | 'in-progress', number>>;
+export const WIP_COLUMNS = ['todo', 'in-progress'] as const;
+export const MAX_WIP = 99;
+
+/** Valid limits only (whole numbers 1–99 for To do / In progress); anything else is dropped. */
+export function cleanWipLimits(v: unknown): WipLimits {
+  let obj: unknown = v;
+  if (typeof v === 'string') { try { obj = JSON.parse(v); } catch { return {}; } }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  const out: WipLimits = {};
+  for (const k of WIP_COLUMNS) {
+    const n = Number((obj as any)[k]);
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_WIP) out[k] = n;
+  }
+  return out;
+}

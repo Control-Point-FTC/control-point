@@ -10,6 +10,7 @@ import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
 import { parseTagList } from '../../types/taskTags';
+import { cleanWipLimits } from '../../types/taskStatus';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 import { recordedCompletions } from '../../utils/taskCompletions';
 
@@ -550,6 +551,22 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
     return !!res?.ok;
   };
+  /** Set or clear one board column's work-in-progress limit (admins; team setting). */
+  const setWipLimit = async (status: 'todo' | 'in-progress', limit: number | null): Promise<boolean> => {
+    const team = teams.find((t: any) => String(t.id) === String(currentUser?.team_id));
+    if (!team) return false;
+    const current = cleanWipLimits(team.task_wip_limits);
+    const next: Record<string, number> = { ...current };
+    if (limit == null) delete next[status]; else next[status] = limit;
+    try {
+      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wip_limits: next }) });
+      if (!res.ok) { notify((await res.json().catch(() => ({})))?.error || 'Could not save the limit.', 'error'); return false; }
+      return true;
+    } catch {
+      notify('Could not save the limit.', 'error');
+      return false;
+    }
+  };
   /** Set one task's priority (the board's Priority columns), optimistic. */
   const setPriority = async (id: number, priority: string | null) => {
     if (!canManageTasks) { notify('Only team managers can change priority.', 'error'); return; }
@@ -612,7 +629,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   return {
     // permissions
-    isAdmin, canManageTasks, setPriority, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
+    isAdmin, canManageTasks, setPriority, setWipLimit, addLink, removeLink, taskById, completeForEveryone, duplicateTask, setWatching, currentUserId: currentUser?.id as number | undefined,
     // editor
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,

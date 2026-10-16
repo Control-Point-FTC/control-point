@@ -16,6 +16,7 @@
 import { quoteUntrusted } from "./scoutingContext.js";
 import { parseDisabledModules, parseSubsystems, TEAM_MODULES } from "../src/types/teamModules.js";
 import { parseTagList } from "../src/types/taskTags.js";
+import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -169,6 +170,8 @@ export interface FactsInput {
   disabledModules?: string[];
   /** The team's robot subsystems (defaults until edited). */
   subsystems?: string[];
+  /** Task board column limits and how many open tasks are in each column. */
+  wip?: { limits: WipLimits; todo: number; inProgress: number };
 }
 
 const money = (n: number) => `$${(Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -219,6 +222,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     L.push(`- Budget (per the budget log): income ${money(f.budget.income)}, expenses ${money(f.budget.expense)}, net ${money(f.budget.income - f.budget.expense)}`);
   }
 
+  if (f.wip && (f.wip.limits.todo || f.wip.limits["in-progress"])) {
+    const col = (name: string, n: number, lim?: number) => (lim ? `${name} ${n} of ${lim}${n > lim ? " (OVER the limit)" : n === lim ? " (at the limit)" : ""}` : "");
+    L.push(`- Task board limits (per Settings): ${[col("To do", f.wip.todo, f.wip.limits.todo), col("In progress", f.wip.inProgress, f.wip.limits["in-progress"])].filter(Boolean).join("; ")}`);
+  }
   if (f.subsystems?.length) {
     L.push(`- Robot subsystems (per Settings → Workspace): ${f.subsystems.map((n) => q(n, 40)).join(", ")}`);
   }
@@ -255,7 +262,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
 export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number, timeZone: string, now: Date = new Date(), includeBoard = false): Promise<FactsInput | null> {
   const board = includeBoard ? "" : " AND COALESCE(is_board, 0) = 0";
   const tBoard = includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0";
-  const team = await db.dbGet("SELECT name, disabled_modules, subsystems FROM teams WHERE id = ?", teamId);
+  const team = await db.dbGet("SELECT name, disabled_modules, subsystems, task_wip_limits FROM teams WHERE id = ?", teamId);
   if (!team) return null;
   const today = todayIn(timeZone, now);
   // "Next 7 days" = today plus the following six dates; "last 7 days" = an
@@ -327,6 +334,12 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamName: String(team.name || "the team"),
     disabledModules: parseDisabledModules(team.disabled_modules),
     subsystems: parseSubsystems(team.subsystems),
+    wip: await (async () => {
+      const limits = cleanWipLimits(team.task_wip_limits);
+      if (!limits.todo && !limits["in-progress"]) return undefined;
+      const r = await db.dbGet(`SELECT SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END) AS todo_n, SUM(CASE WHEN status = 'in-progress' THEN 1 ELSE 0 END) AS prog_n FROM tasks WHERE team_id = ?${board}`, teamId);
+      return { limits, todo: Number(r?.todo_n || 0), inProgress: Number(r?.prog_n || 0) };
+    })(),
     timeZone,
     today,
     nowTime: timeIn(timeZone, now),

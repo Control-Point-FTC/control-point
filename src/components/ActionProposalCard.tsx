@@ -100,6 +100,11 @@ export function workspaceSummary(it: any): string {
   if (off.length) parts.push(`Turn off ${off.join(', ')} (data is kept)`);
   if (on.length) parts.push(`Turn on ${on.join(', ')}`);
   if (Array.isArray(it?.subsystems)) parts.push(`Subsystems: ${it.subsystems.filter((n: unknown) => typeof n === 'string').join(', ').slice(0, 120)}`);
+  if (it?.wip_limits !== undefined) {
+    const w = it.wip_limits || {};
+    const bits = [w.todo ? `To do ${w.todo}` : '', w['in-progress'] ? `In progress ${w['in-progress']}` : ''].filter(Boolean);
+    parts.push(bits.length ? `Board limits: ${bits.join(', ')}` : 'Remove board limits');
+  }
   return parts.join(' · ') || 'No change';
 }
 

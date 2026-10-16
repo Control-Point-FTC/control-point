@@ -9,7 +9,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
-  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera, Ban,
+  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera, Ban, GanttChart,
 } from 'lucide-react';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
@@ -29,6 +29,9 @@ import { AvatarStack } from './AssigneePicker';
 import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
 import { TaskTagChips } from './TaskTags';
 import { TaskLinkMarks } from './TaskLinks';
+import { TaskGantt } from './TaskGantt';
+import { WipLimit } from './TaskWip';
+import { cleanWipLimits } from '../../../types/taskStatus';
 import { GroupBySelect, TaskFiltersButton } from './TaskFilterBar';
 import { groupTasks, matchesFilters, readFilters, readGroup, writeFilters, type Group, type GroupBy, type TaskFilters } from './taskFilters';
 import { parseSubsystems } from '../../../types/teamModules';
@@ -42,7 +45,7 @@ const photoCount = (t: any) => taskCompletions(t).reduce((n, e) => n + e.images.
 import { Countdown } from '../../ui/Countdown';
 import { BulkImportDialog } from './TaskDialogs';
 
-type View = 'board' | 'list' | 'completed' | 'insights';
+type View = 'board' | 'list' | 'timeline' | 'completed' | 'insights';
 type ReviewFilter = 'all' | 'pending' | 'approved';
 
 const NO_TASKS: any[] = [];
@@ -219,7 +222,7 @@ export function TasksPage(props: any) {
               </SelectContent>
             </Select>
           )}
-          {ctl.canManageTasks && view !== 'insights' && visible.length > 0 && (
+          {ctl.canManageTasks && view !== 'insights' && view !== 'timeline' && visible.length > 0 && (
             <label className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground max-sm:min-h-11">
               <SelectAllCheckbox sel={sel} label="Select all shown tasks" />
               <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
@@ -233,6 +236,7 @@ export function TasksPage(props: any) {
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as View)} aria-label="View" className="ml-auto">
             <ToggleGroupItem value="board" aria-label="Board"><KanbanSquare /> <span className="hidden sm:inline">Board</span></ToggleGroupItem>
             <ToggleGroupItem value="list" aria-label="List"><List /> <span className="hidden sm:inline">List</span></ToggleGroupItem>
+            <ToggleGroupItem value="timeline" aria-label="Timeline"><GanttChart /> <span className="hidden sm:inline">Timeline</span></ToggleGroupItem>
             {ctl.canManageTasks && (
               <ToggleGroupItem value="completed" aria-label={`Completed${awaitingReview ? `, ${awaitingReview} awaiting review` : ''}`}>
                 <CheckCheck /> <span className="hidden sm:inline">Completed</span>
@@ -246,7 +250,7 @@ export function TasksPage(props: any) {
 
       {view === 'board' && (
         group === 'status'
-          ? <Board tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
+          ? <Board wipLimits={cleanWipLimits(teams.find((t: any) => t.id === currentUser?.team_id)?.task_wip_limits)} tasks={shown} columns={columns} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
           : <GroupedBoard tasks={shown} groups={groups!} group={group} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}|${params.toString()}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
@@ -257,6 +261,7 @@ export function TasksPage(props: any) {
       {view === 'completed' && ctl.canManageTasks && (
         <CompletedView tasks={completed} filter={reviewFilter} onFilter={setReviewFilter} members={members} onOpen={setViewTaskId} sel={sel} />
       )}
+      {view === 'timeline' && <TaskGantt tasks={shown} onOpen={setViewTaskId} />}
       {view === 'insights' && (
         <Insights
           tasks={visible}
@@ -551,9 +556,11 @@ function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: Re
   }
 }
 
-function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
+function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel, wipLimits }: {
   tasks: any[]; columns: readonly BoardColumn[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
   sel: Selection | null;
+  /** The team's column limits; counts are the whole column, not just what a filter shows. */
+  wipLimits: Partial<Record<string, number>>;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
@@ -594,6 +601,15 @@ function Board({ tasks, columns, ctl, assigneesOf, onOpen, filterKey, sel }: {
                 <span className={cn('size-2 rounded-full', M.dot)} />
                 <h2 className="text-sm font-medium">{M.label}</h2>
                 <span className="text-sm tabular-nums text-muted-foreground">{items.length}</span>
+                {(col.id === 'todo' || col.id === 'in-progress') && (
+                  <WipLimit
+                    column={M.label}
+                    count={ctl.filteredTasks.filter((t: any) => t.status === col.id).length}
+                    limit={wipLimits[col.id]}
+                    canEdit={ctl.isAdmin}
+                    onSave={(n) => ctl.setWipLimit(col.id as 'todo' | 'in-progress', n)}
+                  />
+                )}
                 {ctl.canManageTasks && col.id !== 'cancelled' && (
                   <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label={`Add task to ${M.label}`} onClick={() => ctl.openNewTask(col.id)}><Plus /></Button>
                 )}

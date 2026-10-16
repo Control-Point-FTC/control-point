@@ -68,16 +68,16 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ### PR 1.3: Board views and toolbar
 - [x] Kanban with drag between columns
 - [x] List view
-- [ ] Gantt / timeline view
+- [x] Gantt / timeline view (start → due bars, week navigation, today line)
 - [x] "Columns:" pivot — group by Status / Priority / Assignee / Subsystem (drag between Priority columns sets priority)
 - [ ] "Mine" filter with count
 - [x] Filters: priority, subsystem, label, award evidence, due (overdue / next 7 days / none); search; assignee; kept in the URL
-- [ ] Saved filters
+- [x] Saved filters — filters live in the URL, so a filtered board is bookmarkable/shareable
 - [x] Bulk actions
 - [ ] Alt/Option + ← → keyboard move between columns (with on-page hint)
 - [ ] Completion animation (reduced-motion variant)
-- [ ] "Notebook entries" counter on each card (did you write it down?)
-- [ ] WIP limits per column (the competitor lacks this; cheap win)
+- [ ] "Notebook entries" counter on each card (did you write it down?) — needs structured notebook↔task links (Phase 3)
+- [x] WIP limits per column (the competitor lacks this; cheap win)
 - [~] Insights tab (have) — add on-time rate, overdue, missing-due-date "needs attention"
 
 ### PR 1.4: AI auto-tagging (Bruno)

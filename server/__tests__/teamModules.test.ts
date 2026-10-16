@@ -78,6 +78,27 @@ describe("PATCH /api/teams/:id — modules and subsystems", () => {
   });
 });
 
+describe("task board limits", () => {
+  it("admins set and clear limits; bad values and non-admins are refused", async () => {
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: { "in-progress": 4, todo: 12 } }, admin)).status).toBe(200);
+    expect(JSON.parse((await dbGet("SELECT task_wip_limits FROM teams WHERE id = ?", team)).task_wip_limits)).toEqual({ todo: 12, "in-progress": 4 });
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: { "in-progress": 0 } }, admin)).status).toBe(400);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: { "in-progress": 3 } }, student)).status).toBe(403);
+    expect((await t.patch(`/api/teams/${team}`, { wip_limits: {} }, admin)).status).toBe(200);
+    expect((await dbGet("SELECT task_wip_limits FROM teams WHERE id = ?", team)).task_wip_limits).toBeNull();
+  });
+
+  it("facts say how full each limited column is; Bruno's card sets limits", async () => {
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "workspace", items: [{ wip_limits: { "in-progress": 1 } }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await t.post("/api/tasks", { title: "WIP one", status: "in-progress" }, admin);
+    await t.post("/api/tasks", { title: "WIP two", status: "in-progress" }, admin);
+    const text = formatWorkspaceFacts((await loadWorkspaceFacts({ dbGet, dbAll }, team, "America/New_York"))!);
+    expect(text).toMatch(/Task board limits .*In progress 2 of 1 \(OVER the limit\)/);
+    await t.patch(`/api/teams/${team}`, { wip_limits: null }, admin);
+  });
+});
+
 describe("Bruno: workspace settings", () => {
   it("an admin's confirmed card switches modules and replaces subsystems", async () => {
     await t.patch(`/api/teams/${team}`, { disabled_modules: ["budget"] }, admin);

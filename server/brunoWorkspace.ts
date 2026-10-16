@@ -3,12 +3,15 @@
 // member confirms the card and /api/ai/apply-actions applies it with the
 // same rules as PATCH /api/teams/:id (admins only, known modules, 1–20 names).
 import { cleanSubsystems, isTeamModuleId, MAX_SUBSYSTEMS } from "../src/types/teamModules.js";
+import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
 
 export interface WorkspaceChange {
   disable: string[];
   enable: string[];
   /** The full new list, when it changes. */
   subsystems?: string[];
+  /** The task board's column limits, replacing the old ones ({} clears them). */
+  wipLimits?: WipLimits;
 }
 
 /** Validate one proposed change. Unknown modules are dropped; null when nothing valid is left. */
@@ -26,7 +29,11 @@ export function parseWorkspaceChange(raw: unknown): WorkspaceChange | null {
     if (!list.length) return null;
     out.subsystems = list;
   }
-  return disable.length || enable.length || out.subsystems ? out : null;
+  if (r.wip_limits !== undefined) {
+    // null or {} clears; otherwise only valid limits (1–99 for todo / in-progress).
+    out.wipLimits = r.wip_limits === null ? {} : cleanWipLimits(r.wip_limits);
+  }
+  return disable.length || enable.length || out.subsystems || out.wipLimits ? out : null;
 }
 
 /** The team's switched-off modules after applying a change. */
