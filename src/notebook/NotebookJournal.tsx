@@ -51,6 +51,7 @@ export function groupEntries(entries: JournalEntry[], by: 'week' | 'award', toda
 
 export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: boolean; onClose: () => void; onOpenPage: (id: number) => void; teamId?: number | null }) {
   const [entries, setEntries] = useState<JournalEntry[] | null>(null);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState('');
   const [by, setBy] = useState<'week' | 'award'>('week');
   const [filter, setFilter] = useState<JournalFilter>({ type: '', stage: '', subsystem: '', author: '' });
@@ -58,8 +59,8 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
     if (!open) return;
     let live = true;
     setEntries(null);
-    apiJson<{ entries: JournalEntry[] }>('/api/notebook/journal', { cache: 'no-store', headers: teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined })
-      .then((d) => { if (live) { setEntries(Array.isArray(d?.entries) ? d.entries : []); setError(''); } })
+    apiJson<{ entries: JournalEntry[]; more?: boolean }>('/api/notebook/journal?limit=500', { cache: 'no-store', headers: teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined })
+      .then((d) => { if (live) { setEntries(Array.isArray(d?.entries) ? d.entries : []); setMore(!!d?.more); setError(''); } })
       .catch((e) => { if (live) { setEntries([]); setError(e?.message || 'Could not load the journal'); } });
     return () => { live = false; };
   }, [open, teamId]);
@@ -87,7 +88,7 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
             <select className={select} aria-label="Filter by stage" value={filter.stage} onChange={set('stage')}><option value="">Any stage</option>{ENTRY_STAGES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
             {subsystems.length > 0 && <select className={select} aria-label="Filter by subsystem" value={filter.subsystem} onChange={set('subsystem')}><option value="">Any subsystem</option>{subsystems.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
             {authors.length > 0 && <select className={select} aria-label="Filter by author" value={filter.author} onChange={set('author')}><option value="">Anyone</option>{authors.map((a) => <option key={a} value={a}>{a}</option>)}</select>}
-            {entries && <span className="ml-auto text-xs text-muted-foreground">{shown.length} of {entries.length} entries</span>}
+            {entries && <span className="ml-auto text-xs text-muted-foreground">{shown.length} of {entries.length}{more ? ' newest' : ''} entries</span>}
           </div>
         </DialogHeader>
         <div className="max-h-[calc(90dvh-9rem)] space-y-6 overflow-y-auto px-6 py-5">

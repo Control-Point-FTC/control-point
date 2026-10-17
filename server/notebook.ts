@@ -593,28 +593,50 @@ export class NotebookStore {
    * happened (else when it was written), an excerpt, its entry details and
    * who wrote it — newest first. Protected pages stay out, as in the tree.
    */
-  journal(ctx: NotebookContext) { return this.session(ctx, async s => {
+  journal(ctx: NotebookContext, opts: { from?: unknown; to?: unknown; query?: unknown; limit?: unknown } = {}) { return this.session(ctx, async s => {
     const tree = await s.tree();
-    if (!tree.pages.length) return { entries: [] };
+    if (!tree.pages.length) return { entries: [], more: false };
     const visible = new Map(tree.pages.map(p => [p.id, p]));
     const sectionTitle = new Map(tree.sections.map(x => [x.id, x.title]));
-    const rows = await s.all(`SELECT p.id, p.plain, p.created_at, m.work_date, m.entry_type, m.stage, m.subsystems, m.awards
-      FROM notebook_pages p LEFT JOIN notebook_page_meta m ON m.page_id = p.id WHERE p.team_id = ? AND p.deleted_at IS NULL`, ctx.teamId);
-    const writers = await s.all(`SELECT c.page_id, m.name FROM notebook_contributors c JOIN members m ON m.id = c.member_id WHERE c.team_id = ? ORDER BY c.last_at ASC`, ctx.teamId);
+    const iso = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const limit = Math.min(500, Math.max(1, Number(opts.limit) || 200));
+    // Filtering, ordering and the excerpt happen in SQL: the full page text is
+    // searched but never loaded, and only the visible pages are considered.
+    const date = "COALESCE(m.work_date, substr(p.created_at, 1, 10))";
+    const where: string[] = ["p.team_id = ?", "p.deleted_at IS NULL", "p.id IN (SELECT value FROM json_each(?))"];
+    const args: unknown[] = [ctx.teamId, JSON.stringify([...visible.keys()])];
+    if (iso(opts.from)) { where.push(`${date} >= ?`); args.push(iso(opts.from)); }
+    if (iso(opts.to)) { where.push(`${date} <= ?`); args.push(iso(opts.to)); }
+    const words = String(opts.query ?? '').toLowerCase().split(/\s+/).filter(w => w.length > 1).slice(0, 5);
+    for (const w of words) {
+      where.push("LOWER(p.title || ' ' || COALESCE(p.plain, '') || ' ' || COALESCE(m.subsystems, '') || ' ' || COALESCE(m.awards, '') || ' ' || COALESCE(m.entry_type, '') || ' ' || COALESCE(m.stage, '')) LIKE ? ESCAPE '\\'");
+      args.push(`%${w.replace(/[\\%_]/g, c => `\\${c}`)}%`);
+    }
+    const rows = await s.all(`SELECT p.id, p.created_at, ${date} AS entry_date, substr(TRIM(COALESCE(p.plain, '')), 1, 400) AS head,
+        LENGTH(TRIM(COALESCE(p.plain, ''))) - LENGTH(REPLACE(TRIM(COALESCE(p.plain, '')), ' ', '')) + (LENGTH(TRIM(COALESCE(p.plain, ''))) > 0) AS words,
+        m.work_date, m.entry_type, m.stage, m.subsystems, m.awards
+      FROM notebook_pages p LEFT JOIN notebook_page_meta m ON m.page_id = p.id
+      WHERE ${where.join(' AND ')} ORDER BY entry_date DESC, p.updated_at DESC LIMIT ?`, ...args, limit + 1);
+    const shown = rows.slice(0, limit);
     const byPage = new Map<number, string[]>();
-    for (const w of writers) byPage.set(Number(w.page_id), [...(byPage.get(Number(w.page_id)) ?? []), String(w.name).slice(0, 80)]);
-    const entries = rows.filter(r => visible.has(Number(r.id))).map(r => {
+    if (shown.length) {
+      const writers = await s.all(`SELECT c.page_id, m.name FROM notebook_contributors c JOIN members m ON m.id = c.member_id
+        WHERE c.team_id = ? AND c.page_id IN (SELECT value FROM json_each(?)) ORDER BY c.last_at ASC`, ctx.teamId, JSON.stringify(shown.map(r => Number(r.id))));
+      for (const w of writers) byPage.set(Number(w.page_id), [...(byPage.get(Number(w.page_id)) ?? []), String(w.name).slice(0, 80)]);
+    }
+    const entries = shown.map(r => {
       const page = visible.get(Number(r.id))!;
-      const excerpt = String(r.plain ?? '').replace(/\s+/g, ' ').trim();
+      const excerpt = String(r.head ?? '').replace(/\s+/g, ' ').trim();
+      const words = Number(r.words) || 0;
       return {
         id: page.id, title: page.title, sectionId: page.sectionId, sectionTitle: sectionTitle.get(page.sectionId) ?? '',
-        date: r.work_date ?? String(r.created_at).slice(0, 10), workDate: r.work_date ?? null, createdAt: r.created_at, updatedAt: page.updatedAt,
-        excerpt: excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt, readMinutes: readMinutes(r.plain),
+        date: String(r.entry_date), workDate: r.work_date ?? null, createdAt: r.created_at, updatedAt: page.updatedAt,
+        excerpt: excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt, readMinutes: words ? Math.max(1, Math.round(words / 200)) : 0,
         type: r.entry_type ?? null, stage: r.stage ?? null, subsystems: parseTagList(r.subsystems), awards: parseTagList(r.awards),
         authors: byPage.get(Number(r.id)) ?? [],
       };
-    }).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    return { entries };
+    });
+    return { entries, more: rows.length > limit };
   }); }
   tags(ctx: NotebookContext, filter: { section?: unknown; page?: unknown }) { return this.session(ctx, async s => {
     const wanted = (value: unknown) => {
@@ -936,7 +958,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
   app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
   app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
-  app.get('/api/notebook/journal', handle(ctx => store.journal(ctx)));
+  app.get('/api/notebook/journal', handle((ctx, req) => store.journal(ctx, { from: req.query.from, to: req.query.to, query: req.query.q, limit: req.query.limit })));
   app.get('/api/notebook/tags', handle((ctx, req) => store.tags(ctx, { section: req.query.section, page: req.query.page })));
   // Review → Thesaurus (WordNet, on this server; no AI).
   app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));

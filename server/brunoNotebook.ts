@@ -95,17 +95,14 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
 export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: (string | null)[] }> {
   if (q.kind === "notebook_journal") {
     // Entries newest first by when the work happened, with their details and authors.
-    const { entries } = await store.journal(bruno(ctx));
-    const words = String(q.query ?? "").toLowerCase().split(/\s+/).filter(w => w.length > 1).slice(0, 5);
-    const hits = entries.filter(e => (!q.from || e.date >= q.from) && (!q.to || e.date <= q.to)
-      && words.every(w => `${e.title} ${e.excerpt} ${e.subsystems.join(" ")} ${e.awards.join(" ")} ${e.type ?? ""} ${e.stage ?? ""}`.toLowerCase().includes(w)));
-    const shown = hits.slice(0, JOURNAL_LIMIT);
+    // Dates and words are matched in the database against the full page text.
+    const { entries: shown, more } = await store.journal(bruno(ctx), { from: q.from, to: q.to, query: q.query, limit: JOURNAL_LIMIT });
     const lines = shown.map(e => {
       const details = entryMetaSummary(Object.fromEntries(Object.entries({ type: e.type, stage: e.stage, subsystems: e.subsystems, awards: e.awards })
         .filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length))));
       return `page #${e.id} ${JSON.stringify(clip(e.title, 120))} ${e.date}${e.workDate ? " (work date)" : ""}${details ? ` · ${details}` : ""}${e.authors.length ? ` · by ${e.authors.slice(0, 6).join(", ")}` : ""}: ${JSON.stringify(clip(e.excerpt, 140))}`;
     });
-    return { lines: lines.length ? lines : ["(no matching entries)"], more: hits.length > JOURNAL_LIMIT, ids: lines.length ? shown.map(e => `page:${e.id}`) : [null] };
+    return { lines: lines.length ? lines : ["(no matching entries)"], more, ids: lines.length ? shown.map(e => `page:${e.id}`) : [null] };
   }
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
