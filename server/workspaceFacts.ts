@@ -19,6 +19,7 @@ import { parseTagList } from "../src/types/taskTags.js";
 import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
 import { onTimeStats, onTimePercent, ON_TIME_WINDOW_DAYS } from "../src/utils/taskInsights.js";
 import { FOLLOW_THROUGH_SQL, daysBefore, followThrough } from "../src/utils/eventAttendance.js";
+import { runProgress } from "../src/types/checklists.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -180,6 +181,8 @@ export interface FactsInput {
   onTime?: { onTime: number; total: number };
   /** Task board column limits and how many open tasks are in each column. */
   wip?: { limits: WipLimits; todo: number; inProgress: number };
+  /** Checklist runs still open, with progress. */
+  openChecklists?: { id: number; title: string; done: number; total: number }[];
   /** Whether the team has a pit display link turned on. */
   pitDisplay?: boolean;
 }
@@ -210,6 +213,9 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   }
   if (f.pitDisplay !== undefined) {
     L.push(`- Pit display (Calendar → Pit display, admins): ${f.pitDisplay ? "on — a no-login screen link showing this week's events, #announcements, the next match at a live event and the check-in QR" : "off"}.`);
+  }
+  if (f.openChecklists?.length) {
+    L.push(`- Open checklist runs (per Checklists): ${f.openChecklists.slice(0, 10).map((c) => `#${c.id} ${q(c.title, 60)} (${c.done} of ${c.total} done)`).join(", ")}${f.openChecklists.length > 10 ? ", …" : ""}.`);
   }
   if (f.noDueOpenTotal !== undefined || f.onTime) {
     const pct = f.onTime ? onTimePercent(f.onTime) : null;
@@ -385,6 +391,18 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     doneLast7: Number(counts?.done7_n || 0),
     noDueOpenTotal: Number(counts?.nodue_n || 0),
     rsvpFollowThrough: { events: rsvpRows.length, ...ft },
+    openChecklists: await (async () => {
+      const runs = await db.dbAll("SELECT id, title, sections FROM checklist_runs WHERE team_id = ? AND status = 'open' ORDER BY started_at DESC LIMIT 20", teamId).catch(() => [] as any[]);
+      const out: { id: number; title: string; done: number; total: number }[] = [];
+      for (const r of runs) {
+        let sections: any[] = [];
+        try { sections = JSON.parse(String(r.sections)); } catch { /* none */ }
+        const items = await db.dbAll("SELECT item_id, state FROM checklist_run_items WHERE run_id = ?", r.id).catch(() => [] as any[]);
+        const p = runProgress(sections, Object.fromEntries(items.map((i: any) => [String(i.item_id), i.state])));
+        out.push({ id: Number(r.id), title: String(r.title || ""), done: p.done, total: p.total });
+      }
+      return out;
+    })(),
     pitDisplay: !!(await db.dbGet("SELECT 1 AS ok FROM pit_displays WHERE team_id = ?", teamId).catch(() => null)),
     onTime,
     messagesLast7: msgs ? Number(msgs.n || 0) : null,

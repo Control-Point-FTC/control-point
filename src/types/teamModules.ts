@@ -33,6 +33,7 @@ export const TEAM_MODULES: readonly TeamModule[] = [
   { id: 'outreach', label: 'Outreach', description: 'Outreach events, hours and social channels', navIds: ['outreach'] },
   { id: 'budget', label: 'Budget', description: 'Income and expenses', navIds: ['budget'] },
   { id: 'resources', label: 'Resources', description: 'Shared link library', navIds: ['resources'] },
+  { id: 'checklists', label: 'Checklists', description: 'Pre-match, pit and travel checklists and their runs', navIds: ['checklists'] },
 ];
 
 const MODULE_IDS = new Set(TEAM_MODULES.map((m) => m.id));

@@ -6,7 +6,7 @@
 const APP_SEGMENTS = [
   'dashboard', 'inbox', 'stats', 'predict', 'teams', 'roles', 'attendance', 'tasks', 'calendar',
   'budget', 'inventory', 'outreach', 'code', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots',
-  'cad-parts', 'comm', 'chat', 'resources', 'bruno', 'profile', 'settings', 'owner', 'privacy', 'terms',
+  'cad-parts', 'comm', 'chat', 'resources', 'checklists', 'bruno', 'profile', 'settings', 'owner', 'privacy', 'terms',
 ];
 
 const KNOWN = [
