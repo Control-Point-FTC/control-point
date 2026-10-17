@@ -11,7 +11,7 @@ import { ViewControls } from './ribbon/ViewControls';
 import { PageLinkMenu } from './pageLinkMenu';
 import { LINK_STATES_REFRESH, LinkStates, linkStatesKey } from './linkStates';
 import { PageLinkPopup, PageLinkSourceContext } from './PageLinkPopup';
-import { MemberMention, mentionKey, type MentionMember } from './mentionMenu';
+import { MemberMention, PENDING_MENTIONS_PREFIX, mentionKey, type MentionMember } from './mentionMenu';
 import { MentionPopup, MentionSourceContext } from './MentionPopup';
 import { ApiError } from '../services/api';
 import { notify } from '../components/dialog';
@@ -90,7 +90,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const mentionMembersRef = React.useRef(mentionMembers); mentionMembersRef.current = mentionMembers;
   const mentionTeam = sync.scope?.teamId, selfId = sync.scope?.memberId;
   // Pings that couldn't be sent (offline, server busy) wait here, per page, until the page saves again.
-  const pendingKey = `cp-nb-pending-mentions:${mentionTeam}:${sync.pageId}`;
+  // Keyed by who sent them too, so a teammate signing in on this browser never sends them as themselves.
+  const pendingKey = `${PENDING_MENTIONS_PREFIX}${selfId}:${mentionTeam}:${sync.pageId}`;
   const readPending = React.useCallback((): number[] => { try { const v = JSON.parse(localStorage.getItem(pendingKey) || '[]'); return Array.isArray(v) ? v.filter(Number.isSafeInteger) : []; } catch { return []; } }, [pendingKey]);
   const writePending = React.useCallback((ids: number[]) => { try { if (ids.length) localStorage.setItem(pendingKey, JSON.stringify([...new Set(ids)].slice(0, 50))); else localStorage.removeItem(pendingKey); } catch { /* storage blocked */ } }, [pendingKey]);
   const postMention = React.useCallback((memberIds: number[]) => {
@@ -111,11 +112,19 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   useEffect(() => {
     if (sync.status !== 'saved' || !mentionTeam || typeof navigator !== 'undefined' && navigator.onLine === false) return;
     const ids = readPending();
-    if (!ids.length) return;
+    if (!ids.length || !selfId) return;
     let gone = false;
-    void postMention(ids).then(() => { if (!gone) writePending(readPending().filter(id => !ids.includes(id))); }).catch(e => { if (!gone && !retryable(e)) writePending(readPending().filter(id => !ids.includes(id))); });
+    // One member at a time: a refusal for one (lost access) never drops the others, and no
+    // request goes over the server's per-ping limit. A retryable failure stops until next time.
+    void (async () => {
+      for (const id of ids) {
+        if (gone) return;
+        try { await postMention([id]); } catch (e) { if (retryable(e)) return; }
+        writePending(readPending().filter(x => x !== id));
+      }
+    })();
     return () => { gone = true; };
-  }, [sync.status, mentionTeam, postMention, readPending, writePending]);
+  }, [sync.status, mentionTeam, selfId, postMention, readPending, writePending]);
   const sendMentionRef = React.useRef(sendMention); sendMentionRef.current = sendMention;
   const mentions = React.useMemo(() => ({ members: () => mentionMembersRef.current, selfId: () => sync.scope?.memberId, enabled: () => !mobileRef.current, onMention: (m: MentionMember) => sendMentionRef.current(m) }), [sync.scope?.memberId]);
   useEffect(() => {

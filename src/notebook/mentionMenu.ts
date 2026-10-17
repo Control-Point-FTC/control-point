@@ -8,6 +8,8 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import type { Node as PMNode } from '@tiptap/pm/model';
 
 export type MentionMember = { id: number; name: string };
+/** localStorage prefix for pings waiting to be sent (offline); cleared when the session ends. */
+export const PENDING_MENTIONS_PREFIX = 'cp-nb-pending-mentions:';
 export type MentionState = { active: boolean; from: number; to: number; query: string; index: number; dismissed: number | null };
 export const mentionKey = new PluginKey<MentionState>('notebookMention');
 const idle: MentionState = { active: false, from: 0, to: 0, query: '', index: 0, dismissed: null };
@@ -34,6 +36,8 @@ export function insertMention(editor: Editor, range: { from: number; to: number 
   // Editing may have stopped (conflict, permission change) since the list opened.
   if (!editor.isEditable) return;
   editor.chain().focus().deleteRange(range).insertContent([{ type: 'text', text: `@${member.name}` }, { type: 'text', text: ' ' }]).run();
+  // The finished "@Jenny Park " would still match: close the list so the next Enter is a new line.
+  editor.view.dispatch(editor.state.tr.setMeta(mentionKey, { dismissed: range.from }));
   onMention(member);
 }
 

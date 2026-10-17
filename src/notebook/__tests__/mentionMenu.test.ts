@@ -23,6 +23,10 @@ describe('@ mention list', () => {
     editor.view.someProp('handleKeyDown', f => f(editor.view, new KeyboardEvent('keydown', { key: 'Enter' })));
     expect(editor.getText()).toBe('Ask @Jenny Park ');
     expect(onMention).toHaveBeenCalledWith({ id: 2, name: 'Jenny Park' });
+    // The list closes after a pick, so the next Enter starts a new line instead of picking again.
+    expect(mentionKey.getState(editor.state)!.active).toBe(false);
+    editor.view.someProp('handleKeyDown', f => f(editor.view, new KeyboardEvent('keydown', { key: 'Enter' })));
+    expect(onMention).toHaveBeenCalledTimes(1);
     editor.destroy();
   });
 

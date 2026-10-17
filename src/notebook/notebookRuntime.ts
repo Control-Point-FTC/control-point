@@ -29,6 +29,8 @@ export async function clearNotebookData() {
   active.clear();
   const { clearNotebookJournals } = await import('./offlineJournal');
   const { clearCachedNotebookTrees } = await import('./offlineTree');
+  // Pings still waiting to be sent belong to the session that wrote them.
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith('cp-nb-pending-mentions:')) localStorage.removeItem(k); } catch { /* storage blocked */ }
   const results=await Promise.allSettled([clearNotebookJournals(),clearCachedNotebookTrees()]);
   const failed=results.find(result=>result.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
 }
