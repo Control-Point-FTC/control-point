@@ -19,6 +19,9 @@ import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, type
 import { SubscribeDialog } from './SubscribeDialog';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { Link } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
+import { apiFetch } from '../../../services/api';
+import { notify } from '../../../components/dialog';
 
 type View = 'month' | 'week' | 'agenda';
 
@@ -144,6 +147,7 @@ export function CalendarPage(props: any) {
         actions={(
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setSubscribeOpen(true)}><CalendarPlus /> Subscribe</Button>
+            {ctl.canManageCalendar && <ImportFirstButton onDone={() => refresh?.events?.()} />}
             {ctl.canManageCalendar && <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>}
           </div>
         )}
@@ -683,4 +687,30 @@ function MiniMonth({ cursor, todayKey, selected, hasEvents, weekOf, onPick }: {
       </div>
     </section>
   );
+}
+
+/** Managers: add this season's official FIRST competitions (skips ones already on the calendar). */
+function ImportFirstButton({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/events/import-first', { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { notify(d?.error || 'Could not import competitions — try again.', 'error'); return; }
+      notify(
+        d.added ? `Added ${d.added} official competition${d.added === 1 ? '' : 's'} to the calendar.`
+          : d.found ? 'Your official competitions are already on the calendar.'
+          : `FIRST doesn't list any competitions for team ${d.team_number} this season yet.`,
+        d.added || d.found ? 'success' : 'info',
+      );
+      if (d.added) onDone();
+    } catch {
+      notify('Could not import competitions — check your connection.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Button variant="outline" disabled={busy} onClick={() => void run()} title="Add this season's official FIRST competitions"><Trophy /> {busy ? 'Importing…' : 'Import competitions'}</Button>;
 }
