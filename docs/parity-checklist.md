@@ -118,7 +118,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] "Unavailable times" per member (date ranges or weekly slots with a private note; "Away" on clashing events; Bruno lists them and adds or removes your own)
 - [x] Mini-month navigator (Week and Agenda views)
 - [ ] High-contrast event blocks (a weak point in the competitor)
-- [ ] FIRST event calendar import (official comps auto-added from FTC Events API)
+- [x] FIRST event calendar import (official comps added from FTC Events / FTC Scout with one click; re-running skips ones already imported)
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
 ### PR 2.5: Pit display

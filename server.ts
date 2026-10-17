@@ -210,6 +210,7 @@ import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/event
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
 import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
 import { cleanUnavailability, overlapsRange } from "./src/utils/unavailability.js";
+import { insertedOnly, listedEvents, planFirstImport } from "./server/firstImport.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -5822,6 +5823,8 @@ async function startServer() {
     data: T;
     /** Some FIRST Events sub-requests failed; don't cache for the full TTL. */
     partial?: boolean;
+    /** Team payloads: a source answered for the event list (an empty list is then real, not an outage). */
+    eventsOk?: boolean;
   }
 
   /** Every data source errored (vs. answering "no such team/event"). */
@@ -5957,7 +5960,10 @@ async function startServer() {
       oprSource: scout?.opr?.tot ? "ftc-scout" : null,
       events,
     };
-    return { source, fetchedAt, data, partial: firstFailed || scoutFailed || firstEventsMissing };
+    // Whether some source actually answered for the event list (FIRST's events,
+    // or FTC Scout, whose 400/404 means "no data" rather than an outage).
+    const eventsOk = (!!firstTeam && eventsRes.status === "fulfilled") || !scoutFailed;
+    return { source, fetchedAt, data, partial: firstFailed || scoutFailed || firstEventsMissing, eventsOk };
   }
 
   /**
@@ -11284,6 +11290,53 @@ Rules:
       res.json({ marked });
     } catch (error) {
       console.error("Error marking absences:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * Import the team's official competitions this season (FIRST Events, else FTC
+   * Scout) as calendar events. Ones imported before are skipped (by event code),
+   * so it can be run again whenever registrations change.
+   */
+  app.post("/api/events/import-first", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_calendar");
+      if (!auth) return;
+      const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+      const number = Number(team?.ftc_team_number);
+      if (!Number.isSafeInteger(number) || number <= 0) return res.status(400).json({ error: "Add your FTC team number in Settings first" });
+      const season = currentFtcSeason();
+      const unreachable = () => res.status(503).json({ error: "FIRST's event data isn't reachable right now — try again later" });
+      let payload: any;
+      try { payload = await getTeamData(number, season); }
+      catch { return unreachable(); }
+      // A source failed and nothing came back: that's an outage, not an empty season.
+      const listed = listedEvents(payload);
+      if (!listed) return unreachable();
+      const have = ((await dbAll("SELECT first_event_code FROM events WHERE team_id = ? AND first_event_season = ? AND first_event_code IS NOT NULL", auth.teamId, season)) as any[]).map((r) => String(r.first_event_code));
+      const plan = planFirstImport(listed, have);
+      // found: the season's dated official events, so "none listed yet" reads differently from "all imported".
+      const found = planFirstImport(listed, []).length;
+      let added: typeof plan = [];
+      if (plan.length) {
+        const results = await dbBatchResults(plan.map((p) => ({
+          // INSERT OR IGNORE: the unique (team, season, code) index stops a parallel import adding it twice.
+          sql: "INSERT OR IGNORE INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, first_event_code, first_event_season) VALUES (?, ?, ?, '', '', '', ?, ?, ?, ?, ?)",
+          args: [p.title, `Official FIRST event (${p.code}), imported from the FTC event data.`, p.date, p.event_type, auth.teamId, auth.memberId, p.code, season],
+        })));
+        // Only rows this request wrote: a parallel import's rows were ignored here, and are announced by it.
+        added = insertedOnly(plan, results);
+      }
+      if (added.length) {
+        broadcastToTeam(auth.teamId, { type: "events_changed" });
+        const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+        void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
+          `${added.length} official competition${added.length === 1 ? "" : "s"} added to the calendar: ${added.map((p) => p.title).slice(0, 3).join(", ")}${added.length > 3 ? "…" : ""}`, {}, added.length);
+      }
+      res.json({ added: added.length, found, team_number: number, events: added });
+    } catch (error) {
+      console.error("Error importing FIRST events:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
