@@ -14687,6 +14687,10 @@ Rules:
           if (subsystems) await dbRun("UPDATE teams SET subsystems = ? WHERE id = ?", JSON.stringify(subsystems), auth.teamId);
           const wip = [...changes].reverse().find((c: any) => c.wipLimits !== undefined)?.wipLimits;
           if (wip !== undefined) await dbRun("UPDATE teams SET task_wip_limits = ? WHERE id = ?", Object.keys(wip).length ? JSON.stringify(wip) : null, auth.teamId);
+          // Pit display: on keeps an existing link (making one if there's none); off ends it.
+          const pit = [...changes].reverse().find((c: any) => c.pitDisplay !== undefined)?.pitDisplay;
+          if (pit === true) await dbRun("INSERT OR IGNORE INTO pit_displays (team_id, token, created_by, created_at) VALUES (?, ?, ?, ?)", auth.teamId, crypto.randomBytes(24).toString("base64url"), auth.memberId, createdAt);
+          if (pit === false) await dbRun("DELETE FROM pit_displays WHERE team_id = ?", auth.teamId);
           applied.workspace = changes.length;
         }
       }

@@ -109,6 +109,8 @@ export function workspaceSummary(it: any): string {
     const bits = w ? [w.todo ? `To do ${w.todo}` : '', w['in-progress'] ? `In progress ${w['in-progress']}` : ''].filter(Boolean) : [];
     parts.push(!w ? 'Board limits: not valid (whole numbers 1–99), nothing will change' : bits.length ? `Board limits: ${bits.join(', ')}` : 'Remove board limits');
   }
+  if (it?.pit_display === true) parts.push('Turn on the pit display (Calendar → Pit display has the link)');
+  if (it?.pit_display === false) parts.push('Turn off the pit display (its link stops working)');
   return parts.join(' · ') || 'No change';
 }
 

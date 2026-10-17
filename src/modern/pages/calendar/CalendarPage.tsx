@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, MonitorPlay, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -17,6 +17,7 @@ import { useCalendarController, toDateKey, EVENT_TYPES } from '../../../componen
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, typeMeta } from './CalendarSheets';
 import { SubscribeDialog } from './SubscribeDialog';
+import { PitDisplayDialog } from './PitDisplayDialog';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { Link } from 'react-router-dom';
 import { Trophy } from 'lucide-react';
@@ -52,6 +53,7 @@ export function CalendarPage(props: any) {
   const [dragging, setDragging] = useState<number | string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [subscribeOpen, setSubscribeOpen] = useState(false);
+  const [pitOpen, setPitOpen] = useState(false);
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);
@@ -147,6 +149,7 @@ export function CalendarPage(props: any) {
         actions={(
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setSubscribeOpen(true)}><CalendarPlus /> Subscribe</Button>
+            {hasScope?.('admin') && <Button variant="outline" onClick={() => setPitOpen(true)}><MonitorPlay /> Pit display</Button>}
             {ctl.canManageCalendar && <ImportFirstButton onDone={() => refresh?.events?.()} />}
             {ctl.canManageCalendar && <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>}
           </div>
@@ -250,6 +253,7 @@ export function CalendarPage(props: any) {
       <EventViewSheet event={viewEvent} onOpenChange={(o) => { if (!o) setViewId(null); }} ctl={ctl} teams={teams} />
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
       <SubscribeDialog open={subscribeOpen} onOpenChange={setSubscribeOpen} />
+      {hasScope?.('admin') && <PitDisplayDialog open={pitOpen} onOpenChange={setPitOpen} />}
     </Page>
     </CalendarActionsCtx.Provider>
   );
