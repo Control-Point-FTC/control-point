@@ -115,7 +115,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] ICS subscription feed
 - [x] Task-due overlay on the calendar ("2 tasks" day badge, toggleable; due tasks in the day list)
 - [x] Event-type filter toggles in the toolbar (already there)
-- [ ] "Unavailable times" per member
+- [x] "Unavailable times" per member (date ranges or weekly slots with a private note; "Away" on clashing events; Bruno lists them and adds or removes your own)
 - [x] Mini-month navigator (Week and Agenda views)
 - [ ] High-contrast event blocks (a weak point in the competitor)
 - [ ] FIRST event calendar import (official comps auto-added from FTC Events API)
