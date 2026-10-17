@@ -41,5 +41,9 @@ describe("Bruno and the CAD parts list", () => {
     const out = await runLookups(((sql: string, ...a: any[]) => rows(sql, ...a)) as any, team, "UTC", [{ kind: "parts" } as any]);
     expect(out).toMatch(/4× goBILDA 3614 Rhino Wheel 72mm \[Drivetrain\] gobilda, to order, \$12\.99 each/);
     expect(out).toMatch(/Listed cost of these lines: \$51\.96/);
+    // A search with no hits says so; it does not claim the whole list is empty.
+    const none = await runLookups(((sql: string, ...a: any[]) => rows(sql, ...a)) as any, team, "UTC", [{ kind: "parts", query: "servo" } as any]);
+    expect(none).toMatch(/No matching parts found/);
+    expect(none).not.toMatch(/parts list is empty/);
   });
 });

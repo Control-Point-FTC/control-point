@@ -153,8 +153,16 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
   }
   if (kind === 'part') {
     const qty = Math.max(1, Math.floor(Number(it?.quantity) || 1));
-    const cost = Number(it?.unit_cost) > 0 ? ` · $${Number(it.unit_cost).toFixed(2)} each` : '';
-    return `${qty}× ${String(it?.name ?? 'Part').slice(0, 100)}${it?.section ? ` · ${String(it.section).slice(0, 30)}` : ''}${cost}`;
+    // Everything that gets saved shows here, so the member can check it before confirming.
+    const bits = [
+      it?.section ? String(it.section).slice(0, 30) : '',
+      it?.source ? String(it.source).slice(0, 30) : '',
+      String(it?.status || 'to_order').replace('_', ' ').slice(0, 20),
+      Number(it?.unit_cost) > 0 ? `$${Number(it.unit_cost).toFixed(2)} each` : 'no price',
+      it?.assignee ? `for ${String(it.assignee).slice(0, 40)}` : '',
+      it?.notes ? String(it.notes).slice(0, 120) : '',
+    ].filter(Boolean);
+    return `${qty}× ${String(it?.name ?? 'Part').slice(0, 100)} · ${bits.join(' · ')}`;
   }
   if (kind === 'checklist') {
     if (it?.start !== undefined) return `Start the "${String(it.start).replace(/^#/, '').slice(0, 60)}" checklist${it.title ? ` as "${String(it.title).slice(0, 60)}"` : ''}${it.event ? ` for event #${String(it.event).replace(/^#/, '')}` : ''}`;

@@ -244,10 +244,7 @@ export function useReviewComments(reviewId: number, onChanged: () => void) {
   useEffect(() => {
     const on = () => { void load(); };
     cadBus.addEventListener(url, on);
-    // Parts Bruno added (after the member confirmed its card) show up too.
-    const onBruno = (e: Event) => { if (url === '/api/cad/parts' && ((e as CustomEvent).detail?.types ?? []).includes('cad-parts')) void load(); };
-    window.addEventListener('bruno-data-changed', onBruno);
-    return () => { cadBus.removeEventListener(url, on); window.removeEventListener('bruno-data-changed', onBruno); };
+    return () => cadBus.removeEventListener(url, on);
   }, [url, load]);
   const send = async () => {
     const t = getDraft(`cad:comment:${reviewId}`, text).trim();

@@ -332,7 +332,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       total += Number(p.quantity || 0) * Number(p.unit_cost || 0);
       lines.push(`part #${p.id} ${Number(p.quantity) || 1}× ${clip(p.name, 120)} [${p.section}] ${p.source}, ${String(p.status).replace("_", " ")}${Number(p.unit_cost) ? `, $${Number(p.unit_cost).toFixed(2)} each` : ""}${p.assignee ? `, ${clip(p.assignee, 40)}` : ""}${p.notes ? ` — ${clip(p.notes, 160)}` : ""}`);
     }
-    summary = rows.length ? `Listed cost of these lines: $${total.toFixed(2)}.` : "The parts list is empty.";
+    summary = rows.length ? `Listed cost of these lines: $${total.toFixed(2)}.` : q.query ? "No matching parts found." : "The parts list is empty.";
   } else if (q.kind === "checklists") {
     // Templates, and runs (open ones first) with progress and what's still to do.
     const parse = (raw: unknown): ChecklistSection[] => { try { const v = JSON.parse(String(raw)); return Array.isArray(v) ? v : []; } catch { return []; } };
