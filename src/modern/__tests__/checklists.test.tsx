@@ -74,6 +74,23 @@ describe('Checklists page', () => {
     expect(templateFromText(templateToText(odd))).toEqual([{ title: 'Tools', items: ['## not a section'] }]);
   });
 
+  it('a page of older runs requested before a live refresh is dropped', async () => {
+    let releaseOlder: (v: any) => void = () => {};
+    const finishedRun = { ...overview.runs[0], id: 9, title: 'Done Q1', status: 'finished', finishedAt: '2026-10-01T12:00:00Z', finishedByName: 'Ana' };
+    api.apiJson.mockImplementation(async (url: string) => {
+      if (url === '/api/checklists') return { ...overview, runs: [...overview.runs, finishedRun], logMore: true };
+      if (url.startsWith('/api/checklists/log')) return new Promise((r) => { releaseOlder = r; });
+      return {};
+    });
+    render(<ChecklistsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show older runs' }));
+    window.dispatchEvent(new CustomEvent('checklists-changed', { detail: {} })); // a teammate checked something off
+    await waitFor(() => expect(api.apiJson.mock.calls.filter((c: any[]) => c[0] === '/api/checklists').length).toBe(2));
+    releaseOlder({ runs: [{ ...finishedRun, id: 10, title: 'Stale older run' }], more: false });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Stale older run')).toBeNull();
+  });
+
   it('a reply for a run that is no longer open on screen is ignored', async () => {
     let release: (v: any) => void = () => {};
     api.apiJson.mockImplementation(async (url: string, init?: any) => {

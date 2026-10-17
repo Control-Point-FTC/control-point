@@ -58,7 +58,10 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
   const [editing, setEditing] = useState<Template | 'new' | null>(null);
   const [olderLog, setOlderLog] = useState<{ runs: RunSummary[]; more: boolean } | null>(null);
 
-  const load = useCallback(() => apiJson<Overview>('/api/checklists', { cache: 'no-store' }).then((d) => { setData(d); setOlderLog(null); setError(''); }).catch((e) => setError(e?.message || 'Could not load checklists')), []);
+  // A refresh starts the run log over from its first page; a page of older
+  // runs requested before that refresh is dropped when it arrives.
+  const logGen = useRef(0);
+  const load = useCallback(() => apiJson<Overview>('/api/checklists', { cache: 'no-store' }).then((d) => { logGen.current++; setData(d); setOlderLog(null); setError(''); }).catch((e) => setError(e?.message || 'Could not load checklists')), []);
   useEffect(() => {
     void load();
     const on = () => { void load(); };
@@ -80,8 +83,10 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
   const logMore = olderLog ? olderLog.more : !!data?.logMore;
   const loadOlder = async () => {
     const last = finished[finished.length - 1]?.finishedAt;
+    const gen = logGen.current;
     try {
       const r = await apiJson<{ runs: RunSummary[]; more: boolean }>(`/api/checklists/log?before=${encodeURIComponent(last ?? '')}`, { cache: 'no-store' });
+      if (gen !== logGen.current) return;
       setOlderLog((o) => ({ runs: [...(o?.runs ?? []), ...r.runs], more: r.more }));
     } catch (e: any) { notify(e?.message || 'Could not load older runs', 'error'); }
   };
