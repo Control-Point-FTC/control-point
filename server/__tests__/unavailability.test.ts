@@ -88,6 +88,15 @@ describe("unavailable times", () => {
     await t.db.execute({ sql: "DELETE FROM member_unavailability WHERE member_id = ?", args: [cy] });
   });
 
+  it("a card refused for another reason (a reply to a deleted thread) saves no unavailable times", async () => {
+    const r = await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "communication", items: [{ recipient: "REV", subject: "Re: order", body: "Thanks", date: "2099-01-02", parent_id: 999999 }] },
+      { kind: "away", items: [{ start_date: "2099-09-09", note: "Should not save" }] },
+    ] }, admin);
+    expect(r.status).toBe(400);
+    expect(await rows("SELECT * FROM member_unavailability WHERE start_date = '2099-09-09'")).toHaveLength(0);
+  });
+
   it("members add their own; everyone sees who and when; notes only for the member and managers", async () => {
     const r = await t.post("/api/unavailability", { start_date: "2099-12-05", end_date: "2099-12-07", note: "Family trip" }, ana);
     expect(r.status).toBe(200);

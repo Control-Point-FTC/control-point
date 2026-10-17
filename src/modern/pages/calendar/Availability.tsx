@@ -2,7 +2,7 @@
 // availability" sheet to add or remove your own, and the "Away" line on an
 // event. Notes come back only for your own entries (and for attendance
 // managers). Rules shared with the server and Bruno: src/utils/unavailability.ts.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarOff, Loader2, Trash2, UserX } from 'lucide-react';
 import {
   Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
@@ -31,11 +31,16 @@ export function useUnavailability(todayKey: string, focusKey: string = todayKey)
   const [canManage, setCanManage] = useState(false);
   // The viewed month's window, only when it falls outside today's.
   const focusWindow = focusKey < shift(todayKey, -30) || focusKey > shift(todayKey, 90) ? focusKey.slice(0, 7) : '';
+  // Only the newest load may set the list: an older one finishing last
+  // (after switching months) must not drop the current month's entries.
+  const latest = useRef(0);
   const load = useCallback(() => {
+    const seq = ++latest.current;
     const windows: [string, string][] = [[shift(todayKey, -60), shift(todayKey, 150)]];
     if (focusWindow) windows.push([shift(`${focusWindow}-01`, -14), shift(`${focusWindow}-01`, 75)]);
     return Promise.all(windows.map(([from, to]) => apiFetch(`/api/unavailability?from=${from}&to=${to}`).then((r) => (r.ok ? r.json() : null))))
       .then((all) => {
+        if (seq !== latest.current) return;
         const ok = all.filter((d) => d && Array.isArray(d.items));
         if (!ok.length) return;
         const byId = new Map<number, AwayItem>();

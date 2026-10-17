@@ -14488,6 +14488,18 @@ Rules:
       unlockLinks = linkChanges.length ? await acquireLinkLock(auth.teamId!) : null;
       const linkPlan = linkChanges.length ? await planTaskLinks(auth, linkChanges) : null;
       if (linkPlan && "error" in linkPlan) return res.status(400).json({ error: `${linkPlan.error} — nothing was saved` });
+      // Communication replies need their thread, checked here too: the away
+      // batch below is written before the loop, so a card refused later must
+      // already have been refused by now.
+      for (const a of actions) {
+        if (a?.kind !== "communication" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(a.items) + "\n```");
+        for (const c of entries || []) {
+          if (c.parent_id == null) continue;
+          const parent: any = await dbGet("SELECT team_id FROM communications WHERE id = ?", c.parent_id);
+          if (!parent || parent.team_id !== auth.teamId) return res.status(400).json({ error: `Thread #${c.parent_id} no longer exists — nothing was logged` });
+        }
+      }
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
       const created: Record<string, number[]> = {};
