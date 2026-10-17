@@ -564,7 +564,7 @@ function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManag
   useEffect(() => {
     if (!focusKey) return;
     listRef.current?.querySelector<HTMLElement>(`[data-day="${focusKey}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-  }, [focusKey]);
+  }, [focus, focusKey]); // every new pick scrolls, even onto the same group
   if (!groups.length) {
     return (
       <EmptyState
