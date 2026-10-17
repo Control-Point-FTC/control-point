@@ -72,6 +72,7 @@ import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.
 import { byteRange } from "./server/byteRange.js";
 import { closeOpenFence, createLookupHold, extractLookupBlocks, followUpPrompt, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing, unfinishedCheckNote } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
+import { linkedPagesContext } from "./server/linkedPages.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
 import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, onlyFenceMissing, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
@@ -13892,7 +13893,13 @@ Rules:
         access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or propose notebook page changes; if they ask about the notebook, say it's off and where to turn it on.",
         access.sticky ? "" : "STICKY NOTES ACCESS: OFF. This member turned off your access to their sticky notes in Settings → Bruno. Don't look them up or propose sticky note changes; if they ask, say it's off and where to turn it on.",
       ].filter(Boolean).join("\n");
-      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx, accessCtx].filter(Boolean).join("\n\n");
+      // Store links in the member's message (an Amazon or goBILDA product): read those pages now.
+      const latest = messages[messages.length - 1];
+      const linkedCtx = latest?.role === "user" ? await linkedPagesContext(String(latest.text ?? "")).catch((err: unknown) => {
+        console.error("[bruno] linked pages failed:", err);
+        return "";
+      }) : "";
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx, accessCtx, linkedCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls
