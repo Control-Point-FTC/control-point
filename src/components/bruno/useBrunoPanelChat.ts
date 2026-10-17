@@ -17,6 +17,7 @@ import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
 import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
 import type { ScoutingContextRequest } from '../../types/ftcScout';
+import type { BrunoChat, BrunoChatMessage } from '../../types/bruno';
 import { starterPoolForPath, nextStarters } from '../brunoStarters';
 import { thinkingSteps, type ThinkingStep } from './BrunoThinking';
 
@@ -184,6 +185,40 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     setAttachedPdfs([]);
   };
 
+  // Recent chats, so a past conversation can be picked up right here in the panel.
+  const [recentChats, setRecentChats] = useState<BrunoChat[] | null>(null);
+  const [recentError, setRecentError] = useState('');
+  const loadRecentChats = async () => {
+    setRecentError('');
+    try {
+      const res = await apiFetch('/api/bruno/chats?limit=15&offset=0');
+      if (!res.ok) throw new Error();
+      setRecentChats(await res.json());
+    } catch {
+      setRecentError("Couldn't load your chats");
+    }
+  };
+  const openChat = async (id: number) => {
+    if (getDraft('bruno-panel:busy', false) || id === getDraft<number | null>('bruno-panel:chat', null)) return;
+    const ep = draftEpoch();
+    try {
+      const res = await apiFetch(`/api/bruno/chats/${id}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      // Something else (a send, a new chat) happened while it loaded: keep that.
+      if (draftEpoch() !== ep || getDraft('bruno-panel:busy', false)) return;
+      setChatId(id);
+      setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
+      setProposalState(EMPTY_OBJ);
+      setThinkMeta(EMPTY_OBJ as ThinkMeta);
+      setInput('');
+      setAttached([]);
+      setAttachedPdfs([]);
+    } catch {
+      setRecentError("Couldn't open that chat");
+    }
+  };
+
   // Report the active conversation so "expand" lands on the same chat.
   useEffect(() => { onActiveChatId?.(chatId); }, [chatId, onActiveChatId]);
 
@@ -302,6 +337,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
 
   return {
     name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat,
+    recentChats, recentError, loadRecentChats, openChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,

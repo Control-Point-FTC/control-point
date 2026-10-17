@@ -2,6 +2,7 @@
 // rail. Rebuilt on the shadcn kit over the shared useBrunoConversation (same
 // chats API, streaming, proposals, NavGPT handoff as Legacy). Thinking steps,
 // a streaming caret and Stop are always on here.
+import { chatTimeAgo } from '../../../components/bruno/chatTime';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Globe, History, Lock, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
@@ -31,18 +32,7 @@ const STARTERS: { label: string; prompts: string[] }[] = [
   ] },
 ];
 
-function timeAgo(iso?: string) {
-  if (!iso) return '';
-  const t = new Date(iso.replace(' ', 'T') + 'Z').getTime();
-  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  return d < 30 ? `${d}d` : new Date(iso).toLocaleDateString();
-}
+const timeAgo = chatTimeAgo;
 
 export function BrunoPage(props: any) {
   const c = useBrunoConversation({ currentUser: props.currentUser, hasScope: props.hasScope, botName: props.botName });

@@ -9,8 +9,9 @@
 // length. Same capabilities as before; nothing removed.
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowUpRight, BookOpen, Check, ChevronDown, ExternalLink, Lightbulb, Maximize2, Plus, RefreshCw, X } from 'lucide-react';
-import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui-kit';
+import { ArrowUpRight, BookOpen, Check, ChevronDown, ExternalLink, History, Lightbulb, Maximize2, Plus, RefreshCw, X } from 'lucide-react';
+import { chatTimeAgo } from '../components/bruno/chatTime';
+import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui-kit';
 import BrunoPanel from '../components/BrunoPanel';
 import { BRUNO_TITLE } from '../components/brunoStarters';
 import { useBrunoPanelChat, BRUNO_RESOURCES, OUTPUT_LEVELS } from '../components/bruno/useBrunoPanelChat';
@@ -132,6 +133,32 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                   <p className="truncate text-[11px] text-muted-foreground">{c.scoutCtx ? <Badge variant="soft" className="h-4 px-1 text-[10px]">Analyze mode</Badge> : BRUNO_TITLE}</p>
                 </div>
                 <IconAction label="New chat" onClick={c.newChat} disabled={c.busy}><Plus /></IconAction>
+                {/* Recent chats: pick a past conversation back up without leaving the page. */}
+                <DropdownMenu onOpenChange={(o) => { if (o) void c.loadRecentChats(); }}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground max-sm:size-11" aria-label="Recent chats" disabled={c.busy}><History /></Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Recent chats</TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuContent align="end" className="w-72">
+                    <DropdownMenuLabel>Recent chats</DropdownMenuLabel>
+                    {c.recentError ? <p role="alert" className="px-2 py-1.5 text-xs text-destructive">{c.recentError}</p>
+                      : c.recentChats === null ? <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
+                      : c.recentChats.length === 0 ? <p className="px-2 py-1.5 text-xs text-muted-foreground">No chats yet.</p>
+                      : c.recentChats.map((chat) => (
+                        <DropdownMenuItem key={chat.id} onSelect={() => { void c.openChat(chat.id); }} className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate">{chat.title || 'Untitled chat'}</span>
+                          {chat.id === c.chatId ? <Check className="size-3.5 text-accent" aria-label="Open now" />
+                            : <span className="shrink-0 text-[11px] text-muted-foreground">{chatTimeAgo(chat.updated_at)}</span>}
+                        </DropdownMenuItem>
+                      ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={onExpand}>All chats<ArrowUpRight className="ml-auto" /></DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <DropdownMenu>
                   <Tooltip>
                     <TooltipTrigger asChild>
