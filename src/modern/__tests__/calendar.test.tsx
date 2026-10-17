@@ -123,8 +123,24 @@ describe('Modern Calendar', () => {
     const target = new Date(now.getFullYear(), now.getMonth() + 1, 15);
     fireEvent.click(within(mini).getByRole('button', { name: new RegExp(target.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) }));
     expect(within(mini).getByRole('button', { name: new RegExp(target.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) })).toHaveAttribute('aria-pressed', 'true');
-    // The main view now shows that week (its heading names the target's month).
-    expect(screen.getAllByText(new RegExp(target.toLocaleDateString(undefined, { month: 'short' }))).length).toBeGreaterThan(0);
+    // The main view's heading is now that week (Sunday start), not this one.
+    const start = new Date(target.getFullYear(), target.getMonth(), target.getDate() - target.getDay());
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading.textContent).toContain(start.toLocaleDateString(undefined, { month: 'short' }));
+    expect(heading.textContent!.split(/\D+/).map(Number)).toContain(start.getDate());
+  });
+
+  it('Agenda: picking a day in the mini-month marks that day (or the next with events)', async () => {
+    const d = (n: number) => toDateKey(new Date(now.getFullYear(), now.getMonth(), n));
+    setup({ events: [
+      { id: 21, title: 'Early', date: d(3), start_time: '18:00', event_type: 'meeting' },
+      { id: 22, title: 'Later', date: d(20), start_time: '18:00', event_type: 'meeting' },
+    ] as any });
+    fireEvent.click(screen.getByRole('radio', { name: 'Agenda' }));
+    const mini = screen.getByRole('region', { name: 'Jump to a date' });
+    const day10 = new Date(now.getFullYear(), now.getMonth(), 10);
+    fireEvent.click(within(mini).getByRole('button', { name: new RegExp(day10.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) }));
+    await waitFor(() => expect(document.querySelector('[aria-current="date"]')?.getAttribute('data-day')).toBe(d(20)));
   });
 
   it('managers create with the same POST body as Legacy', async () => {

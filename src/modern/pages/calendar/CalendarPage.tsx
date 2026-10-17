@@ -198,7 +198,7 @@ export function CalendarPage(props: any) {
               {view === 'agenda' && (
                 <Agenda
                   cursor={cursor} todayKey={todayKey} dayEvents={dayEvents} isFinished={ctl.isEventFinished}
-                  onOpenEvent={(e) => setViewId(e.id)} canManage={ctl.canManageCalendar} onAdd={ctl.openNew}
+                  onOpenEvent={(e) => setViewId(e.id)} canManage={ctl.canManageCalendar} onAdd={ctl.openNew} focus={selected}
                 />
               )}
             </motion.div>
@@ -547,16 +547,24 @@ function WeekEvent({ e, done, onOpen }: { e: any; done: boolean; onOpen: (e: any
   );
 }
 
-function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManage, onAdd }: {
+function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManage, onAdd, focus }: {
   cursor: Date; todayKey: string; dayEvents: (k: string) => any[]; isFinished: (e: any) => boolean;
   onOpenEvent: (e: any) => void; canManage: boolean; onAdd: (k: string) => void;
+  /** A day picked elsewhere (the mini-month): its group, or the next one with events, is brought into view. */
+  focus?: string;
 }) {
+  const listRef = useRef<HTMLOListElement>(null);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const n = new Date(year, month + 1, 0).getDate();
   const groups = Array.from({ length: n }, (_, i) => new Date(year, month, i + 1))
     .map((d) => ({ d, key: toDateKey(d), list: dayEvents(toDateKey(d)) }))
     .filter((g) => g.list.length > 0);
+  const focusKey = focus ? groups.find((g) => g.key >= focus)?.key : undefined;
+  useEffect(() => {
+    if (!focusKey) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-day="${focusKey}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [focusKey]);
   if (!groups.length) {
     return (
       <EmptyState
@@ -568,12 +576,12 @@ function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManag
     );
   }
   return (
-    <ol className="space-y-6">
+    <ol ref={listRef} className="space-y-6">
       {groups.map(({ d, key, list }) => {
         const isToday = key === todayKey;
         const past = key < todayKey;
         return (
-          <li key={key} className={cn('grid grid-cols-[52px_1fr] gap-4', past && 'opacity-70')}>
+          <li key={key} data-day={key} aria-current={key === focusKey ? 'date' : undefined} className={cn('grid grid-cols-[52px_1fr] gap-4 rounded-lg', past && 'opacity-70', key === focusKey && 'ring-1 ring-accent/50')}>
             <div className="pt-1 text-center">
               <div className="text-[11px] font-medium uppercase text-muted-foreground">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
               <div className={cn('mx-auto mt-0.5 flex size-9 items-center justify-center rounded-full text-lg font-semibold tabular-nums', isToday && 'bg-accent text-accent-ink')}>{d.getDate()}</div>
