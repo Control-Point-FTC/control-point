@@ -2,7 +2,7 @@
 
 Snapshot of `docs/parity-checklist.md` on 2026-10-17, with the owner's decisions applied.
 
-**Overall: about 28% done** (66 done, 0 in an open PR, 10 partly done, 177 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
+**Overall: about 28% done** (66 done, 2 in an open PR, 10 partly done, 175 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
 
 Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started · ❌ / ~~struck~~ not doing
 
@@ -53,7 +53,7 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 |---|---|---|---|---|---|---|
 | 0. Shared foundations (unblocks almost everything else) | 7 | 0 | 4 | 8 | 0 | 47% |
 | 1. Tasks overhaul | 29 | 0 | 1 | 3 | 0 | 89% |
-| 2. Calendar, events and attendance | 20 | 0 | 1 | 4 | 0 | 82% |
+| 2. Calendar, events and attendance | 20 | 2 | 1 | 2 | 0 | 82% |
 | 3. Engineering notebook upgrades | 3 | 0 | 0 | 20 | 0 | 13% |
 | 4. Checklists and 3D printing (new modules) | 0 | 0 | 0 | 19 | 0 | 0% |
 | 5. Practice and competition | 0 | 0 | 0 | 11 | 0 | 0% |
@@ -176,9 +176,9 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 - [x] FIRST event calendar import (official comps added from FTC Events / FTC Scout with one click; re-running skips ones already imported)
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
-### 2.5 Pit display · ⬜ Not started
-- [ ] Full-screen kiosk route for a spare screen: agenda, banners, next match, QR check-in
-- [ ] Auto-refresh, no-login token link
+### 2.5 Pit display · 🔄 In open PR — [PR #283](https://github.com/Control-Point-FTC/control-point/pull/283)
+- [ ] 🔄 Full-screen kiosk route for a spare screen: agenda, banners, next match, QR check-in *(in open PR #283)*
+- [ ] 🔄 Auto-refresh, no-login token link *(in open PR #283)*
 
 ## Phase 3: Engineering notebook upgrades
 
