@@ -23,8 +23,9 @@ export interface EventSnapshot {
   season: number;
   code: string;
   /** Match key (`level:series:number`) → red's win probability before the match,
-   *  and the engine version that made it (missing = before engine 2.0). */
-  matches: Record<string, { p: number; at: string; engine?: string }>;
+   *  the engine version that made it (missing = before engine 2.0), and the
+   *  probability model's parameter set (engine 2.1+: contextual id or "legacy"). */
+  matches: Record<string, { p: number; at: string; engine?: string; model?: string }>;
   /** Stage → team → advancement probability, from the first forecast at that stage. */
   advancement: Partial<Record<SnapStage, { at: string; teams: Record<string, number>; excluded: number[]; engine?: string }>>;
 }
@@ -120,7 +121,7 @@ export class PredictMonitor {
     const finished = playoffsStarted && fc.matches.every((m) => m.played || storedPlayed.has(m.key));
     for (const m of finished ? [] : fc.matches) {
       if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
-      snap.matches[m.key] = { p: round(m.pRedWin), at, engine: ENGINE_VERSION };
+      snap.matches[m.key] = { p: round(m.pRedWin), at, engine: ENGINE_VERSION, ...(m.modelId ? { model: m.modelId } : {}) };
       changed = true;
     }
     // A "live" forecast (quals under way) is neither a clean pre-event call
