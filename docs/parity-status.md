@@ -1,8 +1,8 @@
 # Feature parity: status checklist
 
-Snapshot of `docs/parity-checklist.md` on 2026-10-16, with the owner's decisions applied. Work is paused here.
+Snapshot of `docs/parity-checklist.md` on 2026-10-17, with the owner's decisions applied. Work pauses when the weekly usage limit reaches 98%.
 
-**Overall: about 25% done** (57 done, 3 in an open PR, 10 partly done, 183 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
+**Overall: about 26% done** (60 done, 0 in an open PR, 10 partly done, 183 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
 
 Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started · ❌ / ~~struck~~ not doing
 
@@ -37,8 +37,9 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 | #269 | Auto-save task edits, due-date shortcuts, Move to tomorrow |
 | #270 | Event types, start chips, multi-day events, clickable locations, agenda |
 | #271 | RSVPs, attendees by role, auto-excused attendance |
+| #272 | Event-linked attendance: today's event with RSVPs, late window, RSVP follow-through |
 
-**Open:** [#272](https://github.com/Control-Point-FTC/control-point/pull/272), event-linked attendance (2.3). Greptile 1/5; fixes are half done in a local commit (tests still to update), then re-review and merge.
+**Open:** none. Next up: 2.4 calendar polish.
 
 ## Progress by phase
 
@@ -46,7 +47,7 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 |---|---|---|---|---|---|---|
 | 0. Shared foundations (unblocks almost everything else) | 7 | 0 | 4 | 8 | 0 | 47% |
 | 1. Tasks overhaul | 29 | 0 | 1 | 3 | 0 | 89% |
-| 2. Calendar, events and attendance | 11 | 3 | 1 | 10 | 0 | 46% |
+| 2. Calendar, events and attendance | 14 | 0 | 1 | 10 | 0 | 58% |
 | 3. Engineering notebook upgrades | 3 | 0 | 0 | 20 | 0 | 13% |
 | 4. Checklists and 3D printing (new modules) | 0 | 0 | 0 | 19 | 0 | 0% |
 | 5. Practice and competition | 0 | 0 | 0 | 11 | 0 | 0% |
@@ -153,10 +154,10 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 - [ ] 🟡 RSVP buttons in the event popover and dashboard (done); in notifications (to do) *(partly done)*
 - [x] RSVP counts on the event (and who answered; reasons for managers)
 
-### 2.3 Event-linked attendance · 🔄 In open PR — [PR #272](https://github.com/Control-Point-FTC/control-point/pull/272)
-- [x] Attendance by date, linked to today's event (its RSVPs beside each name) *(in open PR #272)*
-- [x] Sheet "waits until people have had a chance to turn up" (15-minute late window, then one click marks the rest absent) *(in open PR #272)*
-- [x] Attendance rate vs RSVPs stat (RSVP follow-through in Insights and Bruno's facts) *(in open PR #272)*
+### 2.3 Event-linked attendance · ✅ Done
+- [x] Attendance by date, linked to today's event (its RSVPs beside each name)
+- [x] Sheet "waits until people have had a chance to turn up" (15-minute late window, then one click marks the rest absent)
+- [x] Attendance rate vs RSVPs stat (RSVP follow-through in Insights and Bruno's facts)
 
 ### 2.4 Calendar polish · 🟡 Partly done
 - [x] Month / Week / Agenda views
