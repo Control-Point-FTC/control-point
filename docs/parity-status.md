@@ -1,8 +1,8 @@
 # Feature parity: status checklist
 
-Snapshot of `docs/parity-checklist.md` on 2026-10-17, with the owner's decisions applied. Work pauses when the weekly usage limit reaches 98%.
+Snapshot of `docs/parity-checklist.md` on 2026-10-17, with the owner's decisions applied.
 
-**Overall: about 26% done** (60 done, 0 in an open PR, 10 partly done, 183 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
+**Overall: about 28% done** (66 done, 0 in an open PR, 10 partly done, 177 to do; 11 not doing). The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
 
 Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started · ❌ / ~~struck~~ not doing
 
@@ -37,9 +37,15 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 | #269 | Auto-save task edits, due-date shortcuts, Move to tomorrow |
 | #270 | Event types, start chips, multi-day events, clickable locations, agenda |
 | #271 | RSVPs, attendees by role, auto-excused attendance |
-| #272 | Event-linked attendance: today's event with RSVPs, late window, RSVP follow-through |
+| #272 | Event-linked attendance: late window, mark the rest absent, RSVP follow-through |
+| #273, #277 | This status checklist (docs) |
+| #278 | Tasks due on the calendar |
+| #279 | Mini-month navigator |
+| #280 | Import official FIRST competitions |
+| #281 | Unavailable times per member (Away on events, Bruno) |
+| #282 | High-contrast event blocks |
 
-**Open:** none. Next up: 2.4 calendar polish.
+**Open:** [#283](https://github.com/Control-Point-FTC/control-point/pull/283), the pit display (2.5), in review. Google Calendar inbound sync (2.4) is waiting on the owner: it needs Google credentials to build and test.
 
 ## Progress by phase
 
@@ -47,7 +53,7 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 |---|---|---|---|---|---|---|
 | 0. Shared foundations (unblocks almost everything else) | 7 | 0 | 4 | 8 | 0 | 47% |
 | 1. Tasks overhaul | 29 | 0 | 1 | 3 | 0 | 89% |
-| 2. Calendar, events and attendance | 14 | 0 | 1 | 10 | 0 | 58% |
+| 2. Calendar, events and attendance | 20 | 0 | 1 | 4 | 0 | 82% |
 | 3. Engineering notebook upgrades | 3 | 0 | 0 | 20 | 0 | 13% |
 | 4. Checklists and 3D printing (new modules) | 0 | 0 | 0 | 19 | 0 | 0% |
 | 5. Practice and competition | 0 | 0 | 0 | 11 | 0 | 0% |
@@ -162,12 +168,12 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 ### 2.4 Calendar polish · 🟡 Partly done
 - [x] Month / Week / Agenda views
 - [x] ICS subscription feed
-- [ ] Task-due overlay on the calendar ("2 tasks" day badge, toggleable)
-- [ ] Event-type filter toggles in the toolbar
-- [ ] "Unavailable times" per member
-- [ ] Mini-month navigator
-- [ ] High-contrast event blocks (a weak point in the competitor)
-- [ ] FIRST event calendar import (official comps auto-added from FTC Events API)
+- [x] Task-due overlay on the calendar ("2 tasks" day badge, toggleable; due tasks in the day list)
+- [x] Event-type filter toggles in the toolbar (already there)
+- [x] "Unavailable times" per member (date ranges or weekly slots with a private note; "Away" on clashing events; Bruno lists them and adds or removes your own)
+- [x] Mini-month navigator (Week and Agenda views)
+- [x] High-contrast event blocks (a "High contrast" toggle, on by itself under prefers-contrast: more: solid fill, full-strength text, thick type bar, finished events struck through instead of faded)
+- [x] FIRST event calendar import (official comps added from FTC Events / FTC Scout with one click; re-running skips ones already imported)
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
 ### 2.5 Pit display · ⬜ Not started
