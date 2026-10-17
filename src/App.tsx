@@ -357,8 +357,9 @@ function PageLoadingFallback() {
 /** Pages any signed-in person may open, whatever their sidebar shows:
  *  profile/settings/roles (/roles redirects to Settings → Roles, which gates
  *  itself), inbox (Modern; Legacy redirects it), and stable record links
- *  (/t/...), whose page checks access to the record itself. */
-export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't'] as const;
+ *  (/t/...), whose page checks access to the record itself. The pit display
+ *  (/pit/<token>) is a kiosk page shown the same signed in or out. */
+export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't', 'pit'] as const;
 
 export default function App() {
   const { t } = useTranslation();

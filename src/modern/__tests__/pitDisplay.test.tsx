@@ -36,6 +36,14 @@ describe('Pit display', () => {
     expect(screen.getByText(/turned off or replaced/)).toBeInTheDocument();
   });
 
+  it('the link is a known route and stays open for signed-in viewers (no redirect home)', async () => {
+    const { isKnownRoute } = await import('../../utils/publicRoutes');
+    expect(isKnownRoute('/pit/tok_abcdefghijklmnopqrstuvwxyz')).toBe(true);
+    expect(isKnownRoute('/pit/short')).toBe(false);
+    const { ALWAYS_REACHABLE_PAGES } = await import('../../App');
+    expect(ALWAYS_REACHABLE_PAGES).toContain('pit');
+  });
+
   it('marks what is on now (an event with no end counts as an hour)', () => {
     const e = { date: today, start_time: '18:00', end_time: '20:00' };
     expect(isOnNow(e, today, '19:30')).toBe(true);
