@@ -106,6 +106,8 @@ const POOLS: Record<string, StarterPool> = {
   attendance: {
     greeting: 'I can help with attendance — ask me about meetings or who should be there.',
     prompts: [
+      'How many people who said they were going actually came this month?',
+      "Who said they can't make today's event?",
       'Who missed the last three build sessions?',
       'Remind the build team about Saturday attendance',
       'Which members have the best attendance this month?',

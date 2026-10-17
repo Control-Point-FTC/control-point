@@ -18,6 +18,7 @@ import { parseDisabledModules, parseSubsystems, TEAM_MODULES } from "../src/type
 import { parseTagList } from "../src/types/taskTags.js";
 import { cleanWipLimits, type WipLimits } from "../src/types/taskStatus.js";
 import { onTimeStats, onTimePercent, ON_TIME_WINDOW_DAYS } from "../src/utils/taskInsights.js";
+import { FOLLOW_THROUGH_SQL, daysBefore, followThrough } from "../src/utils/eventAttendance.js";
 
 export type DbGet = (sql: string, ...args: any[]) => Promise<any>;
 export type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
@@ -171,6 +172,8 @@ export interface FactsInput {
   disabledModules?: string[];
   /** The team's robot subsystems (defaults until edited). */
   subsystems?: string[];
+  /** RSVP follow-through over the last 30 days (full-RSVP events up to yesterday). */
+  rsvpFollowThrough?: { events: number; said: number; came: number; percent: number | null };
   /** Open tasks with no due date (Insights → Needs attention). */
   noDueOpenTotal?: number;
   /** Finished in the last 30 days with a due date: how many on or before it (Insights → On time). */
@@ -199,6 +202,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     L.push(`- Team roles and how many members hold each (per the roster): ${f.roles.slice(0, 30).map((r) => `${q(r.name, 40)} (${r.count})`).join(", ")}${f.roles.length > 30 ? ", …" : ""}`);
   }
   L.push(`- Open tasks (per the task board): ${f.openTaskTotal} total — ${f.overdueTaskTotal} overdue, ${f.dueThisWeekTotal} due in the next 7 days, ${f.unassignedOpenTotal} unassigned. Completed in the last 7 days: ${f.doneLast7}.`);
+  if (f.rsvpFollowThrough?.events) {
+    const r = f.rsvpFollowThrough;
+    L.push(`- RSVP follow-through (per attendance, last 30 days, ${r.events} event(s) with full RSVP): ${r.percent == null ? "nobody said going" : `${r.came} of ${r.said} who said going came (${r.percent}%)`}.`);
+  }
   if (f.noDueOpenTotal !== undefined || f.onTime) {
     const pct = f.onTime ? onTimePercent(f.onTime) : null;
     L.push(`- Task insights (per the Insights tab): ${f.noDueOpenTotal ?? 0} open task(s) have no due date; on-time rate ${pct == null ? `not available (no task with a due date was finished in the last ${ON_TIME_WINDOW_DAYS} days)` : `${pct}% (${f.onTime!.onTime} of ${f.onTime!.total} tasks with a due date finished in the last ${ON_TIME_WINDOW_DAYS} days were done on or before their due date)`}.`);
@@ -301,6 +308,9 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamId, since.toISOString(),
   ).catch(() => [] as any[]);
   const onTime = onTimeStats(finished, { since, localDate: (iso) => todayIn(timeZone, new Date(iso)) });
+  // Finished days only: today's events haven't had their chance yet.
+  const rsvpRows = (await db.dbAll(FOLLOW_THROUGH_SQL, teamId, daysBefore(today, 30), daysBefore(today, 1)).catch(() => [] as any[])) as any[];
+  const ft = followThrough(rsvpRows);
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(
     `SELECT COUNT(*) AS n FROM tasks t
@@ -369,6 +379,7 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     dueThisWeekTotal: Number(counts?.week_n || 0),
     doneLast7: Number(counts?.done7_n || 0),
     noDueOpenTotal: Number(counts?.nodue_n || 0),
+    rsvpFollowThrough: { events: rsvpRows.length, ...ft },
     onTime,
     messagesLast7: msgs ? Number(msgs.n || 0) : null,
     openTasks: openTasks.map((t: any) => ({ id: t.id, title: String(t.title || ""), status: String(t.status || "todo"), due_date: t.due_date, assignees: assignees.get(t.id) || [], subsystems: parseTagList(t.subsystems), blockedBy: t.blockers ? String(t.blockers).split(",").map(Number).filter((n) => n > 0) : [] })),

@@ -208,6 +208,7 @@ import { parseTagSuggestion, tagSuggestSystem } from "./server/taskTagSuggest.js
 import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
+import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -7496,6 +7497,26 @@ async function startServer() {
   });
 
   // Attendance — scoped to the caller's workspace
+  // RSVP follow-through: for full-RSVP events in a range (default the last 60 days),
+  // how many said going, how many of them came, and how many came in all.
+  app.get("/api/attendance/rsvp-turnout", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      // Finished days only (up to yesterday in the team's calendar), over the whole range.
+      const today = todayIn(await teamTimeZone(auth.teamId));
+      const yesterday = daysBefore(today, 1);
+      const to = isIsoDate(req.query.to) && String(req.query.to) < today ? String(req.query.to) : yesterday;
+      const from = isIsoDate(req.query.from) ? String(req.query.from) : daysBefore(today, 60);
+      if (from > to || daysBefore(to, 366) > from) return res.status(400).json({ error: "Pick a range of up to a year, ending before today" });
+      const rows = (await dbAll(FOLLOW_THROUGH_SQL, auth.teamId, from, to)) as any[];
+      res.json(rows.map((r) => ({ event_id: Number(r.id), title: String(r.title || ""), date: String(r.date), said_going: Number(r.said_going || 0), going_came: Number(r.going_came || 0), said_no: Number(r.said_no || 0), came: Number(r.came || 0) })));
+    } catch (error) {
+      console.error("Error loading RSVP turnout:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/attendance", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -7590,7 +7611,7 @@ async function startServer() {
       if (!(await hasPerm(auth, "manage_attendance"))) {
         return res.status(403).json({ error: "Check-in needs the QR code — ask your admin to put it up." });
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = await workspaceToday(auth.teamId);
       (await dbRun(
         `INSERT INTO attendance (member_id, date, status, team_id)
          VALUES (?, ?, 'P', ?)
@@ -7647,12 +7668,10 @@ async function startServer() {
     }
     return new Date(guess);
   }
-  // YYYY-MM-DD of "today" in America/New_York (teams are US-based; UTC date is
-  // wrong near midnight local time).
-  function easternToday(): string {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+  // YYYY-MM-DD of "today" for a workspace: its saved timezone, else New York
+  // (the same day the attendance page and today's event use).
+  async function workspaceToday(teamId: number | null): Promise<string> {
+    return todayIn(await teamTimeZone(teamId));
   }
   async function activeSession(teamId: number | null): Promise<any | null> {
     if (!teamId) return null;
@@ -7678,7 +7697,7 @@ async function startServer() {
   async function applyQrCheckin(session: any, auth: { memberId: number; email?: string }) {
     const member = await memberInTeam(auth, session.team_id);
     if (!member) return { error: "You're not on this team — ask your admin for the right code.", status: 403 };
-    const today = easternToday();
+    const today = await workspaceToday(session.team_id);
     const existing = (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any;
     if (existing && (existing.status === "P" || existing.status === "L")) {
       return { already: true, date: today, memberName: member.name };
@@ -7785,7 +7804,7 @@ async function startServer() {
       }
       const team = (await dbGet("SELECT name FROM teams WHERE id = ?", s.team_id)) as any;
       const member = await memberInTeam(auth, s.team_id);
-      const today = easternToday();
+      const today = await workspaceToday(s.team_id);
       const rec = member ? (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any : null;
       res.json({
         teamName: team?.name || "Your team",
@@ -11124,9 +11143,41 @@ Rules:
       res.json({
         answers: rows.map((r) => ({ member_id: Number(r.member_id), name: r.name, status: r.status, ...(manager || Number(r.member_id) === auth.memberId ? { reason: r.reason || "" } : {}) })),
         no_answer: invitees.filter((id) => !answered.has(id)).length,
+        invitee_ids: invitees,
       });
     } catch (error) {
       console.error("Error loading RSVPs:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * "Mark the rest absent" for an event: once its late window has passed (team
+   * clock), everyone it's for who still has no mark that day becomes Unexcused.
+   * The check and the write are one statement per member, so an arrival or an
+   * excuse that lands meanwhile is kept.
+   */
+  app.post("/api/events/:id/mark-absent", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_attendance");
+      if (!auth) return;
+      const event = (await dbGet("SELECT id, team_id, date, start_time, attendee_roles FROM events WHERE id = ? AND team_id = ?", req.params.id, auth.teamId)) as any;
+      if (!event) return res.status(404).json({ error: "Event not found" });
+      const tz = await teamTimeZone(auth.teamId);
+      if (String(event.date).slice(0, 10) !== todayIn(tz)) return res.status(400).json({ error: "Only today's event can mark the rest absent" });
+      const ends = lateWindowEnds(event.date, event.start_time, tz);
+      if (ends && Date.now() < ends.getTime()) return res.status(400).json({ error: "People still have time to arrive" });
+      const invitees = await eventInviteeIds(auth.teamId, event.attendee_roles);
+      if (!invitees.length) return res.json({ marked: 0 });
+      const results = await dbBatchResults(invitees.map((id) => ({
+        sql: "INSERT OR IGNORE INTO attendance (team_id, member_id, date, status) VALUES (?, ?, ?, 'U')",
+        args: [auth.teamId, id, String(event.date).slice(0, 10)],
+      })));
+      const marked = results.reduce((n: number, r: any) => n + Number(r?.changes ?? r?.rowsAffected ?? 0), 0);
+      broadcastToTeam(auth.teamId, { type: "attendance_changed", date: String(event.date).slice(0, 10) });
+      res.json({ marked });
+    } catch (error) {
+      console.error("Error marking absences:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

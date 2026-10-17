@@ -11,6 +11,7 @@ vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()),
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { AttendancePage } from '../pages/attendance/AttendancePage';
+import { teamToday } from '../../utils/dueShortcuts';
 import { clearDrafts } from '../drafts';
 
 const today = format(new Date(), 'yyyy-MM-dd');
@@ -37,9 +38,9 @@ beforeEach(() => {
 const me = { id: 7, name: 'Ada', team_id: 1, interface_mode: 'modern' };
 const members = [me, { id: 8, name: 'Grace' }];
 
-function setup({ admin = true, attendance = [] as any[] } = {}) {
+function setup({ admin = true, attendance = [] as any[], teams = [] as any[] } = {}) {
   const props = {
-    members, attendance, events: [], refresh: { attendance: vi.fn() }, onRefresh: vi.fn(), currentUser: me,
+    members, attendance, events: [], teams, refresh: { attendance: vi.fn() }, onRefresh: vi.fn(), currentUser: me,
     hasScope: (s: string) => (s === 'attendance' ? admin : false), activeTeamName: 'Team',
     insights: '', updateInsights: vi.fn(), isAiLoading: false,
   };
@@ -56,6 +57,14 @@ const selectTab = (name: string) => fireEvent.mouseDown(screen.getByRole('tab', 
 const batchCalls = () => api.apiFetch.mock.calls.filter((c) => c[0] === '/api/attendance/batch').map((c) => JSON.parse(c[1].body));
 
 describe('Modern Attendance (admins)', () => {
+  it("roll call marks the workspace's today, on its timezone, not the browser's", async () => {
+    // UTC+14: often a day ahead of the machine running the test.
+    setup({ teams: [{ id: 1, name: 'Team', timezone: 'Pacific/Kiritimati' }] });
+    const row = screen.getByText('Grace').closest('[data-cm-type="attendance-member"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('radio', { name: 'Present' }));
+    await waitFor(() => expect(batchCalls()[0]?.date).toBe(teamToday('Pacific/Kiritimati')));
+  });
+
   it('roll call marks today with the same batch POST as Legacy, and tapping again clears', async () => {
     const { props } = setup();
     const row = (await screen.findByText('Grace')).closest('li, div[class*="flex-wrap"]') as HTMLElement;

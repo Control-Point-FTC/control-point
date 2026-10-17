@@ -283,7 +283,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     let sql = `SELECT id, title, description, agenda, date, start_time, end_time, location, event_type, rsvp_mode,
       (SELECT SUM(CASE WHEN status = 'going' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS going_n,
       (SELECT SUM(CASE WHEN status = 'maybe' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS maybe_n,
-      (SELECT SUM(CASE WHEN status = 'not_going' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS no_n
+      (SELECT SUM(CASE WHEN status = 'not_going' THEN 1 ELSE 0 END) FROM event_rsvps WHERE event_id = events.id) AS no_n,
+      (SELECT json_group_array(json_object('n', m.name, 's', r.status)) FROM event_rsvps r JOIN members m ON m.id = r.member_id WHERE r.event_id = events.id) AS rsvp_names
       FROM events WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
@@ -292,7 +293,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     more = c.more;
     for (const r of c.rows) {
       ids.push(`event:${r.id}`);
-      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it)` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it${rsvpNames(r.rsvp_names)})` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);
@@ -431,6 +432,20 @@ export function saidNothing(answer: string): boolean {
 /** The fenced block kinds the app reads and hides from the member (lookups,
  *  references, memories, scouting, and the action proposals the chat strips).
  *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
+/** "; going: Ana, Ben; can't make it: Cy" from [{"n":"Ana","s":"going"}, …] (names only, never reasons). */
+function rsvpNames(raw: unknown): string {
+  let pairs: unknown;
+  try { pairs = typeof raw === "string" ? JSON.parse(raw) : null; } catch { return ""; }
+  if (!Array.isArray(pairs)) return "";
+  const by: Record<string, string[]> = {};
+  for (const p of pairs.slice(0, 60) as any[]) {
+    if (typeof p?.n !== "string" || typeof p?.s !== "string") continue;
+    (by[p.s] ||= []).push(p.n.slice(0, 40));
+  }
+  const label: Record<string, string> = { going: "going", maybe: "maybe", not_going: "can't make it" };
+  return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");
+}
+
 const HIDDEN_BLOCK_KINDS = ["event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
