@@ -146,6 +146,8 @@ export function routeChatRequest(opts: {
   hasImages?: boolean;
   /** Owner override (settings → chat_provider): skip the hybrid order. */
   forceProvider?: "gemini" | "anthropic";
+  /** Never search the web (system writing jobs that must use only the facts they are given). */
+  offline?: boolean;
 }): RouteDecision {
   // Vision requests stay on Gemini — that path is tested and working.
   if (opts.hasImages) {
@@ -154,7 +156,7 @@ export function routeChatRequest(opts: {
   // Web questions are grounded. Gemini's google_search is the free default;
   // Claude searches with its own web tools when the owner chose Anthropic or
   // Gemini isn't set up.
-  const web = opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
+  const web = opts.offline ? "" : opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
   if (web) {
     const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
     return claude
@@ -554,6 +556,8 @@ export async function aiChat(opts: {
   maxTokens: number;
   stream: boolean;
   webSearch?: boolean;
+  /** Never ground on the web, whatever the text looks like (see routeChatRequest). */
+  offline?: boolean;
   images?: { mimeType: string; data: string }[];
   onChunk?: (text: string) => void;
   onUsage?: (u: AiUsage) => void;
@@ -575,6 +579,7 @@ export async function aiChat(opts: {
     webSearch: opts.webSearch,
     hasImages: (opts.images?.length || 0) > 0,
     forceProvider,
+    offline: opts.offline,
   });
   const system = opts.extraSystem
     ? BUILD_HELPER_SYSTEM + "\n\n" + opts.extraSystem
