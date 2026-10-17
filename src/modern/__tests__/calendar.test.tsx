@@ -156,6 +156,15 @@ describe('Modern Calendar', () => {
     expect(screen.queryByRole('button', { name: /Import competitions/ })).toBeNull();
   });
 
+  it('import says when FIRST lists nothing yet, not that everything is already imported', async () => {
+    api.apiFetch.mockImplementation(async (url: string) => (url === '/api/events/import-first'
+      ? { ok: true, json: async () => ({ added: 0, found: 0, team_number: 11115, events: [] }) }
+      : { ok: true, json: async () => ({}) }));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Import competitions/ }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith("FIRST doesn't list any competitions for team 11115 this season yet.", 'info'));
+  });
+
   it('managers create with the same POST body as Legacy', async () => {
     const { props } = setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));

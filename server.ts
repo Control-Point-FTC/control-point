@@ -11199,7 +11199,10 @@ Rules:
       try { payload = await getTeamData(number, currentFtcSeason()); }
       catch { return res.status(503).json({ error: "FIRST's event data isn't reachable right now — try again later" }); }
       const have = ((await dbAll("SELECT first_event_code FROM events WHERE team_id = ? AND first_event_code IS NOT NULL", auth.teamId)) as any[]).map((r) => String(r.first_event_code));
-      const plan = planFirstImport(payload?.data?.events ?? payload?.events ?? [], have);
+      const listed = payload?.data?.events ?? payload?.events ?? [];
+      const plan = planFirstImport(listed, have);
+      // found: the season's dated official events, so "none listed yet" reads differently from "all imported".
+      const found = planFirstImport(listed, []).length;
       if (plan.length) {
         await dbBatchResults(plan.map((p) => ({
           // INSERT OR IGNORE: the unique (team, code) index stops a parallel import adding it twice.
@@ -11211,7 +11214,7 @@ Rules:
         void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
           `${plan.length} official competition${plan.length === 1 ? "" : "s"} added to the calendar: ${plan.map((p) => p.title).slice(0, 3).join(", ")}${plan.length > 3 ? "…" : ""}`, {}, plan.length);
       }
-      res.json({ added: plan.length, events: plan });
+      res.json({ added: plan.length, found, team_number: number, events: plan });
     } catch (error) {
       console.error("Error importing FIRST events:", error);
       res.status(500).json({ error: "Internal server error" });

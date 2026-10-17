@@ -699,7 +699,12 @@ function ImportFirstButton({ onDone }: { onDone: () => void }) {
       const res = await apiFetch('/api/events/import-first', { method: 'POST' });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { notify(d?.error || 'Could not import competitions — try again.', 'error'); return; }
-      notify(d.added ? `Added ${d.added} official competition${d.added === 1 ? '' : 's'} to the calendar.` : 'Your official competitions are already on the calendar.', 'success');
+      notify(
+        d.added ? `Added ${d.added} official competition${d.added === 1 ? '' : 's'} to the calendar.`
+          : d.found ? 'Your official competitions are already on the calendar.'
+          : `FIRST doesn't list any competitions for team ${d.team_number} this season yet.`,
+        d.added || d.found ? 'success' : 'info',
+      );
       if (d.added) onDone();
     } catch {
       notify('Could not import competitions — check your connection.', 'error');
