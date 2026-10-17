@@ -4,6 +4,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 
 **Legend:** `[x]` already have it · `[~]` partial, needs work (still unchecked until finished) · `[ ]` build it · 🛑 needs the owner's decision before any build.
 
+**Shortlist (owner, 2026-10-17):** "we don't need an exact replica of all the features." Only these stay in scope: finish the journal (3.2) and mentor review (3.4), the awards page (7.1), the judge-ready PDF (3.5), orders + approvals + paste-a-link (8.2–8.4), the attention-first dashboard (13.1), "Notify members" (0.4), season rollover (12.6), data export (14.1), field clock + practice runs (5.1, 5.2), the live demo (12.5) and in-team streaks/badges (16). Every other unchecked item is dropped; it stays listed for reference. `docs/parity-status.md` shows the shortlist's progress.
+
 **Applies to every PR below:** Bruno must be able to answer questions about the feature, act through it (create/edit/query via `/api/ai/apply-actions` proposals) and surface it in page-aware suggestions. Rule 15 still holds. Each PR follows AGENTS.md (screenshots, Greptile 5/5, deploy check, prod verification).
 
 **Where Control Point is already ahead (keep and protect):** Bruno in-app assistant (the competitor has none), CAD viewer + Onshape reviews, in-app code IDE + GitHub sync, voice/video channels, live team chat with channels, notebook with CRDT live collab, version history, pen/drawing, PDF annotation, match/event prediction + calibration, offline region packs, parts inventory with REV/goBILDA import, Google Calendar outbound sync (CP → Google), light/dark/system theme.
