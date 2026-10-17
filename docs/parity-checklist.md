@@ -117,7 +117,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [x] Event-type filter toggles in the toolbar (already there)
 - [ ] "Unavailable times" per member
 - [x] Mini-month navigator (Week and Agenda views)
-- [ ] High-contrast event blocks (a weak point in the competitor)
+- [x] High-contrast event blocks (a "High contrast" toggle, on by itself under prefers-contrast: more: solid fill, full-strength text, thick type bar, finished events struck through instead of faded)
 - [x] FIRST event calendar import (official comps added from FTC Events / FTC Scout with one click; re-running skips ones already imported)
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 

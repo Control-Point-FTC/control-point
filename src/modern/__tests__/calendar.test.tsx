@@ -447,3 +447,29 @@ describe('Calendar: pending opens follow the view', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+describe('High-contrast blocks', () => {
+  afterEach(() => { try { localStorage.removeItem('calendar:high-contrast'); } catch { /* */ } delete (window as any).matchMedia; });
+  const chip = () => screen.getAllByRole('button', { name: /Build night/ }).find((b) => b.closest('[role="grid"], table, .grid'))!;
+
+  it('the toggle gives blocks a solid fill and full-strength text, and is remembered', async () => {
+    const first = setup();
+    const toggle = screen.getByRole('button', { name: /High contrast/ });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(chip().className).not.toMatch(/bg-card/);
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(chip().className).toMatch(/bg-card/);
+    expect(chip().className).toMatch(/text-foreground/);
+    expect(localStorage.getItem('calendar:high-contrast')).toBe('1');
+    first.unmount();
+    setup();
+    expect(screen.getByRole('button', { name: /High contrast/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('turns on by itself when the system asks for more contrast', () => {
+    (window as any).matchMedia = (q: string) => ({ matches: q === '(prefers-contrast: more)', addEventListener() {}, removeEventListener() {} });
+    setup();
+    expect(screen.getByRole('button', { name: /High contrast/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
