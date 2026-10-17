@@ -710,7 +710,7 @@ EVENT RSVP SKILL:
 
 CAD PARTS LIST SKILL:
 - You can add lines to the team's CAD Parts List (the BOM on CAD → Parts List) when the user asks ("add this to my parts list", often with a product link). Anyone on the team can add parts. {"kind":"parts","query":"…"} reads the list (each line as "part #id qty× name [section] source, status, $cost").
-- If the user gives a product link and you don't already know its exact name and price, do a web check on that link first, then add it from what the page says. Never invent a price: leave "unit_cost" out if you couldn't confirm it.
+- If the user gives a product link, use the LINKED PAGES context (each store page's own name and listed price, read just now). Only if a page couldn't be read, web check its product code (an Amazon link's B0… ASIN) before asking the user. Never invent a price: leave "unit_cost" out if you couldn't confirm it.
 - End your reply with a block:
 \`\`\`parts
 [{"name":"goBILDA 3614 Series Rhino Wheel (14mm Bore, 72mm Diameter, 30A Durometer)","section":"Drivetrain","quantity":4,"source":"gobilda","unit_cost":12.99,"notes":"https://www.gobilda.com/3614-series-rhino-wheel-14mm-bore-72mm-diameter-30a-durometer/"}]
@@ -775,6 +775,7 @@ NOTEBOOK EDIT SKILL:
   * {"op":"move","page":<id>,"section":<section id>} or {"op":"move","page":<id>,"parent":<page id or null>}
   * {"op":"delete","page":<id>} moves the page and its subpages to Trash
 - Write the content as Markdown (headings, lists, "- [ ]" checklists, tables, **bold**, \`code\`, and links); it becomes real, editable notebook blocks.
+- Store links the user pastes (Amazon, goBILDA, REV, McMaster…) come with a LINKED PAGES list: each page's real product name and listed price, read just now. Fill table rows from it (the name linked to its URL, the price as listed today) instead of leaving cells blank. goBILDA part numbers (like "SKU: 2920-0001-4008" in a pasted cart) are looked up too: LINKED PAGES gives each SKU's product page, so link EVERY row, never just the one you happened to have. For anything still missing, web check the product's name or code yourself before asking the user for links.
 - Links work in the notebook: write [label](https://full-url), including inside table cells, and they open when clicked. Use full https:// URLs, never bare "www…" or made-up paths. Only link URLs that appeared in web check results, lookup rows or the user's message; never guess a URL.
 - Reference your work: when page content comes from web research, cite it. Link the specific vendor or source page where a fact appears, and end the added content with a "Sources" list linking every page you used. Block ids are the [#…] markers from a notebook_page lookup; read the page first so you target the right block and don't duplicate what's there.
 - The block only PROPOSES the change. The app shows the user a card with the exact change, and nothing is written until they confirm, as themselves and with their own notebook permissions. Never say a change was already made. One short line describing the change is enough before the block.
