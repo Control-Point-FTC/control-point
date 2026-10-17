@@ -38,6 +38,15 @@ describe("PredictMonitor", () => {
     expect(live.matchesByEngine!["1.1.0"]).toEqual({ n: 1, accuracy: 0, brier: 0.9801 });
   });
 
+  it("stores the shadow model's call next to the served one and scores them paired", () => {
+    const mon = new PredictMonitor(dir);
+    mon.record(forecast("pre", [{ ...fm(1, 0.8), modelId: "new", pShadow: 0.6, shadowModelId: "old" }, { ...fm(2, 0.3), modelId: "new", pShadow: 0.7, shadowModelId: "old" }]));
+    const snap = JSON.parse(readFileSync(join(dir, "live", "2025", "USXXQ1.json"), "utf8"));
+    expect(snap.matches["qual:0:1"]).toMatchObject({ p: 0.8, ps: 0.6, model: "new", shadow: "old" });
+    const live = mon.score(2025, [event([rec(1, 100, 50), rec(2, 40, 90)])], []);
+    expect(live.shadow).toEqual([{ served: "new", shadow: "old", n: 2, servedScore: { accuracy: 1, brier: 0.065 }, shadowScore: { accuracy: 0.5, brier: 0.325 } }]);
+  });
+
   it("labels every call with the engine version and scores versions apart", () => {
     const mon = new PredictMonitor(dir);
     mon.record(forecast("pre", [{ ...fm(1, 0.8), modelId: "ctx-test" }, fm(2, 0.3)], [[1, 0.6]]));

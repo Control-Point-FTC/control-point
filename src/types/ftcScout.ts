@@ -26,6 +26,8 @@ export interface FtcPointSplit {
   endgame: number | null;
   penaltiesCommitted: number | null; // points given to the opponent
   penaltiesByOpp: number | null;     // points received from opponent fouls
+  /** BIOBUZZ (2026): HIVE TIPs (auto + TeleOp); only on alliance scores where FTC Scout reports them. */
+  tips?: number | null;
 }
 
 /** One team's stats at one event. */

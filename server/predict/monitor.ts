@@ -25,7 +25,7 @@ export interface EventSnapshot {
   /** Match key (`level:series:number`) → red's win probability before the match,
    *  the engine version that made it (missing = before engine 2.0), and the
    *  probability model's parameter set (engine 2.1+: contextual id or "legacy"). */
-  matches: Record<string, { p: number; at: string; engine?: string; model?: string }>;
+  matches: Record<string, { p: number; at: string; engine?: string; model?: string; ps?: number; shadow?: string }>;
   /** Stage → team → advancement probability, from the first forecast at that stage. */
   advancement: Partial<Record<SnapStage, { at: string; teams: Record<string, number>; excluded: number[]; engine?: string }>>;
 }
@@ -41,6 +41,8 @@ export interface LiveAccuracy {
   advancement: Record<SnapStage, StageScore>;
   /** The engine version `matches` and `advancement` describe. */
   engine?: string;
+  /** Side by side on the same calls: served vs shadow model, per model pair (paired comparison). */
+  shadow?: { served: string; shadow: string; n: number; servedScore: { accuracy: number; brier: number }; shadowScore: { accuracy: number; brier: number } }[];
   updatedAt: string;
 }
 
@@ -121,7 +123,9 @@ export class PredictMonitor {
     const finished = playoffsStarted && fc.matches.every((m) => m.played || storedPlayed.has(m.key));
     for (const m of finished ? [] : fc.matches) {
       if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
-      snap.matches[m.key] = { p: round(m.pRedWin), at, engine: ENGINE_VERSION, ...(m.modelId ? { model: m.modelId } : {}) };
+      // ps/shadow: the previous model's call on the same ratings at the same moment (engine 2.1.1+),
+      // so models are compared on identical matches and information.
+      snap.matches[m.key] = { p: round(m.pRedWin), at, engine: ENGINE_VERSION, ...(m.modelId ? { model: m.modelId } : {}), ...(m.pShadow != null ? { ps: round(m.pShadow), shadow: m.shadowModelId ?? undefined } : {}) };
       changed = true;
     }
     // A "live" forecast (quals under way) is neither a clean pre-event call
@@ -194,6 +198,7 @@ export class PredictMonitor {
     const matchOutcomes: ProbOutcome[] = [];
     const byEngine = new Map<string, ProbOutcome[]>();
     const engineOf = (x: { engine?: string }) => x.engine ?? "1.1.0";
+    const pairs = new Map<string, { a: ProbOutcome[]; b: ProbOutcome[] }>();
     let upsets = 0;
     for (const s of snaps) {
       const ev = byCode.get(s.code);
@@ -206,6 +211,12 @@ export class PredictMonitor {
         let outcomes = byEngine.get(v);
         if (!outcomes) { outcomes = []; byEngine.set(v, outcomes); }
         outcomes.push({ p: pre.p, y });
+        if (pre.ps != null && pre.model && pre.shadow) {
+          const k = `${pre.model}|${pre.shadow}`;
+          let pr = pairs.get(k);
+          if (!pr) { pr = { a: [], b: [] }; pairs.set(k, pr); }
+          pr.a.push({ p: pre.p, y }); pr.b.push({ p: pre.ps, y });
+        }
         if (v === ENGINE_VERSION) {
           matchOutcomes.push({ p: pre.p, y });
           if (y !== 0.5 && pre.p !== 0.5 && (pre.p > 0.5) !== (y === 1)) upsets++;
@@ -241,6 +252,10 @@ export class PredictMonitor {
       matchesByEngine: Object.fromEntries([...byEngine].sort(([a], [b]) => a.localeCompare(b)).map(([v, xs]) => [v, { n: xs.length, accuracy: round(accuracyOf(xs)), brier: round(brier(xs)) }])),
       advancement: adv,
       engine: ENGINE_VERSION,
+      shadow: [...pairs].sort(([x], [z]) => x.localeCompare(z)).map(([k, pr]) => {
+        const [served, shadow] = k.split("|");
+        return { served, shadow, n: pr.a.length, servedScore: { accuracy: round(accuracyOf(pr.a)), brier: round(brier(pr.a)) }, shadowScore: { accuracy: round(accuracyOf(pr.b)), brier: round(brier(pr.b)) } };
+      }),
       updatedAt: now.toISOString(),
     };
   }
