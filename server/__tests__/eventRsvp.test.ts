@@ -145,3 +145,42 @@ describe("RSVP follow-through", () => {
     expect(formatWorkspaceFacts(f)).toMatch(/RSVP follow-through .*1 of 2 who said going came \(50%\)/);
   });
 });
+
+describe("event attendance (2.3)", () => {
+  const nyNow = (minutesFromNow: number) => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+      .formatToParts(new Date(Date.now() + minutesFromNow * 60_000)).map((x) => [x.type, x.value]));
+    return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+  };
+
+  it("marking the rest absent: only after the late window, only invitees, never over an existing mark", async () => {
+    await t.db.execute({ sql: "UPDATE teams SET timezone = 'America/New_York' WHERE id = ?", args: [team] });
+    const soon = nyNow(5);
+    const early = (await t.post("/api/events", { title: "Not yet", date: soon.date, start_time: soon.time }, admin)).body.id;
+    expect((await t.post(`/api/events/${early}/mark-absent`, {}, admin)).status).toBe(400);
+    const started = nyNow(-30);
+    if (started.date !== nyNow(0).date) return; // just after midnight: no "today" event 30 minutes ago
+    const id = (await t.post("/api/events", { title: "Builders practice", date: started.date, start_time: started.time, attendee_roles: [builders] }, admin)).body.id;
+    expect((await t.post(`/api/events/${id}/mark-absent`, {}, ana)).status).toBe(403);
+    const r = await t.post(`/api/events/${id}/mark-absent`, {}, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await rows("SELECT status FROM attendance WHERE member_id = ? AND date = ?", anaId, started.date))[0]?.status).toBe("U");
+    expect(await rows("SELECT id FROM attendance WHERE member_id = ? AND date = ?", benId, started.date)).toHaveLength(0); // not a builder
+    // An arrival in the meantime is kept.
+    await t.db.execute({ sql: "UPDATE attendance SET status = 'P' WHERE member_id = ? AND date = ?", args: [anaId, started.date] });
+    expect((await t.post(`/api/events/${id}/mark-absent`, {}, admin)).body.marked).toBe(0);
+    expect((await rows("SELECT status FROM attendance WHERE member_id = ? AND date = ?", anaId, started.date))[0].status).toBe("P");
+  });
+
+  it("follow-through leaves out today's events; Bruno gets names with any characters", async () => {
+    const today = nyNow(0).date;
+    const id = (await t.post("/api/events", { title: "Tonight", date: today, rsvp_mode: "full" }, admin)).body.id;
+    await put(`/api/events/${id}/rsvp`, { status: "going" }, ben);
+    const rowsNow = (await t.api(`/api/attendance/rsvp-turnout?from=${today}&to=${today}`, { session: admin })).body;
+    expect(Array.isArray(rowsNow) ? rowsNow.some((x: any) => x.event_id === id) : false).toBe(false);
+    await t.db.execute({ sql: "UPDATE members SET name = 'Ben | Build' WHERE id = ?", args: [benId] });
+    const out = await runLookups(((sql: string, ...a: any[]) => rows(sql, ...a)) as any, team, "America/New_York", [{ kind: "events", query: "Tonight" } as any]);
+    expect(out).toMatch(/going: Ben \| Build/);
+    await t.db.execute({ sql: "UPDATE members SET name = 'Ben' WHERE id = ?", args: [benId] });
+  });
+});

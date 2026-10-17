@@ -8,18 +8,20 @@ import { followThrough, lateWindowEnds } from '../../utils/eventAttendance';
 afterEach(cleanup);
 
 describe('event attendance', () => {
-  it('the late window is 15 minutes after the start; none for all-day events', () => {
-    expect(lateWindowEnds('2099-03-01', '16:00')!.getTime()).toBe(new Date('2099-03-01T16:15:00').getTime());
-    expect(lateWindowEnds('2099-03-01', '')).toBeNull();
+  it("the late window is 15 minutes after the start on the team's clock; none for all-day events", () => {
+    // 4:00 PM in New York (EST, UTC-5) → 21:15 UTC, whatever this machine's zone.
+    expect(lateWindowEnds('2099-03-01', '16:00', 'America/New_York')!.toISOString()).toBe('2099-03-01T21:15:00.000Z');
+    expect(lateWindowEnds('2099-03-01', '16:00', 'America/Los_Angeles')!.toISOString()).toBe('2099-03-02T00:15:00.000Z');
+    expect(lateWindowEnds('2099-03-01', '', 'America/New_York')).toBeNull();
   });
 
   it('before the window ends it waits; after, one click marks the rest', () => {
     const ev = { id: 1, title: 'Build', date: '2099-03-01', start_time: '16:00', rsvp_mode: 'full', rsvp_counts: { going: 2, maybe: 0, not_going: 1 } };
     const onMarkRest = vi.fn();
-    const { rerender } = render(<TodayEventCard event={ev} unmarked={3} onMarkRest={onMarkRest} now={new Date('2099-03-01T16:10:00').getTime()} />);
+    const { rerender } = render(<TodayEventCard event={ev} unmarked={3} onMarkRest={onMarkRest} timeZone="America/New_York" now={Date.parse('2099-03-01T21:10:00Z')} />);
     expect(screen.getByRole('status')).toHaveTextContent(/Waiting for people to arrive/);
     expect(screen.queryByRole('button')).toBeNull();
-    rerender(<TodayEventCard event={ev} unmarked={3} onMarkRest={onMarkRest} now={new Date('2099-03-01T16:16:00').getTime()} />);
+    rerender(<TodayEventCard event={ev} unmarked={3} onMarkRest={onMarkRest} timeZone="America/New_York" now={Date.parse('2099-03-01T21:16:00Z')} />);
     fireEvent.click(screen.getByRole('button', { name: /Mark the 3 not here absent/ }));
     expect(onMarkRest).toHaveBeenCalled();
     expect(screen.getByText(/2 going · 0 maybe · 1 can't make it/)).toBeTruthy();
