@@ -8,7 +8,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
 import { useDraft } from '../../modern/drafts';
-import { FUTURE_OK_CODES, attendanceMarkError, localIsoDate } from '../../utils/validation';
+import { FUTURE_OK_CODES, attendanceMarkError, latestTodayOnEarth } from '../../utils/validation';
 
 export const ATTENDANCE_STATUSES = ['-', 'P', 'L', 'E', 'U', 'S'] as const;
 export const STATUS_LABELS: Record<string, string> = {
@@ -137,7 +137,7 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
   const setStatus = async (memberId: number, date: string, nextStatus: string) => {
     if (!isAdmin) return;
     if (nextStatus !== '-') {
-      const bad = attendanceMarkError(date, nextStatus, localIsoDate());
+      const bad = attendanceMarkError(date, nextStatus, latestTodayOnEarth());
       if (bad) { notify(bad, 'error'); return; }
     }
     const k = `${memberId}|${date}`;
@@ -186,7 +186,7 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
   /** Legacy click: cycle - → P → L → E → U → S → -  (future days: - → E → S → -). */
   const toggleStatus = (memberId: number, date: string) => {
     const current = getStatus(memberId, date);
-    const cycle: readonly string[] = date > localIsoDate() ? ['-', ...FUTURE_OK_CODES] : ATTENDANCE_STATUSES;
+    const cycle: readonly string[] = date > latestTodayOnEarth() ? ['-', ...FUTURE_OK_CODES] : ATTENDANCE_STATUSES;
     const i = cycle.indexOf(current);
     return setStatus(memberId, date, cycle[(i + 1) % cycle.length]);
   };
@@ -273,7 +273,7 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
   const bulkSetStatus = async (memberIds: number[], date: string, nextStatus: string) => {
     if (!isAdmin || !memberIds.length) return;
     if (nextStatus !== '-') {
-      const bad = attendanceMarkError(date, nextStatus, localIsoDate());
+      const bad = attendanceMarkError(date, nextStatus, latestTodayOnEarth());
       if (bad) { notify(bad, 'error'); return; }
     }
     const keys = memberIds.map((id) => `${id}|${date}`);

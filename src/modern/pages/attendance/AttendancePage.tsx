@@ -47,9 +47,10 @@ export function AttendancePage(props: any) {
   const [tab, setTab] = useState('today');
   if (!ctl.isAdmin) return <StudentAttendance attendance={attendance} currentUser={currentUser} refresh={refresh} onRefresh={onRefresh} />;
 
-  const today = format(new Date(), 'yyyy-MM-dd');
-  // Events are on the workspace's clock (its saved timezone, else this browser's).
+  // One date for the whole page (roll call, counts, writes and today's event): the
+  // workspace's today, on its saved timezone (else this browser's).
   const teamZone: string = (props.teams || []).find((t: any) => String(t.id) === String(currentUser?.team_id))?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const today = teamToday(teamZone);
   const hereToday = members.filter((m: any) => ['P', 'L'].includes(ctl.getStatus(m.id, today))).length;
 
   return (
@@ -83,7 +84,7 @@ function TodayTab({ ctl, members, teamName, today, hereToday, events = [], timeZ
   ctl: Ctl; members: any[]; teamName: string; today: string; hereToday: number; events?: any[]; timeZone: string; refreshAttendance: () => void;
 }) {
   // Today's event (the first one, by the team's calendar): RSVPs beside names, and the late window.
-  const event = todaysEvents(events, teamToday(timeZone))[0] ?? null;
+  const event = todaysEvents(events, today)[0] ?? null;
   const { answers: rsvps, invitees } = useEventRsvps(event);
   // Only the people the event is for (the server decides the same when marking).
   const eventDate = event ? String(event.date).slice(0, 10) : today;
