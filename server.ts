@@ -209,7 +209,7 @@ import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
 import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
-import { planFirstImport } from "./server/firstImport.js";
+import { insertedOnly, listedEvents, planFirstImport } from "./server/firstImport.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -11195,26 +11195,35 @@ Rules:
       const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
       const number = Number(team?.ftc_team_number);
       if (!Number.isSafeInteger(number) || number <= 0) return res.status(400).json({ error: "Add your FTC team number in Settings first" });
+      const season = currentFtcSeason();
+      const unreachable = () => res.status(503).json({ error: "FIRST's event data isn't reachable right now — try again later" });
       let payload: any;
-      try { payload = await getTeamData(number, currentFtcSeason()); }
-      catch { return res.status(503).json({ error: "FIRST's event data isn't reachable right now — try again later" }); }
-      const have = ((await dbAll("SELECT first_event_code FROM events WHERE team_id = ? AND first_event_code IS NOT NULL", auth.teamId)) as any[]).map((r) => String(r.first_event_code));
-      const listed = payload?.data?.events ?? payload?.events ?? [];
+      try { payload = await getTeamData(number, season); }
+      catch { return unreachable(); }
+      // A source failed and nothing came back: that's an outage, not an empty season.
+      const listed = listedEvents(payload);
+      if (!listed) return unreachable();
+      const have = ((await dbAll("SELECT first_event_code FROM events WHERE team_id = ? AND first_event_season = ? AND first_event_code IS NOT NULL", auth.teamId, season)) as any[]).map((r) => String(r.first_event_code));
       const plan = planFirstImport(listed, have);
       // found: the season's dated official events, so "none listed yet" reads differently from "all imported".
       const found = planFirstImport(listed, []).length;
+      let added: typeof plan = [];
       if (plan.length) {
-        await dbBatchResults(plan.map((p) => ({
-          // INSERT OR IGNORE: the unique (team, code) index stops a parallel import adding it twice.
-          sql: "INSERT OR IGNORE INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, first_event_code) VALUES (?, ?, ?, '', '', '', ?, ?, ?, ?)",
-          args: [p.title, `Official FIRST event (${p.code}), imported from the FTC event data.`, p.date, p.event_type, auth.teamId, auth.memberId, p.code],
+        const results = await dbBatchResults(plan.map((p) => ({
+          // INSERT OR IGNORE: the unique (team, season, code) index stops a parallel import adding it twice.
+          sql: "INSERT OR IGNORE INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, first_event_code, first_event_season) VALUES (?, ?, ?, '', '', '', ?, ?, ?, ?, ?)",
+          args: [p.title, `Official FIRST event (${p.code}), imported from the FTC event data.`, p.date, p.event_type, auth.teamId, auth.memberId, p.code, season],
         })));
+        // Only rows this request wrote: a parallel import's rows were ignored here, and are announced by it.
+        added = insertedOnly(plan, results);
+      }
+      if (added.length) {
         broadcastToTeam(auth.teamId, { type: "events_changed" });
         const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
         void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
-          `${plan.length} official competition${plan.length === 1 ? "" : "s"} added to the calendar: ${plan.map((p) => p.title).slice(0, 3).join(", ")}${plan.length > 3 ? "…" : ""}`, {}, plan.length);
+          `${added.length} official competition${added.length === 1 ? "" : "s"} added to the calendar: ${added.map((p) => p.title).slice(0, 3).join(", ")}${added.length > 3 ? "…" : ""}`, {}, added.length);
       }
-      res.json({ added: plan.length, found, team_number: number, events: plan });
+      res.json({ added: added.length, found, team_number: number, events: added });
     } catch (error) {
       console.error("Error importing FIRST events:", error);
       res.status(500).json({ error: "Internal server error" });

@@ -4,10 +4,22 @@
  * a real server without reaching FIRST.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { planFirstImport } from "../firstImport";
+import { insertedOnly, listedEvents, planFirstImport } from "../firstImport";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 
 vi.setConfig({ testTimeout: 30_000 });
+
+describe("listedEvents / insertedOnly", () => {
+  it("an outage (a source failed, nothing listed) is not an empty season", () => {
+    expect(listedEvents({ partial: true, data: { events: [] } })).toBeNull();
+    expect(listedEvents({ partial: false, data: { events: [] } })).toEqual([]);
+    expect(listedEvents({ partial: true, data: { events: [{ code: "A" }] } })).toEqual([{ code: "A" }]);
+    expect(listedEvents(null)).toEqual([]);
+  });
+  it("announces only the rows this request wrote", () => {
+    expect(insertedOnly(["a", "b", "c"], [{ changes: 1 }, { changes: 0 }, { changes: 1 }])).toEqual(["a", "c"]);
+  });
+});
 
 describe("planFirstImport", () => {
   it("adds each new event once, with a real date; skips ones imported before (any case)", () => {
@@ -45,8 +57,10 @@ describe("POST /api/events/import-first", () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/FTC team number/);
   });
-  it("one event per code per team (the unique index backs the skip)", async () => {
-    await t.db.execute({ sql: "INSERT INTO events (title, date, team_id, first_event_code) VALUES ('Q1', '2026-12-05', ?, 'USNJQ1')", args: [team] });
-    await expect(t.db.execute({ sql: "INSERT INTO events (title, date, team_id, first_event_code) VALUES ('Q1 again', '2026-12-05', ?, 'USNJQ1')", args: [team] })).rejects.toThrow();
+  it("one event per code per team and season (the unique index backs the skip)", async () => {
+    await t.db.execute({ sql: "INSERT INTO events (title, date, team_id, first_event_code, first_event_season) VALUES ('Q1', '2026-12-05', ?, 'USNJQ1', 2026)", args: [team] });
+    await expect(t.db.execute({ sql: "INSERT INTO events (title, date, team_id, first_event_code, first_event_season) VALUES ('Q1 again', '2026-12-05', ?, 'USNJQ1', 2026)", args: [team] })).rejects.toThrow();
+    // Next season's event with the same code is a different event.
+    await t.db.execute({ sql: "INSERT INTO events (title, date, team_id, first_event_code, first_event_season) VALUES ('Q1', '2027-12-04', ?, 'USNJQ1', 2027)", args: [team] });
   });
 });

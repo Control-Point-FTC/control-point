@@ -19,3 +19,18 @@ export function planFirstImport(events: FirstTeamEventRow[], alreadyImported: It
   }
   return out;
 }
+
+/**
+ * The team's listed events from a getTeamData payload, or null when a source
+ * failed and nothing came back (an outage, not an empty season: ask to retry).
+ */
+export function listedEvents(payload: any): FirstTeamEventRow[] | null {
+  const listed = payload?.data?.events ?? payload?.events ?? [];
+  const rows = Array.isArray(listed) ? listed : [];
+  return payload?.partial && !rows.length ? null : rows;
+}
+
+/** The planned events this request actually wrote (INSERT OR IGNORE skips ones a parallel import added). */
+export function insertedOnly<T>(plan: T[], results: { changes?: number }[]): T[] {
+  return plan.filter((_, i) => Number(results[i]?.changes || 0) > 0);
+}
