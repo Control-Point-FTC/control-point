@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, CalendarOff, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarOff, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Contrast, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -44,6 +44,7 @@ export function CalendarPage(props: any) {
     return m;
   }, [tasks]);
   const tasksDue = (k: string) => (showTasks ? tasksByDay.get(k) || [] : []);
+  const [highContrast, toggleHighContrast] = useHighContrast();
   const ctl = useCalendarController({ events, setEvents, refresh, currentUser, hasScope });
   const narrow = useIsNarrow();
   const [view, setView] = useState<View>(() => (narrow ? 'agenda' : 'month'));
@@ -142,6 +143,7 @@ export function CalendarPage(props: any) {
 
   return (
     <CalendarActionsCtx.Provider value={actions}>
+    <HighContrastCtx.Provider value={highContrast}>
     <Page>
       <PageHeader
         eyebrow="Calendar"
@@ -169,6 +171,9 @@ export function CalendarPage(props: any) {
           </ToggleGroup>
           <Button variant="outline" size="sm" aria-pressed={showTasks} onClick={toggleTasks} className={cn('max-sm:h-10', showTasks && 'border-accent bg-accent/10')}>
             <ListTodo /> Tasks due
+          </Button>
+          <Button variant="outline" size="sm" aria-pressed={highContrast} onClick={toggleHighContrast} title="Solid, high-contrast event blocks" className={cn('max-sm:h-10', highContrast && 'border-accent bg-accent/10')}>
+            <Contrast /> High contrast
           </Button>
           <ToggleGroup type="multiple" value={types} onValueChange={setTypes} aria-label="Filter by type" className="flex-wrap sm:ml-auto">
             {EVENT_TYPES.map((t) => (
@@ -259,6 +264,7 @@ export function CalendarPage(props: any) {
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
       <SubscribeDialog open={subscribeOpen} onOpenChange={setSubscribeOpen} />
     </Page>
+    </HighContrastCtx.Provider>
     </CalendarActionsCtx.Provider>
   );
 }
@@ -373,11 +379,42 @@ function weekdayNames(format: 'short' | 'narrow') {
   return Array.from({ length: 7 }, (_, i) => addDays(sun, i).toLocaleDateString(undefined, { weekday: format }));
 }
 
+/**
+ * High-contrast event blocks: a solid card fill, full-strength text, a thick
+ * type-coloured bar and a border instead of a faint tint, and finished events
+ * struck through rather than faded. On when the viewer turns it on, or when
+ * the system asks for more contrast (prefers-contrast: more).
+ */
+const HighContrastCtx = createContext(false);
+const HC_KEY = 'calendar:high-contrast';
+
+function useHighContrast(): [boolean, () => void] {
+  const [saved, setSaved] = useState<boolean | null>(() => {
+    try { const v = localStorage.getItem(HC_KEY); return v === null ? null : v === '1'; } catch { return null; }
+  });
+  const [systemMore, setSystemMore] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-contrast: more)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-contrast: more)');
+    if (!mq) return;
+    const on = () => setSystemMore(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  const value = saved ?? systemMore;
+  const toggle = () => {
+    const next = !value;
+    setSaved(next);
+    try { localStorage.setItem(HC_KEY, next ? '1' : '0'); } catch { /* storage blocked */ }
+  };
+  return [value, toggle];
+}
+
 function EventChip({ e, onOpen, finished }: { e: any; onOpen: (e: any) => void; finished: boolean }) {
   const meta = typeMeta(e.event_type);
   const dnd = useEventProps(e);
   const clicks = useClickOrEdit(e, onOpen);
   const dragging = useContext(CalendarActionsCtx).dragging === e.id;
+  const hc = useContext(HighContrastCtx);
   return (
     <button
       type="button"
@@ -386,10 +423,11 @@ function EventChip({ e, onOpen, finished }: { e: any; onOpen: (e: any) => void; 
       className={cn(
         dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40',
         'flex w-full items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        meta.chip, finished && 'opacity-55',
+        hc ? cn('border border-foreground/25 border-l-4 bg-card text-xs font-semibold text-foreground', meta.bar) : meta.chip,
+        finished && !hc && 'opacity-55',
       )}
     >
-      <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} />
+      {!hc && <span className={cn('size-1.5 shrink-0 rounded-full', meta.dot)} />}
       <span className={cn('truncate', finished && 'line-through')}>{e.start_time ? `${localTime(e.start_time)} ` : ''}{e.title}</span>
     </button>
   );
@@ -545,15 +583,17 @@ function WeekEvent({ e, done, onOpen }: { e: any; done: boolean; onOpen: (e: any
   const dnd = useEventProps(e);
   const clicks = useClickOrEdit(e, onOpen);
   const dragging = useContext(CalendarActionsCtx).dragging === e.id;
+  const hc = useContext(HighContrastCtx);
   return (
     <button
       type="button"
       {...dnd}
       {...clicks}
-      className={cn('w-full rounded-md border-l-2 bg-muted/50 px-2 py-1.5 text-left transition-colors hover:bg-muted', meta.bar, done && 'opacity-55',
+      className={cn('w-full rounded-md border-l-2 bg-muted/50 px-2 py-1.5 text-left transition-colors hover:bg-muted',
+        hc ? 'border border-l-4 border-foreground/25 bg-card text-foreground' : done && 'opacity-55', meta.bar,
         dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40')}
     >
-      <span className="block text-[11px] text-muted-foreground">{e.start_time ? localTime(e.start_time) : 'All day'}</span>
+      <span className={cn('block text-[11px]', hc ? 'font-medium text-foreground' : 'text-muted-foreground')}>{e.start_time ? localTime(e.start_time) : 'All day'}</span>
       <span className={cn('line-clamp-2 block text-xs font-medium break-words', done && 'line-through')}>{e.title}</span>
     </button>
   );
