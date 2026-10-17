@@ -44,7 +44,33 @@
  *     409 { error: "last_admin" }     the target is the workspace's last admin
  *     Removing yourself is allowed unless you are the last admin. Each
  *     removal is logged ("[shared-accounts] member removed …", ids only):
- *     Control Point has no audit table, and Scout records its own audit.
+ *     Control Point has no audit table, and Scout records its own audit. *
+ * Bruno's power-rankings blurbs (Scout's weekly power rankings):
+ *
+ *   POST /internal/bruno/power-rankings
+ *     body (fact packet; checked by validatePacket in server/brunoPowerRankings.ts):
+ *       { season: 2000..2100, week: "YYYY-wWW", notes?: string (<= 200),
+ *         teams: [1..25 of { team, name (<= 80), rank, priorRank | null,
+ *           movement | null (places gained, negative = dropped), rating,
+ *           ratingDelta | null, record: { wins, losses, ties } | null,
+ *           opr | null, lastEvent: { name (<= 120), result | null (<= 80) } | null,
+ *           notes?: string (<= 200) }] }
+ *       Team numbers and ranks are unique. Unknown fields are dropped before
+ *       the packet reaches the model. The router's 16 kB body cap applies.
+ *     200 { intro, blurbs: [{ team, text }] }   strict JSON, blurbs in rank order.
+ *       Blurbs are 1-2 sentences, <= 50 words; the intro is <= 80 words (or ""
+ *       when Bruno overran it). A blurb that breaks a rule (unknown or repeated
+ *       team, empty, too long) is left out, so `blurbs` may cover fewer teams
+ *       than the packet: Scout fills the gaps with its own data-only template
+ *       and fact-checks every blurb it does get.
+ *     400 { error: "invalid_packet", field }   the packet failed validation
+ *     429 { error: "rate_limited" }            over 10 calls in the last hour (Retry-After set)
+ *     502 { error: "ai_failed" | "malformed_output" }   the model call failed, or its reply was not the JSON shape
+ *     503 { error: "ai_unavailable" }          no AI provider is configured
+ *     Bruno runs through aiChat (Gemini first, one Anthropic failover on quota,
+ *     the usual timeouts) with web search off, and every call is logged in
+ *     ai_usage as endpoint "power-rankings" under the system actor (member_id 0,
+ *     no team), not a member.
  *
  * Env:
  *   CONTROL_SCOUT_INTERNAL_KEY  shared secret (32+ chars) Scout sends as
@@ -56,6 +82,7 @@
 import crypto from "crypto";
 import express from "express";
 import { RateLimiter, clientIp, limit, normEmail } from "./rateLimit.js";
+import { POWER_RANKINGS_SYSTEM, buildPowerRankingsPrompt, parsePowerRankingsOutput, validatePacket } from "./brunoPowerRankings.js";
 
 export interface SharedAccountDeps {
   dbGet: (sql: string, ...args: any[]) => Promise<any>;
@@ -67,6 +94,12 @@ export interface SharedAccountDeps {
   countAdmins: (teamId: number) => Promise<number>;
   /** Control Point's one member removal path (the soft remove behind DELETE /api/members/:id). */
   removeMembership: (teamId: number, memberId: number) => Promise<void>;
+  /**
+   * One Bruno call for a system writing job (server.ts wires it to aiChat, offline, and logs
+   * ai_usage under the system actor). Throws when the model call fails. Unset → the
+   * power-rankings route answers 503.
+   */
+  brunoWrite?: (job: { endpoint: string; system: string; user: string; maxTokens: number }) => Promise<string>;
   env?: Record<string, string | undefined>;
   now?: () => number;
 }
@@ -126,6 +159,8 @@ export type ScoutVia = (typeof SCOUT_VIA)[number];
 export const isScoutVia = (v: unknown): v is ScoutVia => typeof v === "string" && (SCOUT_VIA as readonly string[]).includes(v);
 const MAX_SHORTLIST = 200;
 
+/** Calls per hour to /internal/bruno/power-rankings (the weekly job plus a few owner regenerations). */
+export const POWER_RANKINGS_RATE = { max: 10, windowMs: 60 * 60 * 1000 };
 export const HANDOFF_TTL_MS = 2 * 60 * 1000;
 export const MIN_INTERNAL_KEY_LENGTH = 32;
 export const MAX_DISPLAY_NAME = 100;
@@ -475,6 +510,41 @@ export function createSharedAccounts(deps: SharedAccountDeps) {
       // Control Point has no audit table: a log line with ids only (Scout keeps the full audit).
       console.info(`[shared-accounts] member removed from workspace ${teamId} by Control Scout: account ${accountId} (members ${target.map((m) => m.id).join(",")}) by account ${actorAccountId} at ${iso()}`);
       res.json({ ok: true });
+    });
+
+    // Scout's weekly power rankings: Bruno writes the blurbs from a fact packet.
+    const prLimiter = new RateLimiter(now);
+    router.post("/bruno/power-rankings", async (req, res) => {
+      const packet = validatePacket(req.body);
+      if (!packet.ok) return res.status(400).json({ error: "invalid_packet", field: packet.error });
+      if (!deps.brunoWrite) return res.status(503).json({ error: "ai_unavailable" });
+      // One global bucket: Scout is the only caller, and a weekly job needs a handful at most.
+      const wait = prLimiter.hit("bruno-power-rankings", POWER_RANKINGS_RATE);
+      if (wait > 0) {
+        res.setHeader("Retry-After", String(wait));
+        return res.status(429).json({ error: "rate_limited" });
+      }
+      let raw: string;
+      try {
+        raw = await deps.brunoWrite({
+          endpoint: "power-rankings",
+          system: POWER_RANKINGS_SYSTEM,
+          user: buildPowerRankingsPrompt(packet.value!),
+          maxTokens: 4000,
+        });
+      } catch (err: any) {
+        console.warn("[shared-accounts] power-rankings: AI call failed:", String(err?.message || err).slice(0, 200));
+        if (/not configured/i.test(String(err?.message || ""))) return res.status(503).json({ error: "ai_unavailable" });
+        return res.status(502).json({ error: "ai_failed" });
+      }
+      try {
+        const { output, dropped } = parsePowerRankingsOutput(raw, packet.value!);
+        if (dropped.length) console.info(`[shared-accounts] power-rankings ${packet.value!.week}: left out ${dropped.map((d) => `${d.team ?? "intro"}:${d.reason}`).join(", ")}`);
+        res.json(output);
+      } catch {
+        console.warn(`[shared-accounts] power-rankings ${packet.value!.week}: malformed AI output (${raw.length} chars)`);
+        res.status(502).json({ error: "malformed_output" });
+      }
     });
 
     router.use((_req, res) => res.status(404).json({ error: "Not found" }));

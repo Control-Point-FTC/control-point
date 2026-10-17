@@ -2386,6 +2386,28 @@ async function startServer() {
     countAdmins,
     // Declared further down with the member routes; only called per request, after startup.
     removeMembership: (teamId, memberId) => removeMembership(teamId, memberId),
+    // System writing jobs (Scout's power-rankings blurbs): Bruno through aiChat, so the Gemini to
+    // Anthropic failover and timeouts apply, with web search off. Usage is logged under the system
+    // actor (member_id 0, no team), never a member. logAiUsage is declared further down.
+    brunoWrite: async ({ endpoint, system, user, maxTokens }) => {
+      let usage: any = null;
+      try {
+        const r = await aiChat({
+          extraSystem: system,
+          messages: [{ role: "user", text: user, maxChars: 16000 }],
+          maxTokens,
+          stream: false,
+          offline: true,
+          onUsage: (u) => { usage = u; },
+        });
+        logAiUsage(0, null, usage, system.length + user.length, r.text.length, "ok", r.provider, endpoint);
+        return r.text;
+      } catch (err: any) {
+        const quota = isQuotaError(err) || isAnthropicQuotaError(err);
+        logAiUsage(0, null, usage, 0, 0, quota ? "quota" : "error", err?.aiProvider || "gemini", endpoint);
+        throw err;
+      }
+    },
     sessionEmail: async (req) => {
       const auth = await getAuth(req);
       return auth ? (await authEmail(auth)) || null : null;
