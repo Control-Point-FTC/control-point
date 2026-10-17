@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarOff, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -17,6 +17,7 @@ import { useCalendarController, toDateKey, EVENT_TYPES } from '../../../componen
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, typeMeta } from './CalendarSheets';
 import { SubscribeDialog } from './SubscribeDialog';
+import { AvailabilitySheet, awayFor, useUnavailability } from './Availability';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { Link } from 'react-router-dom';
 import { Trophy } from 'lucide-react';
@@ -52,6 +53,8 @@ export function CalendarPage(props: any) {
   const [dragging, setDragging] = useState<number | string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [subscribeOpen, setSubscribeOpen] = useState(false);
+  const [availabilityOpen, setAvailabilityOpen] = useState(false);
+  const away = useUnavailability(ctl.todayKey, toDateKey(ctl.cursor));
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);
@@ -147,6 +150,7 @@ export function CalendarPage(props: any) {
         actions={(
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setSubscribeOpen(true)}><CalendarPlus /> Subscribe</Button>
+            <Button variant="outline" onClick={() => setAvailabilityOpen(true)}><CalendarOff /> My availability</Button>
             {ctl.canManageCalendar && <ImportFirstButton onDone={() => refresh?.events?.()} />}
             {ctl.canManageCalendar && <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>}
           </div>
@@ -247,7 +251,11 @@ export function CalendarPage(props: any) {
         </aside>
       </div>
 
-      <EventViewSheet event={viewEvent} onOpenChange={(o) => { if (!o) setViewId(null); }} ctl={ctl} teams={teams} />
+      <EventViewSheet event={viewEvent} onOpenChange={(o) => { if (!o) setViewId(null); }} ctl={ctl} teams={teams} away={awayFor(away.items, viewEvent)} />
+      <AvailabilitySheet
+        open={availabilityOpen} onOpenChange={setAvailabilityOpen} todayKey={ctl.todayKey} items={away.items}
+        canManage={away.canManage} currentUserId={currentUser?.id} onChanged={() => { void away.reload(); }}
+      />
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
       <SubscribeDialog open={subscribeOpen} onOpenChange={setSubscribeOpen} />
     </Page>

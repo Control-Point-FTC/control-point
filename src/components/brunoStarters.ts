@@ -73,6 +73,7 @@ const POOLS: Record<string, StarterPool> = {
     greeting:
       'I can schedule events — tell me what, when, and where, and I will put it on the team calendar.',
     prompts: [
+      "Who's away this week, and does it clash with any events?",
       'Which official competitions are on our calendar this season?',
       'Which tasks are due on the same days as our events this month?',
       'Schedule build session this Saturday 10am to 4pm at the workshop',

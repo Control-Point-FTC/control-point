@@ -225,7 +225,8 @@ describe('Modern Calendar', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Qualifier/ })[0]);
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /Delete/ }));
     await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalled());
-    expect(api.apiFetch).not.toHaveBeenCalled();
+    // Reads (who's away) are fine; nothing is written.
+    expect(api.apiFetch.mock.calls.filter((c: any[]) => c[1]?.method && c[1].method !== 'GET')).toEqual([]);
   });
 
   it('a half-written new event survives a remount (mode switch)', async () => {
@@ -445,5 +446,53 @@ describe('Calendar: pending opens follow the view', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Agenda/ }));
     await new Promise((r) => setTimeout(r, 350));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('Unavailable times', () => {
+  const awayList = (items: any[]) => (url: string) => (String(url).startsWith('/api/unavailability?')
+    ? { ok: true, json: async () => ({ items, can_manage: false }) }
+    : { ok: true, json: async () => ({}) });
+
+  it("an event's sheet names who is away for it", async () => {
+    api.apiFetch.mockImplementation(async (url: string) => awayList([
+      { id: 3, member_id: 8, member_name: 'Ana', start_date: later, end_date: later, weekday: null, start_time: null, end_time: null },
+      { id: 4, member_id: 9, member_name: 'Ben', start_date: later, end_date: later, weekday: null, start_time: '08:00', end_time: '09:00' },
+    ])(url));
+    setup({ manage: false });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/unavailability\?from=/)));
+    fireEvent.click(screen.getAllByRole('button', { name: /Build night/ })[0]);
+    const sheet = await screen.findByRole('dialog');
+    // Ana is away all day; Ben's morning slot doesn't clash with 11 PM.
+    await waitFor(() => expect(within(sheet).getByText(/Ana/)).toBeInTheDocument());
+    expect(within(sheet).queryByText(/Ben/)).toBeNull();
+  });
+
+  it('a month far from today loads its unavailable times too', async () => {
+    api.apiFetch.mockImplementation(async (url: string) => awayList([])(url));
+    setup({ manage: false });
+    for (let i = 0; i < 6; i++) fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    const far = new Date(now.getFullYear(), now.getMonth() + 6, 1);
+    const month = `${far.getFullYear()}-${String(far.getMonth() + 1).padStart(2, '0')}`;
+    await waitFor(() => expect(api.apiFetch.mock.calls.some((c: any[]) => /^\/api\/unavailability\?from=/.test(c[0]) && String(c[0]).split('to=')[1] > `${month}-28`)).toBe(true));
+  });
+
+  it('My availability adds a weekly slot and lists your own with a remove button', async () => {
+    api.apiFetch.mockImplementation(async (url: string, init?: any) => (init?.method === 'POST'
+      ? { ok: true, json: async () => ({ success: true, id: 5 }) }
+      : awayList([{ id: 2, member_id: me.id, member_name: 'Ada', start_date: today, end_date: null, weekday: 2, start_time: '16:00', end_time: '18:00', note: 'Piano' }])(url)));
+    setup({ manage: false });
+    fireEvent.click(screen.getByRole('button', { name: /My availability/ }));
+    const sheet = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(sheet).getByText(/^Tuesdays 4 PM – 6 PM from /)).toBeInTheDocument());
+    expect(within(sheet).getByRole('button', { name: /Remove unavailable time Tuesdays/ })).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole('radio', { name: 'Every week' }));
+    fireEvent.click(within(sheet).getByRole('switch', { name: 'All day' }));
+    fireEvent.change(within(sheet).getByLabelText('Note (private)'), { target: { value: 'Robotics camp' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: /Add unavailable time/ }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/unavailability', expect.objectContaining({ method: 'POST' })));
+    const body = JSON.parse(writeCall().body);
+    expect(body).toMatchObject({ start_date: today, end_date: null, start_time: '16:00', end_time: '18:00', note: 'Robotics camp' });
+    expect(body.weekday).toBe(new Date(`${today}T12:00:00Z`).getUTCDay());
   });
 });
