@@ -27,7 +27,8 @@ import { RecordNavigationContext } from './recordNavigation';
 import { useNavigate } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { NotebookDiscussions } from './NotebookDiscussions';
-import { NotebookEntryMeta } from './NotebookEntryMeta';
+import { entryDetailsLine, markdownFileName, notebookPageMarkdown } from './markdownExport';
+import { NotebookEntryMeta, entryMetaSettled } from './NotebookEntryMeta';
 import { useNotebookMobile } from './useNotebookMobile';
 import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
@@ -41,6 +42,13 @@ import {NotebookPaperControls,paperViewStyle,useNotebookPaperView} from './Noteb
 const NotebookCanvas = lazy(() => import('./NotebookCanvas'));
 
 const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Local changes need recovery', unavailable: 'Page unavailable', error: 'Save needs attention' };
+/** Saves text as a file in the browser. */
+export function downloadText(text: string, name: string, type = 'text/plain') {
+  const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json') {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
@@ -240,7 +248,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       const panels = {
         ...(!mobile && drawPanel ? { draw: <><button className="nb-tool" onClick={()=>setDrawingScope(null)}>Draw on notebook page</button>{drawPanel}</> } : {}),
         insert: fileUpload.controls,
-        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button><button className="nb-tool" disabled={printing || !workspace?.tree} onClick={() => { void printSection(); }}>Print section</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
+        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); if (!await entryMetaSettled(sync.pageId)) throw new Error('The entry details didn’t save. Fix them before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; const page = await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' }); downloadText(notebookPageMarkdown(page, entryDetailsLine(page.entry)), markdownFileName(page.title), 'text/markdown'); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Download Markdown</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button><button className="nb-tool" disabled={printing || !workspace?.tree} onClick={() => { void printSection(); }}>Print section</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
         view: <><ViewControls pageId={sync.pageId}/><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><NotebookPaperControls value={paperView} onChange={setPaperView}/><NotebookReader sync={sync} preferences={readerPreferences} onPreferencesChange={setReaderPreferences}/><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
