@@ -13928,6 +13928,8 @@ Rules:
         t = t.replace(/```away\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```away[\s\S]*$/, "");
         // Checklist runs too.
         t = t.replace(/```checklist\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```checklist[\s\S]*$/, "");
+        // The appearance switch is applied in the browser as the reply finishes; it's never shown or saved.
+        t = t.replace(/```appearance\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```appearance[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
