@@ -115,6 +115,18 @@ describe('Modern Calendar', () => {
     expect(screen.queryByRole('link', { name: 'Order wheels' })).toBeNull();
   });
 
+  it('Week view has a mini-month: picking a day moves the week there', () => {
+    setup();
+    fireEvent.click(screen.getByRole('radio', { name: 'Week' }));
+    const mini = screen.getByRole('region', { name: 'Jump to a date' });
+    fireEvent.click(within(mini).getByRole('button', { name: 'Next month' }));
+    const target = new Date(now.getFullYear(), now.getMonth() + 1, 15);
+    fireEvent.click(within(mini).getByRole('button', { name: new RegExp(target.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) }));
+    expect(within(mini).getByRole('button', { name: new RegExp(target.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })) })).toHaveAttribute('aria-pressed', 'true');
+    // The main view now shows that week (its heading names the target's month).
+    expect(screen.getAllByText(new RegExp(target.toLocaleDateString(undefined, { month: 'short' }))).length).toBeGreaterThan(0);
+  });
+
   it('managers create with the same POST body as Legacy', async () => {
     const { props } = setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
