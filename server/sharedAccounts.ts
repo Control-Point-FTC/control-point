@@ -56,7 +56,9 @@
  *           opr | null, lastEvent: { name (<= 120), result | null (<= 80) } | null,
  *           notes?: string (<= 200) }] }
  *       Team numbers and ranks are unique. Unknown fields are dropped before
- *       the packet reaches the model. The router's 16 kB body cap applies.
+ *       the packet reaches the model. The router's 16 kB body cap applies, and the
+ *       prompt built from the packet must fit Bruno's 16,000-character message cap
+ *       (else 400 with field "packet_too_large": refused, never cut off).
  *     200 { intro, blurbs: [{ team, text }] }   strict JSON, blurbs in rank order.
  *       Blurbs are 1-2 sentences, <= 50 words; the intro is <= 80 words (or ""
  *       when Bruno overran it). A blurb that breaks a rule (unknown or repeated

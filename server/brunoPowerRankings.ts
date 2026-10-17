@@ -19,6 +19,12 @@ const MAX_NAME = 80;
 const MAX_EVENT = 120;
 const MAX_RESULT = 80;
 const MAX_NOTES = 200;
+/**
+ * The most the prompt (packet included) may be: Bruno's chat path keeps at most 16,000 characters of a
+ * message (buildHelperChat), so a longer packet would reach him cut off mid-team. Packets past it are
+ * refused (400 packet_too_large) rather than truncated.
+ */
+export const MAX_PROMPT_CHARS = 16_000;
 const WEEK_RE = /^\d{4}-w(0[1-9]|[1-4]\d|5[0-3])$/;
 
 export interface PacketTeam {
@@ -130,7 +136,10 @@ export function validatePacket(body: any): Check<PowerRankingsPacket> {
   const notes = str(body.notes, MAX_NOTES, "notes", true);
   if (!notes.ok) return { ok: false, error: notes.error };
   teams.sort((a, b) => a.rank - b.rank);
-  return { ok: true, value: { season: body.season, week: body.week, teams, ...(notes.value ? { notes: notes.value } : {}) } };
+  const value: PowerRankingsPacket = { season: body.season, week: body.week, teams, ...(notes.value ? { notes: notes.value } : {}) };
+  // Refused rather than cut off: Bruno's chat path keeps at most MAX_PROMPT_CHARS of a message.
+  if (buildPowerRankingsPrompt(value).length > MAX_PROMPT_CHARS) return { ok: false, error: "packet_too_large" };
+  return { ok: true, value };
 }
 
 /** Appended to Bruno's system prompt for this job. */

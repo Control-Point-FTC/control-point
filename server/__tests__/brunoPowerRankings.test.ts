@@ -10,12 +10,13 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createSharedAccounts, POWER_RANKINGS_RATE } from "../sharedAccounts";
 import {
   MAX_BLURB_WORDS,
+  MAX_PROMPT_CHARS,
   POWER_RANKINGS_SYSTEM,
   buildPowerRankingsPrompt,
   parsePowerRankingsOutput,
   validatePacket,
 } from "../brunoPowerRankings";
-import { routeChatRequest } from "../../ai-hybrid";
+import { aiChat, routeChatRequest } from "../../ai-hybrid";
 
 const KEY = "test-internal-key-0123456789-abcdefghijklmnop";
 
@@ -135,16 +136,48 @@ describe("input validation", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("a full 25-team packet with every field at its cap fits under the limit", async () => {
-    const big = {
-      ...packet(),
-      notes: "n".repeat(200),
-      teams: Array.from({ length: 25 }, (_, i) => team(i + 1, {
-        team: 900000 + i, name: "N".repeat(80), notes: "z".repeat(140),
-        lastEvent: { name: "E".repeat(120), result: "R".repeat(80) },
-      })),
-    };
-    expect(JSON.stringify(big).length).toBeLessThan(16 * 1024);
+  /** A 25-team packet with every string at its cap except team notes, which are `notes` characters. */
+  const maxed = (notes: number) => ({
+    ...packet(),
+    notes: "n".repeat(200),
+    teams: Array.from({ length: 25 }, (_, i) => team(i + 1, {
+      team: 900000 + i, name: "N".repeat(80), ...(notes ? { notes: "z".repeat(notes) } : {}),
+      lastEvent: { name: "E".repeat(120), result: "R".repeat(80) },
+    })),
+  });
+
+  it("refuses a packet whose prompt would be cut off by Bruno's 16,000-character message cap", async () => {
+    // Long team notes: under the 16 kB body limit, but the prompt would be too long for the model path.
+    expect(JSON.stringify(maxed(170)).length).toBeLessThan(16 * 1024);
+    expect(validatePacket(maxed(170))).toMatchObject({ ok: false, error: "packet_too_large" });
+    const write = vi.fn();
+    const post = await boot({ brunoWrite: write });
+    expect(await post(maxed(170))).toMatchObject({ status: 400, body: { error: "invalid_packet", field: "packet_too_large" } });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("an accepted packet reaches the model whole, through the Gemini path", async () => {
+    // The largest packet without team notes is accepted; its prompt fits the cap.
+    const v = validatePacket(maxed(0));
+    expect(v.ok).toBe(true);
+    const prompt = buildPowerRankingsPrompt(v.value!);
+    expect(prompt.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+    const env = { ...process.env };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      process.env.GEMINI_API_KEY = "test-key";
+      delete process.env.ANTHROPIC_API_KEY;
+      await aiChat({ extraSystem: POWER_RANKINGS_SYSTEM, messages: [{ role: "user", text: prompt, maxChars: MAX_PROMPT_CHARS }], maxTokens: 100, stream: false, offline: true });
+      const sent = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
+      const text = sent.contents.at(-1).parts[0].text as string;
+      expect(text).toBe(prompt);
+      expect(text).toContain(`"team":900024`);
+      expect(sent.tools).toBeUndefined(); // offline: no web search
+    } finally {
+      vi.unstubAllGlobals();
+      process.env = env;
+    }
   });
 
   it("drops unknown fields before the packet reaches the model", async () => {

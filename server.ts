@@ -79,6 +79,7 @@ import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, l
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
+import { MAX_PROMPT_CHARS } from "./server/brunoPowerRankings.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
@@ -2394,7 +2395,7 @@ async function startServer() {
       try {
         const r = await aiChat({
           extraSystem: system,
-          messages: [{ role: "user", text: user, maxChars: 16000 }],
+          messages: [{ role: "user", text: user, maxChars: MAX_PROMPT_CHARS }],
           maxTokens,
           stream: false,
           offline: true,
@@ -9508,6 +9509,8 @@ Rules:
   }
   const utcStamp = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
 
+  // People counts and the top-users list leave out member_id 0: system jobs (Scout's power-rankings
+  // blurbs, logged under that system actor) count toward messages and tokens, never as a person.
   app.get("/api/owner/ai-overview", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
@@ -9515,7 +9518,7 @@ Rules:
     const nowMs = Date.now();
     const todayStart = utcStamp(zonedMidnightUtcMs(tz, nowMs));
     const today = (await dbGet(
-      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT member_id) AS users FROM ai_usage WHERE created_at >= ?",
+      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT CASE WHEN member_id > 0 THEN member_id END) AS users FROM ai_usage WHERE created_at >= ?",
       todayStart
     )) as any;
     const top = (await dbAll(`
@@ -9524,7 +9527,7 @@ Rules:
       FROM ai_usage u
       LEFT JOIN members m ON m.id = u.member_id
       LEFT JOIN teams t ON t.id = u.team_id
-      WHERE u.created_at >= datetime('now', '-7 days')
+      WHERE u.created_at >= datetime('now', '-7 days') AND u.member_id > 0
       GROUP BY u.member_id ORDER BY tokens DESC LIMIT 10
     `)) as any[];
     const flagRows = (await dbAll("SELECT status, COUNT(*) AS n FROM ai_flags GROUP BY status")) as any[];
@@ -9562,7 +9565,8 @@ Rules:
       if (!bucket) continue;
       bucket.messages += 1;
       bucket.tokens += Number(r.total_tokens) || 0;
-      if (r.member_id != null) bucket.users.add(r.member_id);
+      // member_id 0 is a system job (e.g. Scout's power-rankings blurbs), not a person: counted in messages and tokens only.
+      if (Number(r.member_id) > 0) bucket.users.add(r.member_id);
     }
     const daily = days.map((d) => {
       const b = buckets.get(d.date)!;
