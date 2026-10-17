@@ -38,6 +38,23 @@ describe("notebook journal", () => {
     expect(entries[0]).toMatchObject({ date: "2099-01-10", workDate: "2099-01-10", type: "test", awards: ["think"], authors: ["Ana"], excerpt: "Ran the intake ten times." });
   });
 
+  it("filters run across the whole notebook and pages on; accents and newline-separated words count", async () => {
+    const words = Array.from({ length: 1000 }, (_, i) => `w${i}`).join("\n");
+    const big = (await t.post("/api/notebook/pages", { sectionId: section, title: "ÉQUIPE notes", content: doc(words) }, session)).body;
+    await t.api(`/api/notebook/pages/${big.id}/meta`, { method: "PUT", session, body: JSON.stringify({ workDate: "2098-01-01", awards: ["design"] }) });
+    const page = (q: string) => t.api(`/api/notebook/journal?${q}`, { session }).then((r) => r.body);
+    const accent = await page("q=%C3%A9quipe");
+    expect(accent.entries.map((e: any) => e.title)).toEqual(["ÉQUIPE notes"]);
+    expect(accent.entries[0].readMinutes).toBe(5);
+    expect((await page("award=design")).entries.map((e: any) => e.title)).toEqual(["ÉQUIPE notes"]);
+    expect((await page("author=Ana&type=test")).entries.map((e: any) => e.title)).toEqual(["Intake test"]);
+    const first = await page("limit=1");
+    expect(first).toMatchObject({ more: true, nextOffset: 1 });
+    expect(first.facets.authors).toEqual(["Ana"]);
+    const second = await page("limit=1&offset=1");
+    expect(second.entries[0].id).not.toBe(first.entries[0].id);
+  });
+
   it("Bruno's notebook_journal lookup filters by date and words", async () => {
     const all = await notebookLookup(store, ctx(member), { kind: "notebook_journal" });
     expect(all.lines[0]).toMatch(/page #\d+ "Intake test" 2099-01-10 \(work date\) · type Test · awards Think · by Ana: "Ran the intake ten times\."/);

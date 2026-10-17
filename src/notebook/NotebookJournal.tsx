@@ -3,7 +3,7 @@
 // subsystem / award chips, authors, read time), grouped by week ("This week",
 // "Last week", "Week of Oct 5") or by judged award, with filters by type,
 // stage, subsystem and author. Picking a card opens the page.
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Award, Cog, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui-kit';
 import { apiJson } from '../services/api';
@@ -52,23 +52,44 @@ export function groupEntries(entries: JournalEntry[], by: 'week' | 'award', toda
 export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: boolean; onClose: () => void; onOpenPage: (id: number) => void; teamId?: number | null }) {
   const [entries, setEntries] = useState<JournalEntry[] | null>(null);
   const [more, setMore] = useState(false);
+  const [next, setNext] = useState(0);
+  const [facets, setFacets] = useState<{ authors: string[]; subsystems: string[] }>({ authors: [], subsystems: [] });
   const [error, setError] = useState('');
   const [by, setBy] = useState<'week' | 'award'>('week');
   const [filter, setFilter] = useState<JournalFilter>({ type: '', stage: '', subsystem: '', author: '' });
+  // Filters run on the server across the whole notebook; each change starts a new listing.
+  const listing = useRef(0);
+  const fetchPage = useCallback((offset: number) => {
+    const q = new URLSearchParams({ limit: '200', offset: String(offset) });
+    for (const [k, v] of Object.entries(filter)) if (v) q.set(k, v);
+    return apiJson<{ entries: JournalEntry[]; more?: boolean; nextOffset?: number; facets?: { authors: string[]; subsystems: string[] } }>(`/api/notebook/journal?${q}`, { cache: 'no-store', headers: teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined });
+  }, [filter, teamId]);
   useEffect(() => {
     if (!open) return;
-    let live = true;
+    const mine = ++listing.current;
     setEntries(null);
-    apiJson<{ entries: JournalEntry[]; more?: boolean }>('/api/notebook/journal?limit=500', { cache: 'no-store', headers: teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined })
-      .then((d) => { if (live) { setEntries(Array.isArray(d?.entries) ? d.entries : []); setMore(!!d?.more); setError(''); } })
-      .catch((e) => { if (live) { setEntries([]); setError(e?.message || 'Could not load the journal'); } });
-    return () => { live = false; };
-  }, [open, teamId]);
+    fetchPage(0)
+      .then((d) => {
+        if (mine !== listing.current) return;
+        setEntries(Array.isArray(d?.entries) ? d.entries : []); setMore(!!d?.more); setNext(d?.nextOffset ?? 0);
+        if (d?.facets) setFacets(d.facets);
+        setError('');
+      })
+      .catch((e) => { if (mine === listing.current) { setEntries([]); setError(e?.message || 'Could not load the journal'); } });
+  }, [open, fetchPage]);
+  const loadOlder = async () => {
+    const mine = listing.current;
+    try {
+      const d = await fetchPage(next);
+      if (mine !== listing.current) return;
+      setEntries((list) => [...(list ?? []), ...(d.entries ?? [])]); setMore(!!d.more); setNext(d.nextOffset ?? next);
+    } catch (e: any) { setError(e?.message || 'Could not load older entries'); }
+  };
 
   const today = new Date().toLocaleDateString('en-CA');
-  const subsystems = useMemo(() => [...new Set((entries ?? []).flatMap((e) => e.subsystems))].sort(), [entries]);
-  const authors = useMemo(() => [...new Set((entries ?? []).flatMap((e) => e.authors))].sort(), [entries]);
-  const shown = useMemo(() => filterEntries(entries ?? [], filter), [entries, filter]);
+  const subsystems = facets.subsystems;
+  const authors = facets.authors;
+  const shown = entries ?? [];
   const groups = useMemo(() => groupEntries(shown, by, today), [shown, by, today]);
   const select = 'h-8 rounded-md border border-border bg-transparent px-2 text-xs';
   const set = (k: keyof JournalFilter) => (e: React.ChangeEvent<HTMLSelectElement>) => setFilter((f) => ({ ...f, [k]: e.target.value }));
@@ -88,13 +109,13 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
             <select className={select} aria-label="Filter by stage" value={filter.stage} onChange={set('stage')}><option value="">Any stage</option>{ENTRY_STAGES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
             {subsystems.length > 0 && <select className={select} aria-label="Filter by subsystem" value={filter.subsystem} onChange={set('subsystem')}><option value="">Any subsystem</option>{subsystems.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
             {authors.length > 0 && <select className={select} aria-label="Filter by author" value={filter.author} onChange={set('author')}><option value="">Anyone</option>{authors.map((a) => <option key={a} value={a}>{a}</option>)}</select>}
-            {entries && <span className="ml-auto text-xs text-muted-foreground">{shown.length} of {entries.length}{more ? ' newest' : ''} entries</span>}
+            {entries && <span className="ml-auto text-xs text-muted-foreground">{shown.length}{more ? '+' : ''} {shown.length === 1 && !more ? 'entry' : 'entries'}</span>}
           </div>
         </DialogHeader>
         <div className="max-h-[calc(90dvh-9rem)] space-y-6 overflow-y-auto px-6 py-5">
           {!entries && <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>}
           {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-          {entries && !groups.length && !error && <p className="text-sm text-muted-foreground">{entries.length ? 'No entries match these filters.' : 'No entries yet. Pages you write show up here.'}</p>}
+          {entries && !groups.length && !error && <p className="text-sm text-muted-foreground">{Object.values(filter).some(Boolean) ? 'No entries match these filters.' : 'No entries yet. Pages you write show up here.'}</p>}
           {groups.map((g) => (
             <section key={g.label} aria-label={g.label}>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground" title={g.hint}>{g.label} <span className="font-normal">({g.entries.length})</span></h3>
@@ -120,6 +141,7 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
               </ul>
             </section>
           ))}
+          {more && <button type="button" className="w-full rounded-md border border-border py-2 text-sm hover:bg-muted/50" onClick={() => void loadOlder()}>Load older entries</button>}
         </div>
       </DialogContent>
     </Dialog>
