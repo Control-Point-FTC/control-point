@@ -211,6 +211,15 @@ const POOLS: Record<string, StarterPool> = {
       'Draft a message welcoming our new members',
     ],
   },
+  checklists: {
+    greeting: 'I can start a checklist run or check items off for you, and tell you what’s still left.',
+    prompts: [
+      'Start the pre-match checklist',
+      'What’s still unchecked on the open checklists?',
+      'Mark the battery and wheel checks done',
+      'Make a checklist for packing the robot for a trip',
+    ],
+  },
   resources: {
     greeting: 'I can point you to good FTC resources and help organise your team’s links.',
     prompts: [

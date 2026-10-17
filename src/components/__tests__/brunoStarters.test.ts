@@ -9,7 +9,7 @@ describe('Bruno starters are page-specific', () => {
   });
   it('every main page has its own pool; CAD sub-pages share CAD', () => {
     const dash = starterPoolForPath('/dashboard');
-    for (const p of ['/tasks', '/calendar', '/comm', '/outreach', '/attendance', '/inventory', '/stats', '/code', '/predict', '/budget', '/cad', '/chat', '/resources', '/teams', '/inbox', '/settings']) {
+    for (const p of ['/tasks', '/calendar', '/comm', '/outreach', '/attendance', '/inventory', '/stats', '/code', '/predict', '/budget', '/cad', '/chat', '/resources', '/checklists', '/teams', '/inbox', '/settings']) {
       expect(starterPoolForPath(p), p).not.toBe(dash);
     }
     expect(starterPoolForPath('/cad-parts')).toBe(starterPoolForPath('/cad'));
