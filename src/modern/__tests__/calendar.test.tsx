@@ -143,6 +143,19 @@ describe('Modern Calendar', () => {
     await waitFor(() => expect(document.querySelector('[aria-current="date"]')?.getAttribute('data-day')).toBe(d(20)));
   });
 
+  it('managers import official competitions; members do not see the button', async () => {
+    api.apiFetch.mockImplementation(async (url: string) => (url === '/api/events/import-first'
+      ? { ok: true, json: async () => ({ added: 2, events: [] }) }
+      : { ok: true, json: async () => ({}) }));
+    const { props, unmount } = setup();
+    fireEvent.click(screen.getByRole('button', { name: /Import competitions/ }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Added 2 official competitions to the calendar.', 'success'));
+    expect(props.refresh.events).toHaveBeenCalled();
+    unmount();
+    setup({ manage: false });
+    expect(screen.queryByRole('button', { name: /Import competitions/ })).toBeNull();
+  });
+
   it('managers create with the same POST body as Legacy', async () => {
     const { props } = setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
