@@ -11,6 +11,10 @@ import { ViewControls } from './ribbon/ViewControls';
 import { PageLinkMenu } from './pageLinkMenu';
 import { LINK_STATES_REFRESH, LinkStates, linkStatesKey } from './linkStates';
 import { PageLinkPopup, PageLinkSourceContext } from './PageLinkPopup';
+import { MemberMention, PENDING_MENTIONS_PREFIX, mentionKey, type MentionMember } from './mentionMenu';
+import { MentionPopup, MentionSourceContext } from './MentionPopup';
+import { ApiError } from '../services/api';
+import { notify } from '../components/dialog';
 import { SlashMenu } from './slashMenu';
 import { BlockMoves } from './blockMoves';
 import { BlockHandle } from './BlockHandle';
@@ -82,6 +86,56 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const pagesRef = React.useRef(pages); pagesRef.current = pages;
   // Page links for the page and its canvas text boxes.
   const pageLinks = React.useMemo(() => ({ pages: () => pagesRef.current, currentPageId: () => sync.pageId, enabled: () => !mobileRef.current }), [sync.pageId]);
+  // "@" mentions: the members who can open this page; picking one pings them.
+  const [mentionMembers, setMentionMembers] = useState<MentionMember[]>([]);
+  const mentionMembersRef = React.useRef(mentionMembers); mentionMembersRef.current = mentionMembers;
+  const mentionTeam = sync.scope?.teamId, selfId = sync.scope?.memberId;
+  // Pings that couldn't be sent (offline, server busy) wait here, per page, until the page saves again.
+  // Keyed by who sent them too, so a teammate signing in on this browser never sends them as themselves.
+  const pendingKey = `${PENDING_MENTIONS_PREFIX}${selfId}:${mentionTeam}:${sync.pageId}`;
+  const readPending = React.useCallback((): number[] => { try { const v = JSON.parse(localStorage.getItem(pendingKey) || '[]'); return Array.isArray(v) ? v.filter(Number.isSafeInteger) : []; } catch { return []; } }, [pendingKey]);
+  const writePending = React.useCallback((ids: number[]) => { try { if (ids.length) localStorage.setItem(pendingKey, JSON.stringify([...new Set(ids)].slice(0, 50))); else localStorage.removeItem(pendingKey); } catch { /* storage blocked */ } }, [pendingKey]);
+  const postMention = React.useCallback((memberIds: number[]) => {
+    const headers = mentionTeam ? { 'X-CP-Notebook-Team': String(mentionTeam), 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+    return apiJson<{ notified: MentionMember[] }>(`/api/notebook/pages/${sync.pageId}/mentions`, { method: 'POST', headers, body: JSON.stringify({ memberIds }) });
+  }, [sync.pageId, mentionTeam]);
+  // Only a refusal (no access, bad member) is final; anything else is tried again later.
+  const retryable = (e: unknown) => !(e instanceof ApiError) || e.status >= 500 || e.status === 0;
+  const sendMention = React.useCallback((member: MentionMember) => {
+    void postMention([member.id])
+      .then(r => notify(r.notified.length ? `${member.name} was notified` : `${member.name} was already notified about this page`, 'success'))
+      .catch(e => {
+        if (retryable(e)) { writePending([...readPending(), member.id]); notify(`${member.name} will be notified when this page is back online`, 'info'); }
+        else notify(e instanceof Error ? `Couldn't notify ${member.name}: ${e.message}` : `Couldn't notify ${member.name}`, 'error');
+      });
+  }, [postMention, readPending, writePending]);
+  // Send waiting pings once the page has reached the server again.
+  useEffect(() => {
+    if (sync.status !== 'saved' || !mentionTeam || typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const ids = readPending();
+    if (!ids.length || !selfId) return;
+    let gone = false;
+    // One member at a time: a refusal for one (lost access) never drops the others, and no
+    // request goes over the server's per-ping limit. A retryable failure stops until next time.
+    void (async () => {
+      for (const id of ids) {
+        if (gone) return;
+        try { await postMention([id]); } catch (e) { if (retryable(e)) return; }
+        writePending(readPending().filter(x => x !== id));
+      }
+    })();
+    return () => { gone = true; };
+  }, [sync.status, mentionTeam, selfId, postMention, readPending, writePending]);
+  const sendMentionRef = React.useRef(sendMention); sendMentionRef.current = sendMention;
+  const mentions = React.useMemo(() => ({ members: () => mentionMembersRef.current, selfId: () => sync.scope?.memberId, enabled: () => !mobileRef.current, onMention: (m: MentionMember) => sendMentionRef.current(m) }), [sync.scope?.memberId]);
+  useEffect(() => {
+    if (!mentionTeam) return;
+    const abort = new AbortController();
+    void apiJson<MentionMember[]>(`/api/notebook/pages/${sync.pageId}/mention-members`, { cache: 'no-store', signal: abort.signal, headers: { 'X-CP-Notebook-Team': String(mentionTeam) } })
+      .then(list => { if (!abort.signal.aborted) setMentionMembers(Array.isArray(list) ? list : []); })
+      .catch(() => { if (!abort.signal.aborted) setMentionMembers([]); });
+    return () => abort.abort();
+  }, [sync.pageId, mentionTeam]);
   const blocked = sync.restoring || !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
@@ -155,7 +209,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
-    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), LinkStates.configure({ pages: () => pagesRef.current }), SlashMenu.configure({ enabled: () => !mobileRef.current }), BlockMoves, Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
+    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), MemberMention.configure(mentions), LinkStates.configure({ pages: () => pagesRef.current }), SlashMenu.configure({ enabled: () => !mobileRef.current }), BlockMoves, Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
       if (!mobileRef.current || !view.editable) return false;
@@ -179,6 +233,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   }, [sync]);
   // Page links re-check their target when the page list changes.
   useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(linkStatesKey, LINK_STATES_REFRESH)); }, [editor, pages]);
+  // "@Name" highlights follow the member list once it loads.
+  useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(mentionKey, {})); }, [editor, mentionMembers]);
   useEffect(() => editor ? registerNotebookSelection(sync.pageId, () => selectedNotebookBlocks(editor.state)) : undefined, [editor, sync.pageId]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
   // Browsers without CSS field-sizing: grow the title box to fit its lines.
@@ -269,7 +325,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <NotebookEntryMeta pageId={sync.pageId} teamId={sync.scope?.teamId} revision={sync.data?.revision} disabled={blocked} />
       <NotebookReviewBar pageId={sync.pageId} teamId={sync.scope?.teamId} />
-      <RecordNavigationContext.Provider value={openRecordPath}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}
+      <RecordNavigationContext.Provider value={openRecordPath}><MentionSourceContext.Provider value={mentions}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></MentionSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}{!mobile && <MentionPopup editor={activeEditor ?? editor} members={mentionMembers} selfId={selfId} onMention={sendMention} />}
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
     </article></div>

@@ -3,7 +3,9 @@ import { AtSign } from 'lucide-react';
 import { apiJson } from '../services/api';
 import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui-kit';
 import type { CommentAnchor } from './NotebookDiscussions';
-type Mention = { commentId: number; threadId: number; pageId: number; title: string; snippet: string; anchor: CommentAnchor; createdAt: string; read: boolean };
+// A discussion mention (commentId) or an "@Name" ping in the page text (pageMentionId).
+type Mention = { commentId?: number; threadId?: number; pageMentionId?: number; pageId: number; title: string; snippet: string; anchor?: CommentAnchor; createdAt: string; read: boolean };
+const mentionKey = (m: Mention) => m.pageMentionId ? `p${m.pageMentionId}` : `c${m.commentId}`;
 export function NotebookMentions({ teamId, visiblePageIds, onNavigate }: { teamId: number; visiblePageIds: number[]; onNavigate: (pageId: number, blockId?: string, threadId?: number) => Promise<boolean> }) {
   const [mentions, setMentions] = useState<Mention[]>([]), [open, setOpen] = useState(false), [error, setError] = useState('');
   const headers = { 'X-CP-Notebook-Team': String(teamId) };
@@ -15,16 +17,16 @@ export function NotebookMentions({ teamId, visiblePageIds, onNavigate }: { teamI
   }, [teamId]);
   const visible = mentions.filter(m => visiblePageIds.includes(m.pageId)), unread = visible.filter(m => !m.read).length;
   return <><Button variant="ghost" aria-label={`Notebook mentions${unread ? `, ${unread} unread` : ''}`} title="Mentions" onClick={() => setOpen(true)}><AtSign size={16} /><span className="nb-mentions-label">Mentions</span>{unread ? <span className="nb-mentions-count">{unread}</span> : null}</Button>
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Notebook mentions</DialogTitle><DialogDescription>Discussions mentioning you in pages you can currently access.</DialogDescription></DialogHeader>
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Notebook mentions</DialogTitle><DialogDescription>Pages and discussions mentioning you that you can currently open.</DialogDescription></DialogHeader>
       {error && <p role="alert">{error}</p>}
-      <div className="nb-mention-inbox">{visible.length ? visible.map(m => <Button key={m.commentId} variant="ghost" className="nb-mention-item" onClick={async () => {
+      <div className="nb-mention-inbox">{visible.length ? visible.map(m => <Button key={mentionKey(m)} variant="ghost" className="nb-mention-item" onClick={async () => {
         try {
           // Recheck access before navigating or exposing an anchor from a stale
           // notification list after a protection change.
-          await apiJson(`/api/notebook/mentions/${m.commentId}/read`, { method: 'PUT', cache: 'no-store', headers });
-          if (!await onNavigate(m.pageId, m.anchor.targetId, m.threadId)) return;
-          setMentions(items => items.map(item => item.commentId === m.commentId ? { ...item, read: true } : item)); setOpen(false);
-        } catch (e) { setMentions(items => items.filter(item => item.commentId !== m.commentId)); setError(e instanceof Error ? e.message : 'This discussion is unavailable'); }
+          await apiJson(m.pageMentionId ? `/api/notebook/page-mentions/${m.pageMentionId}/read` : `/api/notebook/mentions/${m.commentId}/read`, { method: 'PUT', cache: 'no-store', headers });
+          if (!await onNavigate(m.pageId, m.anchor?.targetId, m.threadId)) return;
+          setMentions(items => items.map(item => mentionKey(item) === mentionKey(m) ? { ...item, read: true } : item)); setOpen(false);
+        } catch (e) { setMentions(items => items.filter(item => mentionKey(item) !== mentionKey(m))); setError(e instanceof Error ? e.message : 'This discussion is unavailable'); }
       }}><strong>{!m.read && '● '}{m.title}</strong><span>{m.snippet}</span><time dateTime={m.createdAt}>{new Date(m.createdAt).toLocaleString()}</time></Button>) : <p>No visible mentions yet.</p>}</div>
     </DialogContent></Dialog>
   </>;

@@ -1784,6 +1784,9 @@ export default function App() {
     if (meta.channel_id != null) {
       navigate('/chat');
       setActiveChannelId(Number(meta.channel_id));
+    } else if (meta.notebook_page_id != null) {
+      // "@name" in a notebook page: open that page.
+      navigate(`/notebook?page=${Number(meta.notebook_page_id)}`);
     }
   };
 
@@ -2454,6 +2457,10 @@ export default function App() {
       if (n.type === 'mention' && meta.channel_id != null) {
         navigate('/chat');
         setActiveChannelId(Number(meta.channel_id));
+        return true;
+      }
+      if (meta.notebook_page_id != null) {
+        navigate(`/notebook?page=${Number(meta.notebook_page_id)}`);
         return true;
       }
       return false;

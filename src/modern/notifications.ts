@@ -34,6 +34,9 @@ export function notificationTarget(n: any): NotificationTarget | null {
   if (n?.type === 'mention' && meta.channel_id != null) {
     return { path: '/chat', label: `Open #${meta.channel_name || 'channel'}`, exact: true, channelId: Number(meta.channel_id) };
   }
+  if (meta.notebook_page_id != null) {
+    return { path: `/notebook?page=${Number(meta.notebook_page_id)}`, label: 'Open page', exact: true };
+  }
   if (n?.type === 'task') {
     return meta.task_id != null
       ? { path: `/tasks?task=${Number(meta.task_id)}`, label: 'Open task', exact: true }

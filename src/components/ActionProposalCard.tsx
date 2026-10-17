@@ -1,4 +1,4 @@
-import { ArrowRight, Calendar, CalendarCheck, CalendarOff, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
+import { ArrowRight, Package, Calendar, CalendarCheck, CalendarOff, CalendarX, Megaphone, ListTodo, ListChecks, Wallet, Mail, Check, X, Loader2, SlidersHorizontal, MessageSquare } from 'lucide-react';
 import { TEAM_MODULES } from '../types/teamModules';
 import { awardById } from '../types/taskTags';
 import { strictWipLimits } from '../types/taskStatus';
@@ -95,6 +95,7 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   'event-rsvp': { label: 'RSVP', icon: CalendarCheck },
   away: { label: 'Unavailable times', icon: CalendarOff },
   checklist: { label: 'Checklists', icon: ListChecks },
+  part: { label: 'CAD parts list', icon: Package },
 };
 
 /** "Turn off Code · Turn on Predict · Subsystems: Drivetrain, Lift" */
@@ -149,6 +150,19 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
     const name = typeof it.title === 'string' && it.title.trim() ? it.title.trim().slice(0, 60) : `Event #${String(it.id ?? '').replace(/^#/, '')}`;
     const reason = typeof it.reason === 'string' && it.reason.trim() ? ` · ${it.reason.trim().slice(0, 80)}` : '';
     return `${name} — ${s || 'Take back my answer'}${reason}`;
+  }
+  if (kind === 'part') {
+    const qty = Math.max(1, Math.floor(Number(it?.quantity) || 1));
+    // Everything that gets saved shows here, so the member can check it before confirming.
+    const bits = [
+      it?.section ? String(it.section).slice(0, 30) : '',
+      it?.source ? String(it.source).slice(0, 30) : '',
+      String(it?.status || 'to_order').replace('_', ' ').slice(0, 20),
+      Number(it?.unit_cost) > 0 ? `$${Number(it.unit_cost).toFixed(2)} each` : 'no price',
+      it?.assignee ? `for ${String(it.assignee).slice(0, 40)}` : '',
+      it?.notes ? String(it.notes).slice(0, 120) : '',
+    ].filter(Boolean);
+    return `${qty}× ${String(it?.name ?? 'Part').slice(0, 100)} · ${bits.join(' · ')}`;
   }
   if (kind === 'checklist') {
     if (it?.start !== undefined) return `Start the "${String(it.start).replace(/^#/, '').slice(0, 60)}" checklist${it.title ? ` as "${String(it.title).slice(0, 60)}"` : ''}${it.event ? ` for event #${String(it.event).replace(/^#/, '')}` : ''}`;
