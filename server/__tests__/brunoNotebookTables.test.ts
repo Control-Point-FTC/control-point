@@ -132,3 +132,11 @@ describe("what the card shows", () => {
     expect(preview[0].after).toContain("Amazon");
   });
 });
+
+describe("card text keeps real text", () => {
+  it("a code line that looks like a block id is shown as written", async () => {
+    const p = (await t.post("/api/notebook/pages", { sectionId: section, title: "Code ids", content: { type: "doc", content: markdownToNotebookBlocks("Intro") } }, session)).body;
+    const [preview] = await previewNotebookOps(store, ctx(member), parseNotebookOps([{ op: "append", page: p.id, markdown: "```\n[#42] check motor\n```" }]));
+    expect(preview.after).toContain("[#42] check motor");
+  });
+});

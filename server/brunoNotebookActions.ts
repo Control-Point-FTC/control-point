@@ -225,8 +225,8 @@ export function replaceBlock(doc: PMNode, block: string, markdown: string, run?:
 
 const bruno = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno" });
 const confirmed = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno_confirmed" });
-/** Card text without the [#block-id] markers Bruno reads pages with. */
-const shown = (t: string) => t.replace(/^\[#[^\]]*\]\s?/gm, "");
+/** Card text: what members read, without the [#block-id] markers Bruno reads pages with. */
+const NO_IDS = { ids: false };
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 // The card shows everything a change writes (bounded by the input limit).
@@ -260,7 +260,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       const where = destination(tree, op);
       const target = section(where.sectionId) ?? (where.error ? undefined : tree.sections[0]);
       if (!target) { out.push({ op: "create", summary: `New page "${clip(op.title, 80)}"`, error: where.error ?? "There is no notebook section to add a page to." }); continue; }
-      const body = op.markdown ? shown(renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text) : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
+      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT, NO_IDS).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
       out.push({ op: "create", summary: `New page "${clip(op.title, 80)}" in ${clip(target.title, 60)}${op.parent ? ` under "${clip(pageTitle(op.parent), 60)}"` : ""}`, ...(body ? { after: body } : {}) });
       continue;
     }
@@ -280,7 +280,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       try {
         const page = await store.page(bruno(ctx), op.page);
         const node = findTable(page.content as PMNode, op.table);
-        const rows = tableRows(tableWidth(node), op.rows).map(r => (r.content ?? []).map(c => shown(renderNotebookText({ type: "doc", content: c.content ?? [] }, {}, MAX_CELL + 50).text).replace(/\s+/g, " ").trim()).join(" | "));
+        const rows = tableRows(tableWidth(node), op.rows).map(r => (r.content ?? []).map(c => renderNotebookText({ type: "doc", content: c.content ?? [] }, {}, MAX_CELL + 50, NO_IDS).text.replace(/\s+/g, " ").trim()).join(" | "));
         out.push({ op: "add_rows", summary, after: rows.join("\n") });
       } catch (e) {
         out.push({ op: "add_rows", summary, error: e instanceof NotebookError && e.status !== 404 && e.status !== 403 ? e.message : "This page isn't available to Bruno." });
@@ -294,15 +294,15 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
     } else {
       let page;
       try { page = await store.page(bruno(ctx), op.page); } catch { out.push(unavailable(op.op)); continue; }
-      const added = shown(renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text);
+      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT, NO_IDS).text;
       if (op.op === "append") out.push({ op: "append", summary: `Add to ${name}`, after: added });
       else {
         const at = locateRange(page.content as PMNode, op.block, op.blocks);
         if (!at) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part of the page changed or was removed." }); continue; }
         // Everything removed must be reviewable on the card.
-        const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT);
+        const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT, NO_IDS);
         if (before.truncated) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part is too long to review in one card. Ask Bruno to rewrite it in smaller parts." }); continue; }
-        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: shown(before.text), ...(added ? { after: added } : {}), destructive: !added });
+        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: before.text, ...(added ? { after: added } : {}), destructive: !added });
       }
     }
   }

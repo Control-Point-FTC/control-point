@@ -59,13 +59,14 @@ function block(node: PMNode, depth: number, out: string[]) {
 
 /** Typed page text as Markdown-ish lines, each top-level block prefixed with
  *  its stable id so a later confirmed edit can target it. */
-export function renderNotebookText(content: unknown, canvas: unknown, limit = PAGE_TEXT_LIMIT): { text: string; truncated: boolean } {
+/** `ids: false` leaves out the [#block-id] markers (for text a member reads, like a confirm card). */
+export function renderNotebookText(content: unknown, canvas: unknown, limit = PAGE_TEXT_LIMIT, opts: { ids?: boolean } = {}): { text: string; truncated: boolean } {
   const lines: string[] = [];
   const doc = content as PMNode;
   for (const node of (doc && Array.isArray(doc.content) ? doc.content : [])) {
     const body: string[] = [];
     block(node, 0, body);
-    const id = node.attrs?.id ? `[#${String(node.attrs.id).slice(0, 40)}] ` : "";
+    const id = node.attrs?.id && opts.ids !== false ? `[#${String(node.attrs.id).slice(0, 40)}] ` : "";
     if (body.length) lines.push(id + body[0], ...body.slice(1));
   }
   const objects = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects : [];
