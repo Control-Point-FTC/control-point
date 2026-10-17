@@ -81,4 +81,18 @@ describe('BrunoBar', () => {
     await user.click(screen.getByLabelText(/collapse/i));
     expect(screen.getByRole('button', { name: /what’s happening this week/i })).toBeInTheDocument();
   });
+
+  it('a reply that switches the theme applies it from the dashboard', async () => {
+    const user = userEvent.setup();
+    document.documentElement.classList.remove('light');
+    vi.mocked(streamBuildHelper).mockImplementation(async (_msgs, onChunk) => {
+      onChunk('Switched to light mode.\n```appearance\n{"theme":"light"}\n```');
+    });
+    render(<MemoryRouter><BrunoBar /></MemoryRouter>);
+    await user.type(screen.getByLabelText(/ask bruno/i), 'turn on light mode{Enter}');
+    await waitFor(() => expect(document.documentElement.classList.contains('light')).toBe(true));
+    expect(screen.queryByText(/"theme"/)).not.toBeInTheDocument();
+    document.documentElement.classList.remove('light');
+    window.localStorage.removeItem('cp-theme');
+  });
 });
