@@ -38,9 +38,9 @@ const baseEvents = [
   { id: 2, title: 'Qualifier', date: later, start_time: '23:40', event_type: 'competition' },
 ];
 
-function setup({ manage = true, events = baseEvents } = {}) {
+function setup({ manage = true, events = baseEvents, tasks = [] as any[] } = {}) {
   const props = {
-    events, setEvents: vi.fn(), teams: [{ id: 1, name: 'Team', number: 123 }],
+    events, tasks, setEvents: vi.fn(), teams: [{ id: 1, name: 'Team', number: 123 }],
     refresh: { events: vi.fn() }, currentUser: me,
     hasScope: (s: string) => (s === 'calendar' ? manage : false),
   };
@@ -102,6 +102,17 @@ describe('Modern Calendar', () => {
     const sheet = await screen.findByRole('dialog');
     expect(within(sheet).getByRole('link', { name: /meet\.google\.com\/abc/ })).toHaveAttribute('href', 'https://meet.google.com/abc');
     expect(within(sheet).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Intake', 'Auto']);
+  });
+
+  it('tasks due show on the month grid and in the day list, and the toggle hides them', () => {
+    try { localStorage.removeItem('calendar:show-tasks'); } catch { /* blocked */ }
+    setup({ tasks: [{ id: 9, title: 'Order wheels', status: 'todo', due_date: today }, { id: 10, title: 'Done one', status: 'done', due_date: today }] });
+    fireEvent.click(screen.getByRole('radio', { name: 'Month' }));
+    expect(screen.getAllByRole('button', { name: /, 1 task due/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: 'Order wheels' })).toHaveAttribute('href', '/tasks?task=9');
+    fireEvent.click(screen.getByRole('button', { name: /Tasks due/ }));
+    expect(screen.queryAllByRole('button', { name: /task due/ })).toHaveLength(0);
+    expect(screen.queryByRole('link', { name: 'Order wheels' })).toBeNull();
   });
 
   it('managers create with the same POST body as Legacy', async () => {

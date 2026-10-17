@@ -113,8 +113,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ### PR 2.4: Calendar polish
 - [x] Month / Week / Agenda views
 - [x] ICS subscription feed
-- [ ] Task-due overlay on the calendar ("2 tasks" day badge, toggleable)
-- [ ] Event-type filter toggles in the toolbar
+- [x] Task-due overlay on the calendar ("2 tasks" day badge, toggleable; due tasks in the day list)
+- [x] Event-type filter toggles in the toolbar (already there)
 - [ ] "Unavailable times" per member
 - [ ] Mini-month navigator
 - [ ] High-contrast event blocks (a weak point in the competitor)
