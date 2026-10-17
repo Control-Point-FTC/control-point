@@ -22,7 +22,8 @@ import { matchKey } from "./ftcEvents.js";
 export type ScoutQuery = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 
 /** Seasons FTC Scout has stat types for (it rejects 2026 queries until it does). */
-export const SCOUT_SEASONS = [2022, 2023, 2024, 2025];
+// 2026 (BIOBUZZ): park endgame and HIVE TIPs (endgameField / scoutPointFields).
+export const SCOUT_SEASONS = [2022, 2023, 2024, 2025, 2026];
 
 // ---------------------------------------------------------------------------
 // Season field mapping

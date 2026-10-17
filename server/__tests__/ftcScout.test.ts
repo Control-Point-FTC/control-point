@@ -13,6 +13,7 @@ import {
   parseScoutSearch,
   parseScoutTeamEvents,
   mergeEventFull,
+  SCOUT_SEASONS,
   matchLabel,
   type FirstEventPieces,
 } from "../ftcScout";
@@ -238,6 +239,29 @@ describe("mergeEventFull", () => {
 });
 
 describe("BIOBUZZ (2026): park endgame and HIVE TIPs from FTC Scout", () => {
+  it("2026 is a supported FTC Scout season, so live events request it", () => {
+    expect(SCOUT_SEASONS).toContain(2026);
+  });
+
+  it("TIPS travel from an FTC Scout 2026 event into the merged live payload (FIRST primary)", () => {
+    const g = (o: Record<string, number>) => ({ autoPoints: 30, dcPoints: 90, dcParkPoints: 10, penaltyPointsCommitted: 0, penaltyPointsByOpp: 0, totalPointsNp: 120, totalPoints: 120, tips: 3, ...o });
+    const resp = scoutEventResp() as any;
+    for (const t of resp.data.eventByCode.teams) if (t.stats) t.stats = { ...t.stats, __typename: "TeamEventStats2026", opr: g({}), avg: null };
+    resp.data.eventByCode.matches[0].scores = { __typename: "MatchScores2026", red: g({ tips: 7, totalPoints: 171, totalPointsNp: 156 }), blue: g({ tips: 2, totalPoints: 242, totalPointsNp: 242 }) };
+    const first = {
+      event: { eventCode: "USNJCMPPKWY", name: "NJ", eventType: "Championship", venue: null, address: null, city: null, state: null, country: null, dateStart: "2026-03-15", dateEnd: "2026-03-15", timezone: null },
+      teams: [{ teamNumber: 4215, name: "A" }, { teamNumber: 14481, name: "B" }, { teamNumber: 17670, name: "C" }],
+      rankings: [],
+      results: [{ matchNumber: 1, level: "qual", series: 0, description: "Qualification 1", time: "2026-03-15T11:15:15", red: { teams: [14481, 4215], score: 171, auto: 30, foul: 15 }, blue: { teams: [17670], score: 242, auto: 30, foul: 0 } }],
+      schedule: [], alliances: [],
+    } as unknown as FirstEventPieces;
+    const ev = mergeEventFull(2026, "USNJCMPPKWY", first, parseScoutEvent(resp, 2026), { fetchedAt: "2026-10-05T10:00:00.000Z", partial: false });
+    const m = ev.matches.find((x) => x.key === "qual:0:1")!;
+    expect(m.red.score!.tips).toBe(7);
+    expect(m.blue.score!.tips).toBe(2);
+    expect(m.red.score!.endgame).toBe(10);
+  });
+
   it("asks 2026 types for park points and tips, and earlier seasons for neither", () => {
     const q26 = scoutEventQuery(2026), q25 = scoutEventQuery(2025);
     expect(q26).toContain("dcParkPoints");
