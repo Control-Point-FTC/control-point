@@ -68,5 +68,29 @@ describe('Checklists page', () => {
     expect(templateFromText('## Power\n- Charger on\n- [ ] Battery in\n\n## Pit\nTable set')).toEqual([{ title: 'Power', items: ['Charger on', 'Battery in'] }, { title: 'Pit', items: ['Table set'] }]);
     expect(templateFromText('one\ntwo')).toEqual([{ title: '', items: ['one', 'two'] }]);
     expect(templateToText(sections)).toBe('## Robot\nBattery charged\nWheels tight');
+    // A one-hash line is an item ("#10 wrench"), and an item starting with ## survives a round trip.
+    expect(templateFromText('## Tools\n#10 wrench packed')).toEqual([{ title: 'Tools', items: ['#10 wrench packed'] }]);
+    const odd = [{ id: 's1', title: 'Tools', items: [{ id: 'a', text: '## not a section' }] }];
+    expect(templateFromText(templateToText(odd))).toEqual([{ title: 'Tools', items: ['## not a section'] }]);
+  });
+
+  it('a reply for a run that is no longer open on screen is ignored', async () => {
+    let release: (v: any) => void = () => {};
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/checklists') return { ...overview, runs: [...overview.runs, { ...overview.runs[0], id: 8, title: 'Pit setup Fri' }] };
+      if (url === '/api/checklists/runs/7' && !init?.method) return new Promise((r) => { release = r; }); // slow
+      if (url === '/api/checklists/runs/8' && !init?.method) return { ...run, id: 8, title: 'Pit setup Fri' };
+      return {};
+    });
+    render(<ChecklistsPage />);
+    fireEvent.click(await screen.findByText('Pre-match Q12'));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByText('Pit setup Fri'));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByText('Pit setup Fri')).toBeInTheDocument();
+    release(run); // run 7's late reply
+    await new Promise((r) => setTimeout(r, 20));
+    expect(within(sheet).queryByText('Pre-match Q12')).toBeNull();
   });
 });

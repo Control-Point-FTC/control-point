@@ -95,5 +95,30 @@ describe("checklists", () => {
     const bad = await t.post("/api/ai/apply-actions", { actions: [{ kind: "checklist", items: [{ start: "Lab close" }, { run: runId, items: ["not an item"] }] }] }, ana);
     expect(bad.status).toBe(400);
     expect((await rows("SELECT * FROM checklist_runs WHERE title = 'Lab close'"))).toHaveLength(0);
+    // A card that deletes the event a new run is for is refused before anything is written.
+    const ev = (await t.post("/api/events", { title: "Qualifier", date: "2099-12-05" }, admin)).body.id;
+    const clash = await t.post("/api/ai/apply-actions", { actions: [{ kind: "delete-event", items: [{ id: ev }] }, { kind: "checklist", items: [{ start: "Lab close", event: ev }] }] }, admin);
+    expect(clash.status).toBe(400);
+    expect(await rows("SELECT id FROM events WHERE id = ?", ev)).toHaveLength(1);
+    // The lookup filters templates by name.
+    const only = await runLookups(db, team, "UTC", [{ kind: "checklists", query: "lab" } as any]);
+    expect(only).toMatch(/"Lab close"/);
+    expect(only).not.toMatch(/template #\d+ "Post-match"/);
+  });
+
+  it("the run log pages through finished runs", async () => {
+    const tpl = (await rows("SELECT id FROM checklist_templates WHERE title = 'Lab close'"))[0].id;
+    for (let i = 0; i < 52; i++) {
+      const id = (await t.post("/api/checklists/runs", { templateId: tpl, title: `Old ${i}` }, ana)).body.id;
+      await t.db.execute({ sql: "UPDATE checklist_runs SET status = 'finished', finished_at = ? WHERE id = ?", args: [new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(), id] });
+    }
+    const first = (await t.api("/api/checklists", { session: ana })).body;
+    const finished = first.runs.filter((r: any) => r.status === "finished");
+    expect(finished).toHaveLength(50);
+    expect(first.logMore).toBe(true);
+    expect(first.runs.some((r: any) => r.status === "open")).toBe(true);
+    const next = (await t.api(`/api/checklists/log?before=${encodeURIComponent(finished[49].finishedAt)}`, { session: ana })).body;
+    expect(next.runs.length).toBeGreaterThanOrEqual(2);
+    expect(next.more).toBe(false);
   });
 });

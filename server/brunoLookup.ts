@@ -324,13 +324,16 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
   } else if (q.kind === "checklists") {
     // Templates, and runs (open ones first) with progress and what's still to do.
     const parse = (raw: unknown): ChecklistSection[] => { try { const v = JSON.parse(String(raw)); return Array.isArray(v) ? v : []; } catch { return []; } };
+    // Errors reach runLookups (reported as a failed search, never as "no checklists").
+    const tw = wordsWhere(q.query, ["title"]);
+    const templates = await db(`SELECT id, title, sections FROM checklist_templates WHERE team_id = ? AND archived_at IS NULL${tw.sql} ORDER BY title LIMIT 41`, teamId, ...tw.args);
+    const ct = capped(templates, 40);
+    for (const t of ct.rows) lines.push(`checklist template #${t.id} ${JSON.stringify(clip(t.title, 80))} (${parse(t.sections).reduce((n, s) => n + s.items.length, 0)} items)`);
     const w = wordsWhere(q.query, ["r.title"]);
-    const templates = await db("SELECT id, title, sections FROM checklist_templates WHERE team_id = ? AND archived_at IS NULL ORDER BY title", teamId).catch(() => [] as any[]);
-    for (const t of templates.slice(0, 40)) lines.push(`checklist template #${t.id} ${JSON.stringify(clip(t.title, 80))} (${parse(t.sections).reduce((n, s) => n + s.items.length, 0)} items)`);
     const runs = await db(`SELECT r.id, r.title, r.status, r.sections, r.started_at, r.finished_at, e.title AS event_title FROM checklist_runs r LEFT JOIN events e ON e.id = r.event_id
-      WHERE r.team_id = ?${w.sql} ORDER BY r.status = 'open' DESC, COALESCE(r.finished_at, r.started_at) DESC LIMIT 11`, teamId, ...w.args).catch(() => [] as any[]);
+      WHERE r.team_id = ?${w.sql} ORDER BY r.status = 'open' DESC, COALESCE(r.finished_at, r.started_at) DESC LIMIT 11`, teamId, ...w.args);
     const c = capped(runs, 10);
-    more = c.more;
+    more = c.more || ct.more;
     for (const r of c.rows) {
       const sections = parse(r.sections);
       const items = await db("SELECT i.item_id, i.state, m.name AS who, a.name AS assignee FROM checklist_run_items i LEFT JOIN members m ON m.id = i.set_by LEFT JOIN members a ON a.id = i.assignee_id WHERE i.run_id = ?", r.id);

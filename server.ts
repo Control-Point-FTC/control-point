@@ -14601,6 +14601,9 @@ Rules:
             if (!t) return res.status(400).json({ error: `There's no "${ref.slice(0, 60)}" checklist — nothing was saved` });
             const eventId = it.event !== undefined && it.event !== null ? Number(String(it.event).replace(/^#/, "")) : undefined;
             if (eventId !== undefined && !(await dbGet("SELECT id FROM events WHERE id = ? AND team_id = ?", eventId, auth.teamId))) return res.status(400).json({ error: `Event #${eventId} isn't on the calendar — nothing was saved` });
+            // The same card can't delete the event a new run is for (it would fail halfway).
+            const deleting = actions.some((d: any) => d?.kind === "delete-event" && Array.isArray(d.items) && d.items.some((x: any) => Number(String(x?.id ?? "").replace(/^#/, "")) === eventId));
+            if (eventId !== undefined && deleting) return res.status(400).json({ error: `This card deletes event #${eventId} and starts a checklist for it — nothing was saved` });
             checklistPlan.push({ type: "start", templateId: Number(t.id), ...(typeof it.title === "string" && it.title.trim() ? { title: it.title } : {}), ...(eventId !== undefined ? { eventId } : {}) });
             continue;
           }

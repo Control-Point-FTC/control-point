@@ -21,6 +21,9 @@ export interface ChecklistDeps {
 }
 
 const MAX_NOTE = 200;
+const LOG_PAGE = 50;
+const RUN_SELECT = `SELECT r.*, e.title AS event_title, sb.name AS started_by_name, fb.name AS finished_by_name FROM checklist_runs r
+  LEFT JOIN events e ON e.id = r.event_id LEFT JOIN members sb ON sb.id = r.started_by LEFT JOIN members fb ON fb.id = r.finished_by`;
 const parseSections = (raw: unknown): ChecklistSection[] => { try { const v = JSON.parse(String(raw)); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 export class ChecklistError extends Error { constructor(message: string, readonly status = 400) { super(message); } }
@@ -46,9 +49,7 @@ export function checklistStore(deps: ChecklistDeps) {
       startedAt: r.started_at, startedByName: r.started_by_name ?? null, finishedAt: r.finished_at ?? null, finishedByName: r.finished_by_name ?? null,
       progress: progressOf(sections, st) };
   };
-  const runRow = (teamId: number, id: number) => dbGet(`SELECT r.*, e.title AS event_title, sb.name AS started_by_name, fb.name AS finished_by_name FROM checklist_runs r
-    LEFT JOIN events e ON e.id = r.event_id LEFT JOIN members sb ON sb.id = r.started_by LEFT JOIN members fb ON fb.id = r.finished_by
-    WHERE r.id = ? AND r.team_id = ?`, id, teamId);
+  const runRow = (teamId: number, id: number) => dbGet(`${RUN_SELECT} WHERE r.id = ? AND r.team_id = ?`, id, teamId);
 
   return {
     canManage,
@@ -56,16 +57,23 @@ export function checklistStore(deps: ChecklistDeps) {
       const teamId = auth.teamId!;
       const templates = (await dbAll("SELECT * FROM checklist_templates WHERE team_id = ? AND archived_at IS NULL ORDER BY title COLLATE NOCASE", teamId))
         .map((t) => ({ id: Number(t.id), title: t.title, description: t.description || "", starter: t.starter ?? null, sections: parseSections(t.sections), itemCount: itemCount({ sections: parseSections(t.sections) }) }));
-      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
-      const rows = await dbAll(`SELECT r.*, e.title AS event_title, sb.name AS started_by_name, fb.name AS finished_by_name FROM checklist_runs r
-        LEFT JOIN events e ON e.id = r.event_id LEFT JOIN members sb ON sb.id = r.started_by LEFT JOIN members fb ON fb.id = r.finished_by
-        WHERE r.team_id = ? AND (r.status = 'open' OR r.finished_at >= ?) ORDER BY r.status = 'open' DESC, COALESCE(r.finished_at, r.started_at) DESC LIMIT 100`, teamId, since);
+      // Every open run, then the newest page of the run log.
+      const open = await dbAll(`${RUN_SELECT} WHERE r.team_id = ? AND r.status = 'open' ORDER BY r.started_at DESC`, teamId);
+      const log = await this.runLog(auth);
       const runs = [];
-      for (const r of rows) runs.push(runSummary(r, await states(Number(r.id))));
+      for (const r of open) runs.push(runSummary(r, await states(Number(r.id))));
       return {
-        templates, runs, canManage: await canManage(auth),
+        templates, runs: [...runs, ...log.runs], logMore: log.more, canManage: await canManage(auth),
         starters: STARTER_CHECKLISTS.map((s) => ({ key: s.key, title: s.title, description: s.description, itemCount: itemCount(starterTemplate(s.key)!) })),
       };
+    },
+    /** Finished runs, newest first, a page at a time (before = the last finishedAt shown). */
+    async runLog(auth: Auth, before?: unknown) {
+      const cursor = typeof before === "string" && before ? before : "9999";
+      const rows = await dbAll(`${RUN_SELECT} WHERE r.team_id = ? AND r.status = 'finished' AND r.finished_at < ? ORDER BY r.finished_at DESC LIMIT ${LOG_PAGE + 1}`, auth.teamId, cursor);
+      const runs = [];
+      for (const r of rows.slice(0, LOG_PAGE)) runs.push(runSummary(r, await states(Number(r.id))));
+      return { runs, more: rows.length > LOG_PAGE };
     },
     async saveTemplate(auth: Auth, body: any, id?: number) {
       if (!(await canManage(auth))) throw new ChecklistError("Only members who can manage checklists can change templates", 403);
@@ -135,15 +143,19 @@ export function checklistStore(deps: ChecklistDeps) {
       const note = body?.note !== undefined ? String(body.note ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_NOTE) : undefined;
       const now = new Date().toISOString();
       const stateChange = body?.state !== undefined;
-      await dbRun(`INSERT INTO checklist_run_items (run_id, item_id, state, note, assignee_id, set_by, set_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      // The write itself requires the run to still be open, so a run finished
+      // meanwhile by someone else is never changed.
+      const w = await dbRun(`INSERT INTO checklist_run_items (run_id, item_id, state, note, assignee_id, set_by, set_at)
+        SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM checklist_runs WHERE id = ? AND status = 'open')
         ON CONFLICT(run_id, item_id) DO UPDATE SET
           state = CASE WHEN ? THEN excluded.state ELSE state END,
           note = CASE WHEN ? THEN excluded.note ELSE note END,
           assignee_id = CASE WHEN ? THEN excluded.assignee_id ELSE assignee_id END,
           set_by = CASE WHEN ? THEN excluded.set_by ELSE set_by END,
           set_at = CASE WHEN ? THEN excluded.set_at ELSE set_at END`,
-        runId, itemId, stateChange ? body.state : "open", note ?? "", assignee ?? null, stateChange ? auth.memberId : null, stateChange ? now : null,
+        runId, itemId, stateChange ? body.state : "open", note ?? "", assignee ?? null, stateChange ? auth.memberId : null, stateChange ? now : null, runId,
         stateChange ? 1 : 0, note !== undefined ? 1 : 0, assignee !== undefined ? 1 : 0, stateChange ? 1 : 0, stateChange ? 1 : 0);
+      if (!Number(w?.changes ?? w?.rowsAffected ?? 0)) throw new ChecklistError("This run was just finished — reopen it to change items");
       changed(auth.teamId!, runId);
       return (await this.run(auth, runId));
     },
@@ -160,7 +172,9 @@ export function checklistStore(deps: ChecklistDeps) {
       const r = await runRow(auth.teamId!, runId);
       if (!r) throw new ChecklistError("That run is gone", 404);
       if (r.status !== "open") throw new ChecklistError("Reopen the run before resetting it");
-      await dbRun("DELETE FROM checklist_run_items WHERE run_id = ?", runId);
+      // Only while still open: a run finished meanwhile keeps its record.
+      await dbRun("DELETE FROM checklist_run_items WHERE run_id = ? AND EXISTS (SELECT 1 FROM checklist_runs WHERE id = ? AND status = 'open')", runId, runId);
+      if ((await runRow(auth.teamId!, runId))?.status !== "open") throw new ChecklistError("This run was just finished — reopen it before resetting");
       changed(auth.teamId!, runId);
       return this.run(auth, runId);
     },
@@ -191,6 +205,7 @@ export function registerChecklistRoutes(app: Express, deps: ChecklistDeps) {
   };
   const id = (v: unknown) => { const n = Number(v); if (!Number.isSafeInteger(n) || n <= 0) throw new ChecklistError("Not found", 404); return n; };
   app.get("/api/checklists", handle((a) => store.overview(a)));
+  app.get("/api/checklists/log", handle((a, req) => store.runLog(a, req.query.before)));
   app.post("/api/checklists/templates", handle((a, req) => store.saveTemplate(a, req.body)));
   app.put("/api/checklists/templates/:id", handle((a, req) => store.saveTemplate(a, req.body, id(req.params.id))));
   app.delete("/api/checklists/templates/:id", handle((a, req) => store.archiveTemplate(a, id(req.params.id))));

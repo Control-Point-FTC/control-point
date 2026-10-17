@@ -3,7 +3,7 @@
 // off (who and when are recorded), marks them partly done or N/A, assigns
 // them, then finishes it. Finished runs stay in the run log and can be
 // reopened. Reset asks first. Live across the team.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleSlash, ClipboardList, Loader2, Pencil, Play, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react';
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import {
@@ -21,26 +21,34 @@ type Progress = { done: number; total: number; partial: number; na: number };
 type RunSummary = { id: number; title: string; templateId: number | null; eventId: number | null; eventTitle: string | null; status: 'open' | 'finished'; startedAt: string; startedByName: string | null; finishedAt: string | null; finishedByName: string | null; progress: Progress };
 type ItemInfo = { state: ItemState; note: string; assigneeId: number | null; assigneeName: string | null; setByName: string | null; setAt: string | null };
 type Run = RunSummary & { sections: ChecklistSection[]; items: Record<string, ItemInfo> };
-type Overview = { templates: Template[]; runs: RunSummary[]; starters: { key: string; title: string; description: string; itemCount: number }[]; canManage: boolean };
+type Overview = { logMore?: boolean; templates: Template[]; runs: RunSummary[]; starters: { key: string; title: string; description: string; itemCount: number }[]; canManage: boolean };
 
 const send = (url: string, method: string, body?: unknown) => apiJson<any>(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
 const pct = (p: Progress) => (p.total ? Math.round((p.done / p.total) * 100) : 100);
 
-/** "## Section" lines start a section; every other non-empty line is an item. */
+/**
+ * "## Section" lines (two hashes and a space) start a section; every other
+ * non-empty line is an item, so "#10 wrench packed" stays an item. An item
+ * that itself starts with "##" is written with a leading backslash and read
+ * back as is.
+ */
 export function templateFromText(text: string): { title: string; items: string[] }[] {
   const sections: { title: string; items: string[] }[] = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
-    const head = /^#{1,3}\s*(.*)$/.exec(line);
+    const head = /^##\s+(.*)$/.exec(line);
     if (head) { sections.push({ title: head[1].trim(), items: [] }); continue; }
     if (!sections.length) sections.push({ title: '', items: [] });
-    sections[sections.length - 1].items.push(line.replace(/^[-*]\s*(\[[ x]\]\s*)?/i, ''));
+    const item = line.startsWith('\\##') ? line.slice(1) : line.replace(/^[-*]\s+(\[[ x]\]\s*)?/i, '');
+    sections[sections.length - 1].items.push(item);
   }
   return sections;
 }
-export const templateToText = (sections: ChecklistSection[]) => sections.map((s) => [s.title ? `## ${s.title}` : '', ...s.items.map((i) => i.text)].filter(Boolean).join('\n')).join('\n\n');
+export const templateToText = (sections: ChecklistSection[]) => sections
+  .map((s) => [s.title ? `## ${s.title}` : '', ...s.items.map((i) => (i.text.startsWith('##') ? `\\${i.text}` : i.text))].filter(Boolean).join('\n'))
+  .join('\n\n');
 
 export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; members?: any[] }) {
   const [data, setData] = useState<Overview | null>(null);
@@ -48,8 +56,9 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
   const [openRun, setOpenRun] = useState<number | null>(null);
   const [starting, setStarting] = useState<Template | null | 'pick'>(null);
   const [editing, setEditing] = useState<Template | 'new' | null>(null);
+  const [olderLog, setOlderLog] = useState<{ runs: RunSummary[]; more: boolean } | null>(null);
 
-  const load = useCallback(() => apiJson<Overview>('/api/checklists', { cache: 'no-store' }).then((d) => { setData(d); setError(''); }).catch((e) => setError(e?.message || 'Could not load checklists')), []);
+  const load = useCallback(() => apiJson<Overview>('/api/checklists', { cache: 'no-store' }).then((d) => { setData(d); setOlderLog(null); setError(''); }).catch((e) => setError(e?.message || 'Could not load checklists')), []);
   useEffect(() => {
     void load();
     const on = () => { void load(); };
@@ -67,7 +76,15 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
   };
 
   const open = data?.runs.filter((r) => r.status === 'open') ?? [];
-  const finished = data?.runs.filter((r) => r.status === 'finished') ?? [];
+  const finished = [...(data?.runs.filter((r) => r.status === 'finished') ?? []), ...(olderLog?.runs ?? [])];
+  const logMore = olderLog ? olderLog.more : !!data?.logMore;
+  const loadOlder = async () => {
+    const last = finished[finished.length - 1]?.finishedAt;
+    try {
+      const r = await apiJson<{ runs: RunSummary[]; more: boolean }>(`/api/checklists/log?before=${encodeURIComponent(last ?? '')}`, { cache: 'no-store' });
+      setOlderLog((o) => ({ runs: [...(o?.runs ?? []), ...r.runs], more: r.more }));
+    } catch (e: any) { notify(e?.message || 'Could not load older runs', 'error'); }
+  };
   const missingStarters = data ? data.starters.filter((s) => !data.templates.some((t) => t.starter === s.key)) : [];
 
   return (
@@ -119,7 +136,7 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
             </Section>
           )}
           {finished.length > 0 && (
-            <Section title="Run log (last 30 days)">
+            <Section title="Run log">
               <ul className="divide-y divide-border rounded-lg border border-border">
                 {finished.map((r) => (
                   <li key={r.id}>
@@ -131,6 +148,7 @@ export function ChecklistsPage({ events = [], members = [] }: { events?: any[]; 
                   </li>
                 ))}
               </ul>
+              {logMore && <Button variant="outline" size="sm" className="mt-3" onClick={() => void loadOlder()}>Show older runs</Button>}
             </Section>
           )}
         </>
@@ -229,7 +247,11 @@ const STATE_STYLE: Record<ItemState, string> = { done: 'bg-success/15 text-succe
 function RunSheet({ runId, members, canManage, onClose, onChanged }: { runId: number | null; members: any[]; canManage: boolean; onClose: () => void; onChanged: () => void }) {
   const [run, setRun] = useState<Run | null>(null);
   const side = useIsNarrow() ? 'bottom' : 'right';
-  const load = useCallback(() => { if (runId) void apiJson<Run>(`/api/checklists/runs/${runId}`, { cache: 'no-store' }).then(setRun).catch(() => setRun(null)); }, [runId]);
+  // The run on screen: a reply that arrives after switching runs is dropped.
+  const current = useRef(runId);
+  current.current = runId;
+  const show = (id: number | null, r: Run | null) => { if (current.current === id) setRun(r); };
+  const load = useCallback(() => { const id = runId; if (id) void apiJson<Run>(`/api/checklists/runs/${id}`, { cache: 'no-store' }).then((r) => show(id, r)).catch(() => show(id, null)); }, [runId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setRun(null);
     load();
@@ -239,7 +261,8 @@ function RunSheet({ runId, members, canManage, onClose, onChanged }: { runId: nu
   }, [load, runId]);
 
   const act = async (fn: () => Promise<Run>) => {
-    try { setRun(await fn()); onChanged(); } catch (e: any) { notify(e?.message || 'Could not save that', 'error'); }
+    const id = runId;
+    try { show(id, await fn()); onChanged(); } catch (e: any) { if (current.current === id) notify(e?.message || 'Could not save that', 'error'); }
   };
   const setItem = (itemId: string, body: Record<string, unknown>) => act(() => send(`/api/checklists/runs/${runId}/items/${encodeURIComponent(itemId)}`, 'PUT', body));
   const reset = async () => {
