@@ -211,6 +211,7 @@ import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } fro
 import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
 import { cleanUnavailability, overlapsRange, type Unavailability } from "./src/utils/unavailability.js";
 import { insertedOnly, listedEvents, planFirstImport } from "./server/firstImport.js";
+import { nextMatchFor, pitText } from "./server/pitDisplay.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -11660,6 +11661,131 @@ Rules:
     }
   });
 
+  // ---- Pit display ----
+  // One secret no-login link per team for a spare screen in the pit or the
+  // shop: this week's agenda, the latest announcements, the next match at a
+  // live event and the check-in QR while a session runs. Admins create,
+  // replace or turn it off; the token is the only credential.
+  const pitUrl = (req: any, token: string) => `${(process.env.APP_URL || "").replace(/\/$/, "") || getBaseUrl(req)}/pit/${token}`;
+
+  app.get("/api/pit-display", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_members");
+      if (!auth) return;
+      const row = (await dbGet("SELECT token FROM pit_displays WHERE team_id = ?", auth.teamId)) as any;
+      res.json({ url: row ? pitUrl(req, row.token) : null });
+    } catch (error) {
+      console.error("Error reading the pit display link:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Create the link, or replace it with { reset: true } (the old one stops working).
+  app.post("/api/pit-display", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_members");
+      if (!auth || !auth.teamId) return auth && res.status(400).json({ error: "Join a workspace first" });
+      const row = (await dbGet("SELECT token FROM pit_displays WHERE team_id = ?", auth.teamId)) as any;
+      if (row && !req.body?.reset) return res.json({ url: pitUrl(req, row.token) });
+      const token = crypto.randomBytes(24).toString("base64url");
+      await dbRun("INSERT OR REPLACE INTO pit_displays (team_id, token, created_by, created_at) VALUES (?, ?, ?, ?)", auth.teamId, token, auth.memberId, new Date().toISOString());
+      res.json({ url: pitUrl(req, token) });
+    } catch (error) {
+      console.error("Error creating the pit display link:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/pit-display", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_members");
+      if (!auth) return;
+      await dbRun("DELETE FROM pit_displays WHERE team_id = ?", auth.teamId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error turning off the pit display:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // An event's matches, kept a minute: every pit screen refreshes each minute.
+  // Screens refreshing together share one upstream request, and a failure is
+  // remembered for 30 s (serving the last good list) so they don't all retry.
+  const pitEventCache = new Map<string, { at: number; ttl: number; data: any }>();
+  const pitEventInflight = new Map<string, Promise<any[] | null>>();
+  function pitEventMatches(season: number, code: string): Promise<any[] | null> {
+    const key = `${season}:${code.toLowerCase()}`;
+    const hit = pitEventCache.get(key);
+    if (hit && Date.now() - hit.at < hit.ttl) return Promise.resolve(hit.data);
+    const pending = pitEventInflight.get(key);
+    if (pending) return pending;
+    const remember = (data: any, ttl: number) => {
+      pitEventCache.set(key, { at: Date.now(), ttl, data });
+      if (pitEventCache.size > 200) pitEventCache.delete(pitEventCache.keys().next().value as string);
+      return data;
+    };
+    const run = getEventFull(season, code)
+      .then((ev) => remember(ev?.matches ?? null, 60_000))
+      .catch(() => remember(hit?.data ?? null, 30_000))
+      .finally(() => { pitEventInflight.delete(key); });
+    pitEventInflight.set(key, run);
+    return run;
+  }
+
+  // What the screen shows: no session (it's a kiosk), the token is the key.
+  app.get("/api/pit/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "");
+      if (!/^[A-Za-z0-9_-]{24,64}$/.test(token)) return res.status(404).json({ error: "This display link isn't valid" });
+      const pit = (await dbGet("SELECT team_id FROM pit_displays WHERE token = ?", token)) as any;
+      if (!pit) return res.status(404).json({ error: "This display link was turned off or replaced — ask an admin for the new one" });
+      const teamId = Number(pit.team_id);
+      const team = (await dbGet("SELECT name, ftc_team_number, timezone FROM teams WHERE id = ?", teamId)) as any;
+      const today = await workspaceToday(teamId);
+      const weekEnd = daysBefore(today, -6);
+      const events = (await dbAll(
+        "SELECT id, title, date, start_time, end_time, location, event_type FROM events WHERE team_id = ? AND date >= ? AND date <= ? ORDER BY date ASC, COALESCE(NULLIF(start_time, ''), '00:00') ASC LIMIT 12",
+        teamId, today, weekEnd,
+      )) as any[];
+      // Announcements: the latest posts in #announcements from the last two weeks.
+      const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+      const posts = (await (dbAll(
+        `SELECT m.content, m.timestamp, mem.name AS sender FROM messages m JOIN chat_channels c ON c.id = m.channel_id JOIN members mem ON mem.id = m.sender_id
+          WHERE m.team_id = ? AND c.team_id = m.team_id AND LOWER(c.name) = 'announcements' AND m.deleted_at IS NULL AND m.timestamp >= ?
+          ORDER BY m.timestamp DESC LIMIT 3`,
+        teamId, since,
+      ) as Promise<any[]>).catch(() => [])) as any[];
+      // Check-in: the live QR session, if one is running.
+      const qr = await activeSession(teamId);
+      // Next match: an imported official event that started in the last four days.
+      let match: any = null;
+      const number = Number(team?.ftc_team_number);
+      if (Number.isSafeInteger(number) && number > 0) {
+        const live = (await dbGet(
+          "SELECT title, first_event_code, first_event_season FROM events WHERE team_id = ? AND first_event_code IS NOT NULL AND date <= ? AND date >= ? ORDER BY date DESC LIMIT 1",
+          teamId, today, daysBefore(today, 4),
+        )) as any;
+        if (live) {
+          const matches = await pitEventMatches(Number(live.first_event_season) || currentFtcSeason(), String(live.first_event_code));
+          if (matches) match = { event: live.title, ...nextMatchFor(matches, number) };
+        }
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        team: { name: team?.name || "Team", number: Number.isSafeInteger(number) && number > 0 ? number : null },
+        timeZone: resolveTimeZone(team?.timezone),
+        today,
+        events: events.map((e) => ({ id: e.id, title: e.title, date: e.date, start_time: e.start_time || null, end_time: e.end_time || null, location: e.location || null, event_type: e.event_type || "other" })),
+        announcements: posts.map((p) => ({ text: pitText(p.content), by: p.sender, at: p.timestamp })).filter((p) => p.text),
+        checkin: qr ? { url: `${getBaseUrl(req)}/checkin/${qr.token}`, code: qr.code, expiresAt: new Date(parseDbUtc(qr.expires_at)).toISOString() } : null,
+        match,
+      });
+    } catch (error) {
+      console.error("Error loading the pit display:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // The feed itself: no session (calendar apps can't sign in), the token is the key.
   app.get("/api/calendar/feed/:file", async (req, res) => {
     try {
@@ -14748,6 +14874,10 @@ Rules:
           if (subsystems) await dbRun("UPDATE teams SET subsystems = ? WHERE id = ?", JSON.stringify(subsystems), auth.teamId);
           const wip = [...changes].reverse().find((c: any) => c.wipLimits !== undefined)?.wipLimits;
           if (wip !== undefined) await dbRun("UPDATE teams SET task_wip_limits = ? WHERE id = ?", Object.keys(wip).length ? JSON.stringify(wip) : null, auth.teamId);
+          // Pit display: on keeps an existing link (making one if there's none); off ends it.
+          const pit = [...changes].reverse().find((c: any) => c.pitDisplay !== undefined)?.pitDisplay;
+          if (pit === true) await dbRun("INSERT OR IGNORE INTO pit_displays (team_id, token, created_by, created_at) VALUES (?, ?, ?, ?)", auth.teamId, crypto.randomBytes(24).toString("base64url"), auth.memberId, createdAt);
+          if (pit === false) await dbRun("DELETE FROM pit_displays WHERE team_id = ?", auth.teamId);
           applied.workspace = changes.length;
         }
       }

@@ -12,6 +12,8 @@ export interface WorkspaceChange {
   subsystems?: string[];
   /** The task board's column limits, replacing the old ones ({} clears them). */
   wipLimits?: WipLimits;
+  /** Pit display link: true makes one if there's none, false turns it off. */
+  pitDisplay?: boolean;
 }
 
 /** Validate one proposed change. Unknown modules are dropped; null when nothing valid is left. */
@@ -35,7 +37,11 @@ export function parseWorkspaceChange(raw: unknown): WorkspaceChange | null {
     if (!w) return null;
     out.wipLimits = w;
   }
-  return disable.length || enable.length || out.subsystems || out.wipLimits ? out : null;
+  if (r.pit_display !== undefined) {
+    if (typeof r.pit_display !== "boolean") return null;
+    out.pitDisplay = r.pit_display;
+  }
+  return disable.length || enable.length || out.subsystems || out.wipLimits || out.pitDisplay !== undefined ? out : null;
 }
 
 /** The team's switched-off modules after applying a change. */

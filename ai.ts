@@ -688,6 +688,7 @@ WORKSPACE SETTINGS SKILL:
   * "disable" / "enable": module ids to switch off / on.
   * "subsystems": the FULL new list (keep the existing names the user didn't ask to remove), 1 to ${MAX_SUBSYSTEMS} names.
   * "wip_limits": the task board's column limits, e.g. {"in-progress": 4, "todo": 12} (whole numbers 1–99; {} removes them). The board shows "3 / 4" and flags a column that's over.
+  * "pit_display": true or false. The pit display is a full-screen page for a spare screen in the pit or the shop (no sign-in, refreshes itself): this week's events, the latest #announcements, the team's next match at a live official event, and the check-in QR while a session runs. true turns it on (keeping the current link if there is one); false turns it off so its link stops working. The link itself is in Calendar → Pit display (never make one up).
 - Only admins can change workspace settings; if the user isn't one, the app tells them when they confirm.
 - IMPORTANT: the block only PROPOSES the change; nothing changes until the user confirms. Never claim it already changed.
 

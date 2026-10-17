@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, CalendarOff, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Contrast, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarOff, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Contrast, Eye, List, ListTodo, MapPin, MonitorPlay, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -18,6 +18,7 @@ import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, typeMeta } from './CalendarSheets';
 import { SubscribeDialog } from './SubscribeDialog';
 import { AvailabilitySheet, awayFor, useUnavailability } from './Availability';
+import { PitDisplayDialog } from './PitDisplayDialog';
 import { isOpenStatus } from '../../../types/taskStatus';
 import { Link } from 'react-router-dom';
 import { Trophy } from 'lucide-react';
@@ -56,6 +57,7 @@ export function CalendarPage(props: any) {
   const [subscribeOpen, setSubscribeOpen] = useState(false);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
   const away = useUnavailability(ctl.todayKey, toDateKey(ctl.cursor));
+  const [pitOpen, setPitOpen] = useState(false);
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);
@@ -153,6 +155,7 @@ export function CalendarPage(props: any) {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setSubscribeOpen(true)}><CalendarPlus /> Subscribe</Button>
             <Button variant="outline" onClick={() => setAvailabilityOpen(true)}><CalendarOff /> My availability</Button>
+            {hasScope?.('admin') && <Button variant="outline" onClick={() => setPitOpen(true)}><MonitorPlay /> Pit display</Button>}
             {ctl.canManageCalendar && <ImportFirstButton onDone={() => refresh?.events?.()} />}
             {ctl.canManageCalendar && <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>}
           </div>
@@ -263,6 +266,7 @@ export function CalendarPage(props: any) {
       />
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
       <SubscribeDialog open={subscribeOpen} onOpenChange={setSubscribeOpen} />
+      {hasScope?.('admin') && <PitDisplayDialog open={pitOpen} onOpenChange={setPitOpen} />}
     </Page>
     </HighContrastCtx.Provider>
     </CalendarActionsCtx.Provider>
