@@ -40,9 +40,10 @@ describe("PredictMonitor", () => {
 
   it("labels every call with the engine version and scores versions apart", () => {
     const mon = new PredictMonitor(dir);
-    mon.record(forecast("pre", [fm(1, 0.8), fm(2, 0.3)], [[1, 0.6]]));
+    mon.record(forecast("pre", [{ ...fm(1, 0.8), modelId: "ctx-test" }, fm(2, 0.3)], [[1, 0.6]]));
     const snap = JSON.parse(readFileSync(join(dir, "live", "2025", "USXXQ1.json"), "utf8"));
     expect(snap.matches["qual:0:1"].engine).toBe(ENGINE_VERSION);
+    expect(snap.matches["qual:0:1"].model).toBe("ctx-test");
     expect(snap.advancement.pre.engine).toBe(ENGINE_VERSION);
     const live = mon.score(2025, [event([rec(1, 100, 50), rec(2, 40, 90)])], []);
     expect(live.matchesByEngine).toEqual({ [ENGINE_VERSION]: { n: 2, accuracy: 1, brier: live.matches.brier } });
