@@ -167,14 +167,14 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ## Phase 4: Checklists and 3D printing (new modules)
 
 ### PR 4.1: Checklists module
-- [ ] Templates with sections (timed: Morning / Between Matches / End of Day; or category: Power / Electronics / Pit), quantities
-- [ ] Starter templates: Pre-match (24), Post-match (9), Pit setup (27), Pit teardown (19), Travel day (12), Robot lockup (14), Competition debrief (8)
-- [ ] Runs with names, progress ("2 of 24"), item check-off recording who + time
-- [ ] Item assignees
-- [ ] N/A and partial states on items
-- [ ] Finish run; Reset run with confirmation (a weak point in the competitor)
-- [ ] Link a run to an event
-- [ ] Run log with Reopen
+- [~] Templates with sections (timed: Morning / Between Matches / End of Day; or category: Power / Electronics / Pit), quantities (sections done; per-item quantities not yet)
+- [x] Starter templates: Pre-match (24), Post-match (9), Pit setup (27), Pit teardown (19), Travel day (12), Robot lockup (14), Competition debrief (8)
+- [x] Runs with names, progress ("2 of 24"), item check-off recording who + time
+- [x] Item assignees
+- [x] N/A and partial states on items
+- [x] Finish run; Reset run with confirmation (a weak point in the competitor)
+- [x] Link a run to an event
+- [x] Run log with Reopen
 - [ ] Offline check-off
 
 ### PR 4.2: Checklist automation
