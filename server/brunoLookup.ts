@@ -19,7 +19,7 @@ import { awardById, parseTagList } from "../src/types/taskTags.js";
 import { describeActivity } from "./taskActivity.js";
 import { coversSlot, describeUnavailability, overlapsRange, type Unavailability } from "../src/utils/unavailability.js";
 
-export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability";
+export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal" | "sticky_notes" | "availability";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -48,11 +48,11 @@ export interface LookupQuery {
 
 /** Runs a notebook lookup for the asking member (Bruno-scoped access). */
 export type NotebookLookupRunner = (q: LookupQuery) => Promise<{ lines: string[]; more: boolean }>;
-const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_outline"];
+const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_outline", "notebook_journal"];
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability"];
+const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "notebook_journal", "sticky_notes", "availability"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
