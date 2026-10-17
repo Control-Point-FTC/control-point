@@ -12,6 +12,7 @@ import { NotebookError, type NotebookContext, type NotebookStore } from "./noteb
 import { markdownToNotebookBlocks, MarkdownTooLargeError, MARKDOWN_LIMIT } from "../src/notebook/markdownBlocks.js";
 import { notebookTemplate, NOTEBOOK_TEMPLATES } from "../src/notebook/templates.js";
 import { renderNotebookText } from "./brunoNotebook.js";
+import { cleanEntryMetaPatch, entryMetaSummary } from "../src/notebook/entryMeta.js";
 
 export type NotebookOp =
   | { op: "create"; title: string; section?: number; parent?: number; template?: string; markdown?: string }
@@ -19,12 +20,15 @@ export type NotebookOp =
   | { op: "replace"; page: number; block: string; blocks?: string[]; markdown: string }
   | { op: "rename"; page: number; title: string }
   | { op: "move"; page: number; section?: number; parent?: number | null }
-  | { op: "delete"; page: number };
+  | { op: "delete"; page: number }
+  /** Entry metadata: only the fields given change (null clears one). */
+  | { op: "tag"; page: number; meta: Record<string, unknown> };
 
 export const MAX_NOTEBOOK_OPS = 10;
 /** Most blocks one rewrite may replace. */
 export const MAX_RUN = 40;
-const OPS = ["create", "append", "replace", "rename", "move", "delete"] as const;
+const OPS = ["create", "append", "replace", "rename", "move", "delete", "tag"] as const;
+const META_KEYS: Record<string, string> = { workDate: "workDate", work_date: "workDate", type: "type", stage: "stage", subsystems: "subsystems", awards: "awards" };
 const bad = (msg: string) => new NotebookError(msg, 400);
 const posInt = (v: unknown) => { const n = Number(v); return Number.isSafeInteger(n) && n > 0 ? n : undefined; };
 const blockId = (v: unknown) => typeof v === "string" && /^[\w-]{1,64}$/.test(v) ? v : undefined;
@@ -73,6 +77,15 @@ export function parseNotebookOps(items: unknown): NotebookOp[] {
         const block = blockId(raw.block);
         if (!block) throw bad("A rewrite needs the block id it replaces");
         return { op: "replace", page: page!, block, markdown: markdownOf(raw.markdown, true) };
+      }
+      case "tag": {
+        const meta: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(raw)) if (META_KEYS[k]) meta[META_KEYS[k]] = v;
+        // Shape, dates, types and stages are checked now; subsystems against the team's list when shown and applied.
+        const subsystems = Array.isArray(meta.subsystems) ? meta.subsystems.map(String) : [];
+        const c = cleanEntryMetaPatch(meta, subsystems);
+        if ("error" in c) throw bad(c.error);
+        return { op: "tag", page: page!, meta };
       }
       case "rename": {
         const title = titleOf(raw.title);
@@ -186,6 +199,12 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
     if (!title) { out.push(unavailable(op.op)); continue; }
     const name = `"${clip(title, 80)}"`;
     if (op.op === "rename") out.push({ op: "rename", summary: `Rename ${name} to "${clip(op.title, 80)}"` });
+    else if (op.op === "tag") {
+      let teamSubsystems: string[] = [];
+      try { teamSubsystems = (await store.entryMeta(bruno(ctx), op.page)).teamSubsystems; } catch { out.push(unavailable(op.op)); continue; }
+      const c = cleanEntryMetaPatch(op.meta, teamSubsystems);
+      out.push("error" in c ? { op: "tag", summary: `Tag ${name}`, error: c.error } : { op: "tag", summary: `Tag ${name}: ${entryMetaSummary(c.patch)}` });
+    }
     else if (op.op === "delete") out.push({ op: "delete", summary: `Move ${name} and its subpages to the trash (restorable from Trash)`, destructive: true });
     else if (op.op === "move") {
       const where = destination(tree, op);
@@ -232,6 +251,10 @@ export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContex
       } else if (op.op === "append" || op.op === "replace") {
         const page = await store.mergeEdit(as, op.page, { transform: doc => op.op === "append" ? appendBlocks(doc, op.markdown, op.after) : replaceBlock(doc, op.block, op.markdown, op.blocks) });
         results.push({ op: op.op, pageId: page.id, title: page.title });
+      } else if (op.op === "tag") {
+        await store.saveEntryMeta(as, op.page, op.meta);
+        const page = await store.page(as, op.page);
+        results.push({ op: "tag", pageId: page.id, title: page.title });
       } else if (op.op === "rename") {
         const page = await store.mergeEdit(as, op.page, { title: op.title });
         results.push({ op: "rename", pageId: page.id, title: page.title });
