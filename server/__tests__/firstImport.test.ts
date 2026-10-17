@@ -15,6 +15,9 @@ describe("listedEvents / insertedOnly", () => {
     expect(listedEvents({ partial: false, data: { events: [] } })).toEqual([]);
     expect(listedEvents({ partial: true, data: { events: [{ code: "A" }] } })).toEqual([{ code: "A" }]);
     expect(listedEvents(null)).toEqual([]);
+    // FTC Scout down but FIRST's event list answered: a real empty season.
+    expect(listedEvents({ partial: true, eventsOk: true, data: { events: [] } })).toEqual([]);
+    expect(listedEvents({ partial: true, eventsOk: false, data: { events: [] } })).toBeNull();
   });
   it("announces only the rows this request wrote", () => {
     expect(insertedOnly(["a", "b", "c"], [{ changes: 1 }, { changes: 0 }, { changes: 1 }])).toEqual(["a", "c"]);

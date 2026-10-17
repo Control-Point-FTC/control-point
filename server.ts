@@ -5822,6 +5822,8 @@ async function startServer() {
     data: T;
     /** Some FIRST Events sub-requests failed; don't cache for the full TTL. */
     partial?: boolean;
+    /** Team payloads: a source answered for the event list (an empty list is then real, not an outage). */
+    eventsOk?: boolean;
   }
 
   /** Every data source errored (vs. answering "no such team/event"). */
@@ -5957,7 +5959,10 @@ async function startServer() {
       oprSource: scout?.opr?.tot ? "ftc-scout" : null,
       events,
     };
-    return { source, fetchedAt, data, partial: firstFailed || scoutFailed || firstEventsMissing };
+    // Whether some source actually answered for the event list (FIRST's events,
+    // or FTC Scout, whose 400/404 means "no data" rather than an outage).
+    const eventsOk = (!!firstTeam && eventsRes.status === "fulfilled") || !scoutFailed;
+    return { source, fetchedAt, data, partial: firstFailed || scoutFailed || firstEventsMissing, eventsOk };
   }
 
   /**

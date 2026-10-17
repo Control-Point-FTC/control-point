@@ -21,13 +21,15 @@ export function planFirstImport(events: FirstTeamEventRow[], alreadyImported: It
 }
 
 /**
- * The team's listed events from a getTeamData payload, or null when a source
- * failed and nothing came back (an outage, not an empty season: ask to retry).
+ * The team's listed events from a getTeamData payload, or null when no event
+ * source answered and nothing came back (an outage, not an empty season: ask
+ * to retry). One source failing while the other answered is a real answer.
  */
 export function listedEvents(payload: any): FirstTeamEventRow[] | null {
   const listed = payload?.data?.events ?? payload?.events ?? [];
   const rows = Array.isArray(listed) ? listed : [];
-  return payload?.partial && !rows.length ? null : rows;
+  const answered = payload?.eventsOk ?? !payload?.partial;
+  return !answered && !rows.length ? null : rows;
 }
 
 /** The planned events this request actually wrote (INSERT OR IGNORE skips ones a parallel import added). */
