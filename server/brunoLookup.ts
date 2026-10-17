@@ -17,8 +17,9 @@
 // through server/brunoNotebook.ts (protected content is never visible there).
 import { awardById, parseTagList } from "../src/types/taskTags.js";
 import { describeActivity } from "./taskActivity.js";
+import { coversSlot, describeUnavailability, overlapsRange, type Unavailability } from "../src/utils/unavailability.js";
 
-export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes";
+export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -51,7 +52,7 @@ const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_out
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes"];
+const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -165,6 +166,23 @@ const clip = (s: unknown, n: number) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
+
+/** Today in the team's timezone ("YYYY-MM-DD"). */
+const teamToday = (tz: string) => new Date().toLocaleDateString("en-CA", { timeZone: tz });
+
+/** Active members' unavailable times touching from..to (never the private notes). */
+async function awayRows(db: DbAll, teamId: number, from: string, to: string, person?: string): Promise<(Unavailability & { member_name: string })[]> {
+  const args: any[] = [teamId, to, from];
+  let sql = `SELECT u.id, u.member_id, u.start_date, u.end_date, u.weekday, u.start_time, u.end_time, m.name AS member_name
+    FROM member_unavailability u JOIN members m ON m.id = u.member_id
+    WHERE u.team_id = ? AND m.team_id = u.team_id AND COALESCE(m.is_active, 1) = 1 AND u.start_date <= ? AND (u.end_date IS NULL OR u.end_date >= ?)`;
+  if (person) { sql += " AND LOWER(m.name) LIKE ? ESCAPE '\'"; args.push(`%${likeEsc(person.toLowerCase())}%`); }
+  sql += " ORDER BY u.start_date, m.name LIMIT 500";
+  const rows = await db(sql, ...args).catch(() => [] as any[]);
+  return rows
+    .map((r: any) => ({ ...r, weekday: r.weekday === null || r.weekday === undefined ? null : Number(r.weekday) }))
+    .filter((r: any) => overlapsRange(r, from, to));
+}
 
 const utcFrom = (date: string, tz: string) => new Date(zonedMidnightMs(date, tz)).toISOString();
 const utcBefore = (date: string, tz: string) => new Date(zonedMidnightMs(nextDay(date), tz)).toISOString();
@@ -291,10 +309,31 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
     sql += " ORDER BY date ASC, start_time ASC LIMIT 61";
     const c = capped(await db(sql, ...args), 60);
     more = c.more;
+    // Who's away for each event (unavailable times overlapping its date and time).
+    const dates = c.rows.map((r: any) => String(r.date)).sort();
+    const away = dates.length ? await awayRows(db, teamId, dates[0], dates[dates.length - 1]) : [];
+    const awayFor = (r: any) => {
+      const names = [...new Set(away.filter((u) => coversSlot(u, r.date, r.start_time, r.end_time)).map((u) => clip(u.member_name, 40)))];
+      return names.length ? `; away: ${names.slice(0, 15).join(", ")}${names.length > 15 ? ", …" : ""}` : "";
+    };
     for (const r of c.rows) {
       ids.push(`event:${r.id}`);
-      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it${rsvpNames(r.rsvp_names)})` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it${rsvpNames(r.rsvp_names)})` : ""}${awayFor(r) ? ` (${awayFor(r).slice(2)})` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
+  } else if (q.kind === "availability") {
+    // When members can't be there: date ranges and weekly slots, never the private note.
+    const from = q.from || teamToday(tz);
+    const to = q.to && q.to >= from ? q.to : new Date(Date.parse(`${from}T12:00:00Z`) + 30 * 86400000).toISOString().slice(0, 10);
+    const rows = await awayRows(db, teamId, from, to, q.person);
+    const c = capped(rows, 80);
+    more = c.more;
+    for (const u of c.rows) {
+      const span = u.weekday !== null
+        ? `every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(u.weekday)]} from ${u.start_date}${u.end_date ? ` until ${u.end_date}` : ""}`
+        : u.end_date && u.end_date !== u.start_date ? `${u.start_date} to ${u.end_date}` : `on ${u.start_date}`;
+      lines.push(`away #${u.id} ${clip(u.member_name, 40)} unavailable ${span}, ${u.start_time && u.end_time ? `${u.start_time}–${u.end_time}` : "all day"} (${describeUnavailability(u)})`);
+    }
+    if (!rows.length) summary = `Nobody has marked themselves unavailable between ${from} and ${to}.`;
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);
     const args: any[] = [teamId, ...w.args];
@@ -446,7 +485,7 @@ function rsvpNames(raw: unknown): string {
   return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");
 }
 
-const HIDDEN_BLOCK_KINDS = ["event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
+const HIDDEN_BLOCK_KINDS = ["away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 

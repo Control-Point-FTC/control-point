@@ -16,6 +16,7 @@ import { locationHref, MAX_AGENDA } from '../../../types/eventTypes';
 import { RSVP_MODES, RSVP_MODE_LABELS, RSVP_STATUS_LABELS, cleanRsvpMode } from '../../../types/eventRsvp';
 import { RsvpButtons, rsvpCountsText } from '../../ui/RsvpButtons';
 import { apiFetch } from '../../../services/api';
+import { AwayLine } from './Availability';
 
 type Ctl = ReturnType<typeof useCalendarController>;
 
@@ -51,8 +52,10 @@ function useSheetSide() {
   return useIsNarrow() ? 'bottom' : 'right';
 }
 
-export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
+export function EventViewSheet({ event, onOpenChange, ctl, teams, away = [] }: {
   event: any | null;
+  /** Members whose unavailable times clash with it. */
+  away?: string[];
   onOpenChange: (open: boolean) => void;
   ctl: Ctl;
   teams: any[];
@@ -93,6 +96,7 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
                   <dd>{reminderLabel(event.reminder_minutes)}{!event.start_time && Number(event.reminder_minutes) < 1440 ? ' 9 AM' : ''}</dd>
                 </>)}
               </dl>
+              <AwayLine names={away} />
               {cleanRsvpMode(event.rsvp_mode) && cleanRsvpMode(event.rsvp_mode) !== 'none' && (
                 <RsvpSection event={event} />
               )}

@@ -209,6 +209,7 @@ import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
 import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
+import { cleanUnavailability, overlapsRange } from "./src/utils/unavailability.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
 import { describeActivity, logTaskActivity, mentionedMembers, taskEditActivity } from "./server/taskActivity.js";
@@ -11152,6 +11153,111 @@ Rules:
   });
 
   /**
+   * Unavailable times: when members can't be there. Everyone on the team sees
+   * who is away and when; the note only reaches the member and attendance
+   * managers. Members manage their own; attendance managers can add or remove
+   * anyone's (a coach entering a student's exam week).
+   */
+  async function canManageAway(auth: any): Promise<boolean> {
+    return (await hasPerm(auth, "manage_attendance")) || (await hasPerm(auth, "manage_members"));
+  }
+
+  /** Active members' unavailable times touching from..to (team-local dates), with names. */
+  async function teamUnavailability(teamId: number, from: string, to: string): Promise<any[]> {
+    const rows = (await dbAll(
+      `SELECT u.*, m.name AS member_name FROM member_unavailability u JOIN members m ON m.id = u.member_id
+        WHERE u.team_id = ? AND m.team_id = u.team_id AND COALESCE(m.is_active, 1) = 1
+          AND u.start_date <= ? AND (u.end_date IS NULL OR u.end_date >= ?)
+        ORDER BY u.start_date, m.name LIMIT 1000`,
+      teamId, to, from,
+    )) as any[];
+    return rows.filter((r) => overlapsRange({ ...r, weekday: r.weekday === null ? null : Number(r.weekday) }, from, to));
+  }
+
+  /** Adds one unavailable time for a member of this team; the caller has checked who may. */
+  async function addUnavailability(teamId: number, memberId: number, input: any): Promise<{ error: string } | { id: number }> {
+    const c = cleanUnavailability(input);
+    if ("error" in c) return c;
+    const n = (await dbGet("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", memberId)) as any;
+    if (Number(n?.n || 0) >= 100) return { error: "That's 100 unavailable times already — remove some old ones first" };
+    const v = c.value;
+    const r = (await dbRun(
+      "INSERT INTO member_unavailability (team_id, member_id, start_date, end_date, weekday, start_time, end_time, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      teamId, memberId, v.start_date, v.end_date, v.weekday, v.start_time, v.end_time, v.note || "", new Date().toISOString(),
+    )) as any;
+    broadcastToTeam(teamId, { type: "availability_changed" });
+    return { id: Number(r?.lastInsertRowid) };
+  }
+
+  /** Removes one; members their own, attendance managers anyone's on the team. */
+  async function removeUnavailability(auth: any, id: number): Promise<{ error: string; status: number } | { ok: true }> {
+    const row = (await dbGet("SELECT id, member_id FROM member_unavailability WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+    if (!row) return { error: "That unavailable time is already gone", status: 404 };
+    if (Number(row.member_id) !== auth.memberId && !(await canManageAway(auth))) return { error: "You can only remove your own unavailable times", status: 403 };
+    await dbRun("DELETE FROM member_unavailability WHERE id = ?", id);
+    broadcastToTeam(auth.teamId, { type: "availability_changed" });
+    return { ok: true };
+  }
+
+  app.get("/api/unavailability", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const today = await workspaceToday(auth.teamId);
+      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? String(req.query.from) : today;
+      const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? String(req.query.to) : daysBefore(from, -120);
+      if (to < from || Date.parse(to) - Date.parse(from) > 400 * 86_400_000) return res.status(400).json({ error: "Pick a range of a year or less" });
+      const managers = await canManageAway(auth);
+      const rows = await teamUnavailability(auth.teamId!, from, to);
+      res.json({
+        from, to, can_manage: managers,
+        items: rows.map((r) => ({
+          id: Number(r.id), member_id: Number(r.member_id), member_name: r.member_name,
+          start_date: r.start_date, end_date: r.end_date ?? null, weekday: r.weekday === null ? null : Number(r.weekday),
+          start_time: r.start_time ?? null, end_time: r.end_time ?? null,
+          ...(managers || Number(r.member_id) === auth.memberId ? { note: r.note || "" } : {}),
+        })),
+      });
+    } catch (error) {
+      console.error("Error loading unavailable times:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/unavailability", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      let memberId = auth.memberId;
+      if (req.body?.member_id !== undefined && req.body?.member_id !== null && Number(req.body.member_id) !== auth.memberId) {
+        if (!(await canManageAway(auth))) return res.status(403).json({ error: "You can only add your own unavailable times" });
+        const m = (await dbGet("SELECT id FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", req.body.member_id, auth.teamId)) as any;
+        if (!m) return res.status(400).json({ error: "Pick someone on this team" });
+        memberId = Number(m.id);
+      }
+      const r = await addUnavailability(auth.teamId!, memberId, req.body);
+      if ("error" in r) return res.status(400).json({ error: r.error });
+      res.json({ success: true, id: r.id });
+    } catch (error) {
+      console.error("Error saving an unavailable time:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/unavailability/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const r = await removeUnavailability(auth, Number(req.params.id));
+      if ("error" in r) return res.status(r.status).json({ error: r.error });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error removing an unavailable time:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
    * "Mark the rest absent" for an event: once its late window has passed (team
    * clock), everyone it's for who still has no mark that day becomes Unexcused.
    * The check and the write are one statement per member, so an arrival or an
@@ -13577,6 +13683,8 @@ Rules:
         t = t.replace(/```task-comment\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-comment[\s\S]*$/, "");
         // RSVPs too.
         t = t.replace(/```event-rsvp\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```event-rsvp[\s\S]*$/, "");
+        // Unavailable times too.
+        t = t.replace(/```away\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```away[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -14243,6 +14351,29 @@ Rules:
           rsvpTargets.set(id, event);
         }
       }
+      // Unavailable times: the confirming member's own; every one is checked before anything is written.
+      const awayRemovals = new Set<number>();
+      let awayAdds = 0;
+      for (const a of actions) {
+        if (a?.kind !== "away" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          if (it?.remove !== undefined) {
+            const id = Number(String(it.remove).replace(/^#/, ""));
+            const row = Number.isSafeInteger(id) && id > 0 ? ((await dbGet("SELECT member_id FROM member_unavailability WHERE id = ? AND team_id = ?", id, auth.teamId)) as any) : null;
+            if (!row) return res.status(400).json({ error: `Unavailable time #${id} no longer exists — nothing was saved` });
+            if (Number(row.member_id) !== auth.memberId && !(await canManageAway(auth))) return res.status(400).json({ error: "You can only remove your own unavailable times — nothing was saved" });
+            awayRemovals.add(id);
+            continue;
+          }
+          const c = cleanUnavailability(it);
+          if ("error" in c) return res.status(400).json({ error: `${c.error} — nothing was saved` });
+          awayAdds++;
+        }
+      }
+      if (awayAdds) {
+        const have = (await dbGet("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", auth.memberId)) as any;
+        if (Number(have?.n || 0) + awayAdds > 100) return res.status(400).json({ error: "That would pass 100 unavailable times — remove some old ones first; nothing was saved" });
+      }
       // Comments go on tasks this member can see, checked before anything is written.
       const commentTargets = new Map<number, any>();
       for (const a of actions) {
@@ -14478,6 +14609,19 @@ Rules:
             if (!("error" in r)) { made("event-rsvp", event.id); n++; }
           }
           if (n) applied["event-rsvp"] = (applied["event-rsvp"] || 0) + n;
+        } else if (kind === "away") {
+          // The confirming member's own unavailable times (anyone can mark when they're away).
+          let n = 0;
+          for (const it of items) {
+            if (it?.remove !== undefined) {
+              const id = Number(String(it.remove).replace(/^#/, ""));
+              if (awayRemovals.has(id) && "ok" in (await removeUnavailability(auth, id))) n++;
+              continue;
+            }
+            const r = await addUnavailability(auth.teamId!, auth.memberId, it);
+            if (!("error" in r)) { made("away", r.id); n++; }
+          }
+          if (n) applied.away = (applied.away || 0) + n;
         } else if (kind === "task-comment") {
           // Comments on tasks, posted as the confirming member (mentions and followers are notified).
           let n = 0;
