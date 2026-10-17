@@ -7,6 +7,8 @@
 // Blocks are built as lists of lines and joined with one blank line, so the
 // user's own text (code especially) is never rewritten afterwards.
 
+import { entryMetaSummary, type EntryMeta } from './entryMeta';
+
 type PMMark = { type?: string; attrs?: Record<string, any> };
 type PMNode = { type?: string; text?: string; attrs?: Record<string, any>; content?: PMNode[]; marks?: PMMark[] };
 
@@ -146,4 +148,12 @@ export function notebookPageMarkdown(page: { title?: string; content?: unknown; 
 export function markdownFileName(title: string | undefined): string {
   const base = String(title || 'notebook-page').toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_]+/g, '-').replace(/-+/g, '-').slice(0, 80);
   return `${base || 'notebook-page'}.md`;
+}
+
+/** The page's entry details as one export line (type, stage, work date, subsystems, awards), or none. */
+export function entryDetailsLine(entry: EntryMeta | null | undefined): string[] {
+  if (!entry) return [];
+  const set = Object.fromEntries(Object.entries(entry).filter(([k, v]) => k !== 'updatedAt' && v !== null && !(Array.isArray(v) && !v.length)));
+  const text = entryMetaSummary(set);
+  return text ? [text.charAt(0).toUpperCase() + text.slice(1)] : [];
 }

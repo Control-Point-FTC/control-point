@@ -3,6 +3,7 @@ import {DOMSerializer} from '@tiptap/pm/model';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {notebookSchema,validatedNotebookDocument} from './editorSchema';
 import {validatedCanvas} from './canvasModel';
+import { entryMetaSummary } from './entryMeta';
 import {fileBlob} from './NotebookAttachments';
 import {prepareAnnotatedPdf,printAnnotation,type PrintBudget} from './pdfPrint';
 import type {NotebookSync} from './NotebookSync';
@@ -25,6 +26,9 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
   const article=document.createElement('article');article.className='notebook-sheet';
   const title=document.createElement('h1');title.textContent=page.title;article.append(title);
   const date=document.createElement('p');date.className='print-page-date';const when=new Date(page.updatedAt);date.textContent=`Revision ${page.revision} · ${Number.isNaN(when.getTime())?page.updatedAt:when.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})}`;article.append(date);
+  // Entry details print under the date (type, stage, work date, subsystems, awards).
+  const entryText=page.entry?entryMetaSummary(Object.fromEntries(Object.entries(page.entry).filter(([k,v])=>k!=='updatedAt'&&v!==null&&!(Array.isArray(v)&&!v.length)))):'';
+  if(entryText){const entry=document.createElement('p');entry.className='print-page-entry';entry.textContent=entryText.charAt(0).toUpperCase()+entryText.slice(1);article.append(entry);}
   const stage=document.createElement('div');stage.className='notebook-print-stage';
   const width=Math.max(120,size.width,...canvas.objects.filter(item=>!item.pdfScope).map(item=>item.x+item.width));
   const height=Math.max(600,size.height,...canvas.objects.filter(item=>!item.pdfScope).map(item=>item.y+item.height));

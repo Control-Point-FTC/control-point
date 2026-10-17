@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { markdownFileName, notebookPageMarkdown } from '../markdownExport';
+import { entryDetailsLine, markdownFileName, notebookPageMarkdown } from '../markdownExport';
 
 const t = (text: string, marks?: any[]) => ({ type: 'text', text, ...(marks ? { marks } : {}) });
 const p = (...content: any[]) => ({ type: 'paragraph', content });
@@ -87,5 +87,13 @@ describe('inline code edge spaces', () => {
     const md = notebookPageMarkdown({ title: 'x', content: { type: 'doc', content: [p(t('  x', [{ type: 'code' }])), p(t(' y ', [{ type: 'code' }]))] } });
     expect(md).toContain('`  x`');
     expect(md).toContain('`  y  `');
+  });
+});
+
+describe('entry details in the export', () => {
+  it('adds the details line when a page has them', () => {
+    expect(entryDetailsLine({ workDate: '2026-10-15', type: 'test', stage: null, subsystems: ['Intake'], awards: [] })).toEqual(['Type Test · work happened on 2026-10-15 · subsystems Intake']);
+    expect(entryDetailsLine(null)).toEqual([]);
+    expect(notebookPageMarkdown({ title: 'x', createdAt: '2026-10-16T12:00:00Z', content: { type: 'doc', content: [] } }, entryDetailsLine({ workDate: null, type: 'build', stage: null, subsystems: [], awards: [] }))).toContain('*Written 2026-10-16 · Type Build*');
   });
 });

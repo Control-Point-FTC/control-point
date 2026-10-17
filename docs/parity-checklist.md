@@ -130,14 +130,14 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ## Phase 3: Engineering notebook upgrades
 
 ### PR 3.1: Entry metadata
-- [ ] "Work happened on" date separate from created date
-- [ ] Type chips: Prototype, Build, Code, Test, Outreach, Meeting, Competition, Failure
-- [ ] Stage chips: Identify Problem, Brainstorm, Research, Design, Build, Program, Test, Iterate
-- [ ] Subsystem chips (PR 0.1)
-- [ ] Award chips with judging hover (PR 0.1)
-- [ ] Multiple authors per entry + "Written by … · last edited by …" footer
+- [x] "Work happened on" date separate from created date
+- [x] Type chips: Prototype, Build, Code, Test, Outreach, Meeting, Competition, Failure
+- [x] Stage chips: Identify Problem, Brainstorm, Research, Design, Build, Program, Test, Iterate
+- [x] Subsystem chips (PR 0.1)
+- [x] Award chips with judging hover (PR 0.1)
+- [x] Multiple authors per entry + "Written by … · last edited by …" footer
 - [ ] Linked records rail: link tasks, events, orders, checklist runs
-- [ ] Read-time estimate
+- [x] Read-time estimate
 
 ### PR 3.2: Journal and Board views
 - [x] Book/section/page tree
