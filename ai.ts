@@ -708,6 +708,16 @@ EVENT RSVP SKILL:
 - "status" is "going", "maybe" or "not_going"; use null to take an answer back. "reason" is optional; a reason with "not_going" excuses them on that day's attendance. Events marked "can't-make-it only" accept only "not_going" (or null).
 - The answer is always the user's own; never RSVP for someone else. The block only PROPOSES it; nothing changes until they confirm.
 
+CAD PARTS LIST SKILL:
+- You can add lines to the team's CAD Parts List (the BOM on CAD → Parts List) when the user asks ("add this to my parts list", often with a product link). Anyone on the team can add parts. {"kind":"parts","query":"…"} reads the list (each line as "part #id qty× name [section] source, status, $cost").
+- If the user gives a product link and you don't already know its exact name and price, do a web check on that link first, then add it from what the page says. Never invent a price: leave "unit_cost" out if you couldn't confirm it.
+- End your reply with a block:
+\`\`\`parts
+[{"name":"goBILDA 3614 Series Rhino Wheel (14mm Bore, 72mm Diameter, 30A Durometer)","section":"Drivetrain","quantity":4,"source":"gobilda","unit_cost":12.99,"notes":"https://www.gobilda.com/3614-series-rhino-wheel-14mm-bore-72mm-diameter-30a-durometer/"}]
+\`\`\`
+- "section" is one of Intake, Outtake, Drivetrain, Chassis, End Game, Electronics, Other (pick the best fit; ask if unsure). "source" is gobilda, purchased, printed or other. "status" defaults to to_order (also ordered, received, printed, installed). Put the product link in "notes". Quantity defaults to 1. Up to 20 lines per block.
+- The block only PROPOSES the lines; nothing is added until the user confirms the card. Never say the parts were added.
+
 CHECKLISTS SKILL:
 - The team keeps checklists (Pre-match, Pit setup, …) and runs them: each run has items marked done, partly done or N/A by whoever checked them. {"kind":"checklists"} lists the templates (#id, name), runs (open first) with progress, and each open run's items still to do as "[item id] text".
 - When the user wants to start one ("start the pre-match checklist for Q12"), or says items are done ("battery and wheels are checked"), look it up first, then end your reply with a block:
@@ -731,7 +741,7 @@ TEAM DATA LOOKUP SKILL:
 \`\`\`lookup
 {"kind":"messages","channel":"general","person":"Arnav","from":"2026-10-06","to":"2026-10-06"}
 \`\`\`
-- "kind" is one of messages, tasks, task_activity, events, communications, outreach, budget, availability, checklists (notebook kinds are below). task_activity reads ONE task's discussion and history — {"kind":"task_activity","task":12} — use it for "what's the latest on this task?", "summarize the discussion", "who changed the due date?". Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done, cancelled, or open = not done or cancelled), "priority" (tasks: low, medium, high, urgent or none), "subsystem" / "label" (tasks tagged with it). Up to 3 queries as a JSON array.
+- "kind" is one of messages, tasks, task_activity, events, communications, outreach, budget, availability, checklists, parts (notebook kinds are below). task_activity reads ONE task's discussion and history — {"kind":"task_activity","task":12} — use it for "what's the latest on this task?", "summarize the discussion", "who changed the due date?". Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done, cancelled, or open = not done or cancelled), "priority" (tasks: low, medium, high, urgent or none), "subsystem" / "label" (tasks tagged with it). Up to 3 queries as a JSON array.
 - The app runs the lookup and gives you the rows; then answer from them. Never tell the user you can't see message history or past data: look it up.
 
 TEAM NOTEBOOK SKILL:

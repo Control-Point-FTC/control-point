@@ -13930,6 +13930,8 @@ Rules:
         t = t.replace(/```checklist\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```checklist[\s\S]*$/, "");
         // The appearance switch is applied in the browser as the reply finishes; it's never shown or saved.
         t = t.replace(/```appearance\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```appearance[\s\S]*$/, "");
+        // CAD parts list additions too.
+        t = t.replace(/```parts\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```parts[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -14597,6 +14599,16 @@ Rules:
         }
       }
       // Unavailable times: the confirming member's own; every one is checked before anything is written.
+      // CAD parts list lines: every one is validated (same rules as the Parts List page) before anything is written.
+      const partLines: NonNullable<ReturnType<typeof sanitizePartInput>["value"]>[] = [];
+      for (const a of actions) {
+        if (a?.kind !== "part" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          const p = sanitizePartInput(it);
+          if (!p.ok) return res.status(400).json({ error: `${p.error} — nothing was saved` });
+          partLines.push(p.value!);
+        }
+      }
       const awayRemovals = new Set<number>();
       const awayAdds: Unavailability[] = [];
       for (const a of actions) {
@@ -14910,6 +14922,17 @@ Rules:
             if (!("error" in r)) { made("event-rsvp", event.id); n++; }
           }
           if (n) applied["event-rsvp"] = (applied["event-rsvp"] || 0) + n;
+        } else if (kind === "part") {
+          // Lines added to the CAD Parts List as the confirming member (anyone on the team can, like the page).
+          let n = 0;
+          for (const v of partLines.splice(0)) {
+            const r: any = await dbRun(
+              `INSERT INTO cad_parts (team_id, name, section, quantity, source, unit_cost, status, assignee, notes, created_by, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              auth.teamId, v.name, v.section, v.quantity, v.source, v.unit_cost, v.status, v.assignee, v.notes, auth.memberId, createdAt, createdAt);
+            made("part", r?.lastInsertRowid); n++;
+          }
+          if (n) applied.part = (applied.part || 0) + n;
         } else if (kind === "away") {
           // Written above, before anything else, as one batch.
           continue;

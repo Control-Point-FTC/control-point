@@ -283,7 +283,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     try {
       const result = await applyActionProposalsWithIds(proposals);
       const applied = result.applied;
-      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k));
+      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k === 'part' ? 'cad-parts' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
     } catch (e: any) {

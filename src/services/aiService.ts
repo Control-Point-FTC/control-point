@@ -211,7 +211,7 @@ import { stripNotebookBlocks } from "./notebookProposals";
 
 export function stripEventBlocks(text: string): string {
   // Notebook blocks first: their JSON may quote other fences inside strings.
-  return stripNotebookBlocks(String(text || "")).replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```task-update[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").replace(/```workspace[\s\S]*?(```|$)/g, "").replace(/```task-comment[\s\S]*?(```|$)/g, "").replace(/```event-rsvp[\s\S]*?(```|$)/g, "").replace(/```away[\s\S]*?(```|$)/g, "").replace(/```checklist[\s\S]*?(```|$)/g, "").replace(/```appearance[\s\S]*?(```|$)/g, "")
+  return stripNotebookBlocks(String(text || "")).replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```task-update[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").replace(/```workspace[\s\S]*?(```|$)/g, "").replace(/```task-comment[\s\S]*?(```|$)/g, "").replace(/```event-rsvp[\s\S]*?(```|$)/g, "").replace(/```away[\s\S]*?(```|$)/g, "").replace(/```checklist[\s\S]*?(```|$)/g, "").replace(/```appearance[\s\S]*?(```|$)/g, "").replace(/```parts[\s\S]*?(```|$)/g, "")
     // Scouting lookup requests: the server runs them and appends the results.
     .replace(/```lookup[\s\S]*?(```|$)/g, "").replace(/```remember[\s\S]*?(```|$)/g, "").replace(/```scout-team[\s\S]*?(```|$)/g, "").replace(/```scout-event[\s\S]*?(```|$)/g, "").trim();
 }
@@ -223,7 +223,7 @@ export function stripEventBlocks(text: string): string {
  * Light client-side validation; the server re-validates strictly on apply.
  */
 export interface ActionProposal {
-  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'task-update' | 'budget' | 'communication' | 'workspace' | 'task-comment' | 'event-rsvp' | 'away' | 'checklist';
+  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'task-update' | 'budget' | 'communication' | 'workspace' | 'task-comment' | 'event-rsvp' | 'away' | 'checklist' | 'part';
   items: any[];
 }
 
@@ -246,6 +246,8 @@ const ACTION_BLOCK_RES: Record<ActionProposal['kind'], RegExp> = {
   away: /```away\s*\r?\n([\s\S]*?)\r?\n```/,
   // Checklist runs to start, or items to check off on an open run.
   checklist: /```checklist\s*\r?\n([\s\S]*?)\r?\n```/,
+  // Lines for the CAD Parts List.
+  part: /```parts\s*\r?\n([\s\S]*?)\r?\n```/,
 };
 
 function parseActionBlock(kind: ActionProposal['kind'], raw: string): any[] {

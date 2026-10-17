@@ -196,6 +196,7 @@ const POOLS: Record<string, StarterPool> = {
       'What should we check before a CAD design review?',
       'Suggest a lighter way to build our lift',
       'Which parts in our BOM are still missing?',
+      'Add 4 goBILDA 72mm Rhino wheels to our parts list',
       'How do we keep CAD and the real robot in sync?',
       'Help me write notes for our latest CAD snapshot',
     ],

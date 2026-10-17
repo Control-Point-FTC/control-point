@@ -20,7 +20,7 @@ import { describeActivity } from "./taskActivity.js";
 import { coversSlot, describeUnavailability, overlapsRange, type Unavailability } from "../src/utils/unavailability.js";
 import { runProgress, ITEM_STATE_LABELS, isItemState, type ChecklistSection } from "../src/types/checklists.js";
 
-export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability" | "checklists";
+export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability" | "checklists" | "parts";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -53,7 +53,7 @@ const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_out
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability", "checklists"];
+const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability", "checklists", "parts"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -321,6 +321,18 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       ids.push(`event:${r.id}`);
       lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it${rsvpNames(r.rsvp_names)})` : ""}${awayFor(r) ? ` (${awayFor(r).slice(2)})` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
+  } else if (q.kind === "parts") {
+    // The CAD Parts List (BOM): what's needed, where it comes from and its status.
+    const w = wordsWhere(q.query, ["name", "COALESCE(notes, '')", "section"]);
+    const rows = await db(`SELECT id, name, section, quantity, source, unit_cost, status, assignee, notes FROM cad_parts WHERE team_id = ?${w.sql} ORDER BY section, name LIMIT 151`, teamId, ...w.args);
+    const c = capped(rows, 150);
+    more = c.more;
+    let total = 0;
+    for (const p of c.rows) {
+      total += Number(p.quantity || 0) * Number(p.unit_cost || 0);
+      lines.push(`part #${p.id} ${Number(p.quantity) || 1}× ${clip(p.name, 120)} [${p.section}] ${p.source}, ${String(p.status).replace("_", " ")}${Number(p.unit_cost) ? `, $${Number(p.unit_cost).toFixed(2)} each` : ""}${p.assignee ? `, ${clip(p.assignee, 40)}` : ""}${p.notes ? ` — ${clip(p.notes, 160)}` : ""}`);
+    }
+    summary = rows.length ? `Listed cost of these lines: $${total.toFixed(2)}.` : q.query ? "No matching parts found." : "The parts list is empty.";
   } else if (q.kind === "checklists") {
     // Templates, and runs (open ones first) with progress and what's still to do.
     const parse = (raw: unknown): ChecklistSection[] => { try { const v = JSON.parse(String(raw)); return Array.isArray(v) ? v : []; } catch { return []; } };
@@ -514,7 +526,7 @@ function rsvpNames(raw: unknown): string {
   return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");
 }
 
-const HIDDEN_BLOCK_KINDS = ["appearance", "checklist", "away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
+const HIDDEN_BLOCK_KINDS = ["parts", "appearance", "checklist", "away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 
