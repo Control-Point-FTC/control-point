@@ -158,7 +158,7 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 ### PR 3.5: Export and extras
 - [x] Print / PDF export
 - [ ] Judge-ready PDF (cover, TOC, award-tagged sections, filtered by season)
-- [ ] Markdown export per entry
+- [x] Markdown export per entry (File → Download Markdown)
 - [ ] Bruno auto-tag new entries ("AI tagged" badge with explanation)
 - [ ] Contextual guide link "How to keep a great engineering notebook · N min"
 

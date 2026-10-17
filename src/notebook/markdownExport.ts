@@ -72,7 +72,7 @@ function block(node: PMNode, out: string[], indent = '') {
       return;
     }
     case 'table': {
-      const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => (cell.content ?? []).map(inline).join(' ').replace(/\|/g, '\\|').replace(/\n/g, ' ')));
+      const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => (cell.content ?? []).map(inline).join(' ').replace(/(?<!\\)\|/g, '\\|').replace(/\n/g, ' ')));
       if (!rows.length) return;
       const width = Math.max(...rows.map((r) => r.length));
       const pad = (r: string[]) => [...r, ...Array(width - r.length).fill('')];
