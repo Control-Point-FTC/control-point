@@ -198,7 +198,7 @@ export function CalendarPage(props: any) {
               {view === 'agenda' && (
                 <Agenda
                   cursor={cursor} todayKey={todayKey} dayEvents={dayEvents} isFinished={ctl.isEventFinished}
-                  onOpenEvent={(e) => setViewId(e.id)} canManage={ctl.canManageCalendar} onAdd={ctl.openNew}
+                  onOpenEvent={(e) => setViewId(e.id)} canManage={ctl.canManageCalendar} onAdd={ctl.openNew} focus={selected}
                 />
               )}
             </motion.div>
@@ -225,6 +225,14 @@ export function CalendarPage(props: any) {
                 </div>
               )}
             </Section>
+          )}
+          {/* Week and Agenda: a small month to jump to any day (the Month view already is one). */}
+          {view !== 'month' && !narrow && (
+            <MiniMonth
+              cursor={cursor} todayKey={todayKey} selected={selected} hasEvents={(k) => dayEvents(k).length > 0}
+              weekOf={view === 'week' ? startOfWeek(cursor) : null}
+              onPick={(k) => { setDir(0); setSelected(k); setCursor(keyToDate(k)); }}
+            />
           )}
           {/* On phones the Agenda already is the list. */}
           {!(narrow && view === 'agenda') && (
@@ -539,16 +547,24 @@ function WeekEvent({ e, done, onOpen }: { e: any; done: boolean; onOpen: (e: any
   );
 }
 
-function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManage, onAdd }: {
+function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManage, onAdd, focus }: {
   cursor: Date; todayKey: string; dayEvents: (k: string) => any[]; isFinished: (e: any) => boolean;
   onOpenEvent: (e: any) => void; canManage: boolean; onAdd: (k: string) => void;
+  /** A day picked elsewhere (the mini-month): its group, or the next one with events, is brought into view. */
+  focus?: string;
 }) {
+  const listRef = useRef<HTMLOListElement>(null);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const n = new Date(year, month + 1, 0).getDate();
   const groups = Array.from({ length: n }, (_, i) => new Date(year, month, i + 1))
     .map((d) => ({ d, key: toDateKey(d), list: dayEvents(toDateKey(d)) }))
     .filter((g) => g.list.length > 0);
+  const focusKey = focus ? groups.find((g) => g.key >= focus)?.key : undefined;
+  useEffect(() => {
+    if (!focusKey) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-day="${focusKey}"]`)?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [focus, focusKey]); // every new pick scrolls, even onto the same group
   if (!groups.length) {
     return (
       <EmptyState
@@ -560,12 +576,12 @@ function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManag
     );
   }
   return (
-    <ol className="space-y-6">
+    <ol ref={listRef} className="space-y-6">
       {groups.map(({ d, key, list }) => {
         const isToday = key === todayKey;
         const past = key < todayKey;
         return (
-          <li key={key} className={cn('grid grid-cols-[52px_1fr] gap-4', past && 'opacity-70')}>
+          <li key={key} data-day={key} aria-current={key === focusKey ? 'date' : undefined} className={cn('grid grid-cols-[52px_1fr] gap-4 rounded-lg', past && 'opacity-70', key === focusKey && 'ring-1 ring-accent/50')}>
             <div className="pt-1 text-center">
               <div className="text-[11px] font-medium uppercase text-muted-foreground">{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
               <div className={cn('mx-auto mt-0.5 flex size-9 items-center justify-center rounded-full text-lg font-semibold tabular-nums', isToday && 'bg-accent text-accent-ink')}>{d.getDate()}</div>
@@ -618,5 +634,53 @@ function EventList({ events, onOpen, isFinished, showDate, empty }: {
     <div className="space-y-2">
       {events.map((e) => <AgendaRow key={e.id} e={e} onOpen={onOpen} finished={isFinished(e)} showDate={showDate} />)}
     </div>
+  );
+}
+
+/** A small month for jumping to a day: its own month arrows, today, the shown week, and dots on days with events. */
+function MiniMonth({ cursor, todayKey, selected, hasEvents, weekOf, onPick }: {
+  cursor: Date; todayKey: string; selected: string; hasEvents: (k: string) => boolean; weekOf: Date | null; onPick: (k: string) => void;
+}) {
+  const [month, setMonth] = useState(() => new Date(cursor.getFullYear(), cursor.getMonth(), 1));
+  // Follow the main calendar when it moves to another month.
+  useEffect(() => { setMonth(new Date(cursor.getFullYear(), cursor.getMonth(), 1)); }, [cursor.getFullYear(), cursor.getMonth()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const first = month;
+  const gridStart = addDays(first, -first.getDay());
+  const weeks = Math.ceil((first.getDay() + new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()) / 7);
+  const days = Array.from({ length: weeks * 7 }, (_, i) => addDays(gridStart, i));
+  const weekKeys = weekOf ? new Set(Array.from({ length: 7 }, (_, i) => toDateKey(addDays(weekOf, i)))) : null;
+  const names = weekdayNames('narrow');
+  return (
+    <section aria-label="Jump to a date" className="rounded-xl border border-border bg-card p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <Button variant="ghost" size="icon-sm" aria-label="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft /></Button>
+        <span className="text-sm font-medium">{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</span>
+        <Button variant="ghost" size="icon-sm" aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight /></Button>
+      </div>
+      <div className="grid grid-cols-7 text-center text-[10px] text-muted-foreground">{names.map((n, i) => <span key={n + i}>{n}</span>)}</div>
+      <div className="mt-1 grid grid-cols-7 gap-y-0.5 text-center">
+        {days.map((d) => {
+          const k = toDateKey(d);
+          const inMonth = d.getMonth() === month.getMonth();
+          return (
+            <button
+              key={k} type="button" onClick={() => onPick(k)}
+              aria-label={`${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}${hasEvents(k) ? ', has events' : ''}`}
+              aria-pressed={k === selected}
+              className={cn(
+                'relative mx-auto flex size-7 items-center justify-center rounded-full text-xs tabular-nums hover:bg-muted',
+                !inMonth && 'text-muted-foreground/50',
+                weekKeys?.has(k) && 'bg-accent/10',
+                k === todayKey && 'bg-accent font-semibold text-accent-ink hover:bg-accent',
+                k === selected && k !== todayKey && 'ring-1 ring-accent',
+              )}
+            >
+              {d.getDate()}
+              {hasEvents(k) && <span aria-hidden className="absolute bottom-0.5 size-1 rounded-full bg-current opacity-60" />}
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
