@@ -6,6 +6,8 @@ const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
 const ai = vi.hoisted(() => ({ streamBuildHelper: vi.fn() }));
 vi.mock('../../services/aiService', async (orig) => ({ ...(await orig<object>()), ...ai }));
+const dlg = vi.hoisted(() => ({ notify: vi.fn() }));
+vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dlg }));
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { BrunoDock, BRUNO_TIPS } from '../BrunoDock';
@@ -196,5 +198,29 @@ describe('Bruno dock and the corner', () => {
     await waitFor(() => expect(screen.getByText('Go with compliant wheels.')).toBeInTheDocument());
     expect(screen.getByText('Which intake wheel?')).toBeInTheDocument();
     expect(p.onActiveChatId).toHaveBeenLastCalledWith(9);
+  });
+
+  it('a slow chat load never replaces a newer choice, and a failed one says so', async () => {
+    const now = new Date().toISOString();
+    let release!: () => void;
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/bruno/chats?')) return json([{ id: 9, title: 'Intake wheel choice', updated_at: now }, { id: 8, title: 'Broken chat', updated_at: now }]);
+      if (url === '/api/bruno/chats/9') return new Promise((r) => { release = () => r({ ok: true, json: async () => ({ messages: [{ role: 'model', text: 'Go with compliant wheels.' }] }) }); });
+      if (url === '/api/bruno/chats/8') return json({}, false);
+      return json({});
+    });
+    const p = props();
+    render(wrap(<BrunoDock {...p} />));
+    const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Recent chats' }), { button: 0, ctrlKey: false });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Intake wheel choice/ }));
+    // New chat while chat 9 is still loading: it stays a new chat.
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    await act(async () => { release(); await Promise.resolve(); });
+    expect(screen.queryByText('Go with compliant wheels.')).not.toBeInTheDocument();
+    // A chat that fails to load raises a visible message (the menu has closed).
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Broken chat/ }));
+    await waitFor(() => expect(dlg.notify).toHaveBeenCalledWith(expect.stringMatching(/Couldn't open that chat/), 'error'));
   });
 });
