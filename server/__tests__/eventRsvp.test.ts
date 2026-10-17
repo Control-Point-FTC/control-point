@@ -184,3 +184,21 @@ describe("event attendance (2.3)", () => {
     await t.db.execute({ sql: "UPDATE members SET name = 'Ben' WHERE id = ?", args: [benId] });
   });
 });
+
+describe("check-in date", () => {
+  it("self and QR check-in record the workspace's today on its timezone", async () => {
+    await t.db.execute({ sql: "UPDATE teams SET timezone = 'Pacific/Kiritimati' WHERE id = ?", args: [team] });
+    const kiriToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Kiritimati", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const r = await t.post("/api/attendance/checkin", {}, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.date).toBe(kiriToday);
+    // QR: an admin starts a session, a member checks in with its token.
+    const qr = await t.post("/api/attendance/qr-session", { minutes: 15 }, admin);
+    expect(qr.status, JSON.stringify(qr.body)).toBe(200);
+    const token = qr.body.token ?? qr.body.session?.token;
+    const c = await t.post(`/api/attendance/checkin/${token}`, {}, ana);
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    expect(c.body.date).toBe(kiriToday);
+    await t.db.execute({ sql: "UPDATE teams SET timezone = 'America/New_York' WHERE id = ?", args: [team] });
+  });
+});

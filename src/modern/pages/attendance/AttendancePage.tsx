@@ -48,8 +48,8 @@ export function AttendancePage(props: any) {
   if (!ctl.isAdmin) return <StudentAttendance attendance={attendance} currentUser={currentUser} refresh={refresh} onRefresh={onRefresh} />;
 
   // One date for the whole page (roll call, counts, writes and today's event): the
-  // workspace's today, on its saved timezone (else this browser's).
-  const teamZone: string = (props.teams || []).find((t: any) => String(t.id) === String(currentUser?.team_id))?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // workspace's today, on its saved timezone (else New York, as the server and QR check-in use).
+  const teamZone: string = (props.teams || []).find((t: any) => String(t.id) === String(currentUser?.team_id))?.timezone || 'America/New_York';
   const today = teamToday(teamZone);
   const hereToday = members.filter((m: any) => ['P', 'L'].includes(ctl.getStatus(m.id, today))).length;
 

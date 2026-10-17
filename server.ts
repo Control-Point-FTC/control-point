@@ -7605,7 +7605,7 @@ async function startServer() {
       if (!(await hasPerm(auth, "manage_attendance"))) {
         return res.status(403).json({ error: "Check-in needs the QR code — ask your admin to put it up." });
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = await workspaceToday(auth.teamId);
       (await dbRun(
         `INSERT INTO attendance (member_id, date, status, team_id)
          VALUES (?, ?, 'P', ?)
@@ -7662,12 +7662,10 @@ async function startServer() {
     }
     return new Date(guess);
   }
-  // YYYY-MM-DD of "today" in America/New_York (teams are US-based; UTC date is
-  // wrong near midnight local time).
-  function easternToday(): string {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+  // YYYY-MM-DD of "today" for a workspace: its saved timezone, else New York
+  // (the same day the attendance page and today's event use).
+  async function workspaceToday(teamId: number | null): Promise<string> {
+    return todayIn(await teamTimeZone(teamId));
   }
   async function activeSession(teamId: number | null): Promise<any | null> {
     if (!teamId) return null;
@@ -7693,7 +7691,7 @@ async function startServer() {
   async function applyQrCheckin(session: any, auth: { memberId: number; email?: string }) {
     const member = await memberInTeam(auth, session.team_id);
     if (!member) return { error: "You're not on this team — ask your admin for the right code.", status: 403 };
-    const today = easternToday();
+    const today = await workspaceToday(session.team_id);
     const existing = (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any;
     if (existing && (existing.status === "P" || existing.status === "L")) {
       return { already: true, date: today, memberName: member.name };
@@ -7800,7 +7798,7 @@ async function startServer() {
       }
       const team = (await dbGet("SELECT name FROM teams WHERE id = ?", s.team_id)) as any;
       const member = await memberInTeam(auth, s.team_id);
-      const today = easternToday();
+      const today = await workspaceToday(s.team_id);
       const rec = member ? (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any : null;
       res.json({
         teamName: team?.name || "Your team",
