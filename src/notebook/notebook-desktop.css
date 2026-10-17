@@ -42,6 +42,12 @@
   .nb-pages-pane .nb-tree-row.is-selected {background:#ffc70014;box-shadow:inset 3px 0 #ffc700}
   .nb-pages-pane .nb-tree-label {padding:6px 8px;font-weight:600}
   .nb-pages-pane .nb-tree-label>svg:first-child {display:none}
+  /* The divider between the pages list and the page: drag (or arrow keys) to resize. */
+  .nb-pane-resizer {flex:0 0 6px;margin-left:-3px;margin-right:-3px;position:relative;z-index:2;cursor:col-resize;touch-action:none;background:transparent}
+  .nb-pane-resizer::after {content:'';position:absolute;inset:0 2px;border-radius:2px;background:transparent;transition:background .15s}
+  .nb-pane-resizer:hover::after,.nb-pane-resizer.is-dragging::after,.nb-pane-resizer:focus-visible::after {background:#ffc700}
+  .nb-pane-resizer:focus-visible {outline:none}
+  body.nb-resizing {cursor:col-resize;user-select:none}
   .nb-export-link {padding:8px;text-align:left;color:#aaa;font-size:11px}
   .nb-main {background:#fff;color:#151515;border-top:0}
   .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#8a6100;color:#151515}
