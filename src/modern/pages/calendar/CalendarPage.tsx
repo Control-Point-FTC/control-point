@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, ListTodo, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -17,6 +17,8 @@ import { useCalendarController, toDateKey, EVENT_TYPES } from '../../../componen
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, typeMeta } from './CalendarSheets';
 import { SubscribeDialog } from './SubscribeDialog';
+import { isOpenStatus } from '../../../types/taskStatus';
+import { Link } from 'react-router-dom';
 
 type View = 'month' | 'week' | 'agenda';
 
@@ -24,7 +26,20 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const startOfWeek = (d: Date) => addDays(d, -d.getDay());
 
 export function CalendarPage(props: any) {
-  const { events, setEvents, teams, refresh, currentUser, hasScope } = props;
+  const { events, setEvents, teams, refresh, currentUser, hasScope, tasks } = props;
+  // Task-due overlay: open tasks by due date, shown on the month grid (a per-viewer toggle).
+  const [showTasks, setShowTasks] = useState<boolean>(() => { try { return localStorage.getItem('calendar:show-tasks') !== '0'; } catch { return true; } });
+  const toggleTasks = () => setShowTasks((v) => { try { localStorage.setItem('calendar:show-tasks', v ? '0' : '1'); } catch { /* storage blocked */ } return !v; });
+  const tasksByDay = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const t of tasks || []) {
+      const d = String(t?.due_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !isOpenStatus(t.status)) continue;
+      m.set(d, [...(m.get(d) || []), t]);
+    }
+    return m;
+  }, [tasks]);
+  const tasksDue = (k: string) => (showTasks ? tasksByDay.get(k) || [] : []);
   const ctl = useCalendarController({ events, setEvents, refresh, currentUser, hasScope });
   const narrow = useIsNarrow();
   const [view, setView] = useState<View>(() => (narrow ? 'agenda' : 'month'));
@@ -144,6 +159,9 @@ export function CalendarPage(props: any) {
             <ToggleGroupItem value="week" aria-label="Week"><CalendarRange /> <span className="max-sm:sr-only">Week</span></ToggleGroupItem>
             <ToggleGroupItem value="agenda" aria-label="Agenda"><List /> <span className="max-sm:sr-only">Agenda</span></ToggleGroupItem>
           </ToggleGroup>
+          <Button variant="outline" size="sm" aria-pressed={showTasks} onClick={toggleTasks} className={cn('max-sm:h-10', showTasks && 'border-accent bg-accent/10')}>
+            <ListTodo /> Tasks due
+          </Button>
           <ToggleGroup type="multiple" value={types} onValueChange={setTypes} aria-label="Filter by type" className="flex-wrap sm:ml-auto">
             {EVENT_TYPES.map((t) => (
               <ToggleGroupItem key={t.value} value={t.value} size="sm" className="px-2.5 text-xs max-sm:h-10">
@@ -167,7 +185,7 @@ export function CalendarPage(props: any) {
             >
               {view === 'month' && (
                 <MonthGrid
-                  cursor={cursor} todayKey={todayKey} selected={selected} dayEvents={dayEvents}
+                  cursor={cursor} todayKey={todayKey} selected={selected} dayEvents={dayEvents} tasksDue={tasksDue}
                   onSelectDay={setSelected} onOpenEvent={(e) => setViewId(e.id)} isFinished={ctl.isEventFinished}
                 />
               )}
@@ -196,6 +214,16 @@ export function CalendarPage(props: any) {
               )}
             >
               <EventList events={dayEvents(selected)} onOpen={(e) => setViewId(e.id)} isFinished={ctl.isEventFinished} empty="Nothing scheduled." />
+              {tasksDue(selected).length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><ListTodo className="size-3.5" /> Tasks due</p>
+                  <ul className="space-y-1">
+                    {tasksDue(selected).map((t: any) => (
+                      <li key={t.id}><Link to={`/tasks?task=${t.id}`} className="block truncate rounded-md px-1.5 py-1 text-sm hover:bg-muted">{t.title}</Link></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </Section>
           )}
           {/* On phones the Agenda already is the list. */}
@@ -347,8 +375,8 @@ function EventChip({ e, onOpen, finished }: { e: any; onOpen: (e: any) => void; 
   );
 }
 
-function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenEvent, isFinished }: {
-  cursor: Date; todayKey: string; selected: string;
+function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenEvent, isFinished, tasksDue = () => [] }: {
+  cursor: Date; todayKey: string; selected: string; tasksDue?: (k: string) => any[];
   dayEvents: (k: string) => any[]; onSelectDay: (k: string) => void; onOpenEvent: (e: any) => void; isFinished: (e: any) => boolean;
 }) {
   const year = cursor.getFullYear();
@@ -369,6 +397,7 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
           const key = toDateKey(d);
           const inMonth = d.getMonth() === month;
           const list = dayEvents(key);
+          const dueN = tasksDue(key).length;
           const isToday = key === todayKey;
           const isSel = key === selected;
           const shown = list.slice(0, 2);
@@ -388,7 +417,7 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
                 type="button"
                 onClick={() => onSelectDay(key)}
                 aria-pressed={isSel}
-                aria-label={`${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}${list.length ? `, ${list.length} ${list.length === 1 ? 'event' : 'events'}` : ''}`}
+                aria-label={`${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}${list.length ? `, ${list.length} ${list.length === 1 ? 'event' : 'events'}` : ''}${dueN ? `, ${dueN} ${dueN === 1 ? 'task' : 'tasks'} due` : ''}`}
                 className="absolute inset-0 rounded-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               />
               {/* Phones: number centred with the event dots under it (the
@@ -408,6 +437,11 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
                   </span>
                 )}
               </div>
+              {dueN > 0 && (
+                <span aria-hidden className="pointer-events-none relative mt-0.5 flex justify-center sm:justify-start">
+                  <span className="rounded-full bg-muted px-1.5 text-[10px] font-medium leading-4 text-muted-foreground"><span className="max-sm:hidden">{dueN} {dueN === 1 ? 'task' : 'tasks'}</span><span className="sm:hidden">{dueN}✓</span></span>
+                </span>
+              )}
               <div className="relative mt-1 hidden space-y-0.5 xl:block">
                 {shown.map((e: any) => <EventChip key={e.id} e={e} onOpen={onOpenEvent} finished={isFinished(e)} />)}
                 {more > 0 && (
