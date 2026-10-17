@@ -22,6 +22,8 @@ export type NotebookWorkspace = {
   setTagSummaryView?: (view: TagSummaryView) => void;
   /** Insert → Page templates: a new page in this section from a template. */
   openTemplates?: (sectionId: number) => void;
+  /** The section a new page goes into (the open page's, else the active one). */
+  currentSection?: number | null;
   navigationLayout?: NavigationLayout;
   setNavigationLayout?: (layout: NavigationLayout) => void;
 };

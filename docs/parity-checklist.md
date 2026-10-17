@@ -148,8 +148,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 
 ### PR 3.3: Templates
 - [x] Blank, meeting, to-do, engineering log, design review
-- [ ] Add: Test Log, Failure Analysis, Outreach Event, Competition Recap, Code Change, Design Iteration (hypothesis/changes/results)
-- [ ] "Start from a template" menu on the notebook toolbar
+- [x] Add: Test Log, Failure Analysis, Outreach Event, Competition Recap, Code Change, Design Iteration (hypothesis/changes/results)
+- [x] "Start from a template" menu on the notebook toolbar (on the ribbon before a page is open; Insert → Page templates with one)
 
 ### PR 3.4: Mentor review queue
 - [ ] Submit entry for review → mentor approves / requests changes, with comments
