@@ -23,6 +23,26 @@ export type PitData = {
 };
 
 const REFRESH_MS = 60_000;
+/** Events per screen; a busy week pages through every PAGE_MS so nothing sits below the fold. */
+export const EVENTS_PER_PAGE = 6;
+const PAGE_MS = 12_000;
+
+/** The events shown at `nowMs`: one page of EVENTS_PER_PAGE, turning every PAGE_MS. */
+export function agendaPage<T>(events: T[], nowMs: number): { list: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(events.length / EVENTS_PER_PAGE));
+  const page = Math.floor(nowMs / PAGE_MS) % pages;
+  return { list: events.slice(page * EVENTS_PER_PAGE, (page + 1) * EVENTS_PER_PAGE), page, pages };
+}
+
+/** A match's start: in the team's timezone when the time carries an offset, else its own wall clock. */
+export function matchTime(t: string, timeZone: string): string {
+  if (/(Z|[+-]\d\d:?\d\d)$/.test(t)) {
+    const d = new Date(t);
+    try { return d.toLocaleTimeString(undefined, { timeZone, hour: 'numeric', minute: '2-digit' }); } catch { return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
+  }
+  const m = /T(\d\d):(\d\d)/.exec(t);
+  return m ? new Date(2000, 0, 1, Number(m[1]), Number(m[2])).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+}
 const RELOAD_MS = 12 * 60 * 60_000;
 
 /** "HH:MM" wall clock in a timezone, plus a display string. */
@@ -119,9 +139,12 @@ export function PitDisplayPage({ token }: { token: string }) {
     return <main className="flex min-h-dvh items-center justify-center bg-background text-2xl text-muted-foreground">Loading the pit display…</main>;
   }
 
+  const agenda = agendaPage(data.events, now.getTime());
   const byDay = new Map<string, PitData['events']>();
-  for (const e of data.events) byDay.set(e.date, [...(byDay.get(e.date) || []), e]);
-  const side = data.match || data.checkin || data.announcements.length;
+  for (const e of agenda.list) byDay.set(e.date, [...(byDay.get(e.date) || []), e]);
+  // A session that ran out while the screen was offline isn't offered.
+  const checkin = data.checkin && Date.parse(data.checkin.expiresAt) > now.getTime() ? data.checkin : null;
+  const side = data.match || checkin || data.announcements.length;
 
   return (
     <main className="min-h-dvh bg-background p-6 text-foreground lg:p-10">
@@ -145,6 +168,7 @@ export function PitDisplayPage({ token }: { token: string }) {
             <p className="text-2xl text-muted-foreground">Nothing on the calendar this week.</p>
           ) : (
             <div className="space-y-6">
+              {agenda.pages > 1 && <p className="text-base text-muted-foreground" aria-live="polite">Page {agenda.page + 1} of {agenda.pages}</p>}
               {[...byDay.entries()].map(([date, list]) => (
                 <div key={date}>
                   <h2 className={cn('mb-3 text-lg font-semibold uppercase tracking-wide', date === data.today ? 'text-accent' : 'text-muted-foreground')}>{dayLabel(date, data.today)}</h2>
@@ -171,14 +195,14 @@ export function PitDisplayPage({ token }: { token: string }) {
 
         {side ? (
           <aside className="space-y-6">
-            {data.match && <MatchCard match={data.match} />}
-            {data.checkin && (
+            {data.match && <MatchCard match={data.match} timeZone={data.timeZone} />}
+            {checkin && (
               <section aria-label="Check in" className="flex items-center gap-6 rounded-2xl border border-border bg-card p-5">
-                <div className="rounded-xl bg-white p-3"><QRCodeSVG value={data.checkin.url} size={168} /></div>
+                <div className="rounded-xl bg-white p-3"><QRCodeSVG value={checkin.url} size={168} /></div>
                 <div>
                   <h2 className="flex items-center gap-2 text-2xl font-semibold"><QrCode className="size-6 text-accent" aria-hidden /> Check in</h2>
                   <p className="mt-1 text-lg text-muted-foreground">Scan with your phone, or enter the code</p>
-                  <p className="mt-2 font-mono text-4xl font-semibold tracking-widest">{data.checkin.code}</p>
+                  <p className="mt-2 font-mono text-4xl font-semibold tracking-widest">{checkin.code}</p>
                 </div>
               </section>
             )}
@@ -206,7 +230,7 @@ function Teams({ list }: { list: number[] }) {
   return <>{list.length ? list.join(', ') : '—'}</>;
 }
 
-function MatchCard({ match }: { match: NonNullable<PitData['match']> }) {
+function MatchCard({ match, timeZone }: { match: NonNullable<PitData['match']>; timeZone: string }) {
   const { next, last } = match;
   return (
     <section aria-label="Next match" className="rounded-2xl border border-border bg-card p-5">
@@ -214,7 +238,7 @@ function MatchCard({ match }: { match: NonNullable<PitData['match']> }) {
       <p className="mb-4 text-lg text-muted-foreground">{match.event}</p>
       {next ? (
         <div className={cn('rounded-xl border-l-8 bg-muted/40 p-4', next.alliance === 'red' ? 'border-l-red-500' : 'border-l-blue-500')}>
-          <p className="text-4xl font-semibold">{next.label}{next.time ? <span className="ml-3 text-2xl font-medium text-muted-foreground">{new Date(next.time).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span> : null}</p>
+          <p className="text-4xl font-semibold">{next.label}{next.time ? <span className="ml-3 text-2xl font-medium text-muted-foreground">{matchTime(next.time, timeZone)}</span> : null}</p>
           <p className="mt-2 text-xl"><span className={cn('font-semibold', next.alliance === 'red' ? 'text-red-500' : 'text-blue-500')}>{next.alliance === 'red' ? 'Red' : 'Blue'} alliance</span>{next.partners.length ? <> with <Teams list={next.partners} /></> : null}</p>
           <p className="text-lg text-muted-foreground">Against <Teams list={next.opponents} /></p>
         </div>

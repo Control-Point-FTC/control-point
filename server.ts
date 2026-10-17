@@ -11709,20 +11709,27 @@ Rules:
   });
 
   // An event's matches, kept a minute: every pit screen refreshes each minute.
-  const pitEventCache = new Map<string, { at: number; data: any }>();
-  async function pitEventMatches(season: number, code: string): Promise<any[] | null> {
+  // Screens refreshing together share one upstream request, and a failure is
+  // remembered for 30 s (serving the last good list) so they don't all retry.
+  const pitEventCache = new Map<string, { at: number; ttl: number; data: any }>();
+  const pitEventInflight = new Map<string, Promise<any[] | null>>();
+  function pitEventMatches(season: number, code: string): Promise<any[] | null> {
     const key = `${season}:${code.toLowerCase()}`;
     const hit = pitEventCache.get(key);
-    if (hit && Date.now() - hit.at < 60_000) return hit.data;
-    try {
-      const ev = await getEventFull(season, code);
-      const data = ev?.matches ?? null;
-      pitEventCache.set(key, { at: Date.now(), data });
+    if (hit && Date.now() - hit.at < hit.ttl) return Promise.resolve(hit.data);
+    const pending = pitEventInflight.get(key);
+    if (pending) return pending;
+    const remember = (data: any, ttl: number) => {
+      pitEventCache.set(key, { at: Date.now(), ttl, data });
       if (pitEventCache.size > 200) pitEventCache.delete(pitEventCache.keys().next().value as string);
       return data;
-    } catch {
-      return hit?.data ?? null;
-    }
+    };
+    const run = getEventFull(season, code)
+      .then((ev) => remember(ev?.matches ?? null, 60_000))
+      .catch(() => remember(hit?.data ?? null, 30_000))
+      .finally(() => { pitEventInflight.delete(key); });
+    pitEventInflight.set(key, run);
+    return run;
   }
 
   // What the screen shows: no session (it's a kiosk), the token is the key.

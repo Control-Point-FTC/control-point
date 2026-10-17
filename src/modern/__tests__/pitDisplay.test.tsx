@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { PitDisplayPage, isOnNow, type PitData } from '../pages/pit/PitDisplayPage';
+import { PitDisplayPage, agendaPage, isOnNow, matchTime, EVENTS_PER_PAGE, type PitData } from '../pages/pit/PitDisplayPage';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -42,6 +42,23 @@ describe('Pit display', () => {
     expect(isKnownRoute('/pit/short')).toBe(false);
     const { ALWAYS_REACHABLE_PAGES } = await import('../../App');
     expect(ALWAYS_REACHABLE_PAGES).toContain('pit');
+  });
+
+  it('a busy week pages through every event; an expired check-in is hidden', async () => {
+    const many = Array.from({ length: 13 }, (_, i) => i);
+    expect(agendaPage(many, 0)).toMatchObject({ list: many.slice(0, EVENTS_PER_PAGE), page: 0, pages: 3 });
+    expect(agendaPage(many, 12_000).list).toEqual(many.slice(EVENTS_PER_PAGE, 2 * EVENTS_PER_PAGE));
+    expect(agendaPage(many, 24_000).list).toEqual([12]);
+    expect(agendaPage([], 5).pages).toBe(1);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ...data, checkin: { ...data.checkin!, expiresAt: new Date(Date.now() - 1000).toISOString() } }) })));
+    render(<PitDisplayPage token="tok_abcdefghijklmnopqrstuvwxyz" />);
+    expect(await screen.findByText('Build night')).toBeInTheDocument();
+    expect(screen.queryByText('K7Q2')).toBeNull();
+  });
+
+  it('match times: in the team zone when they carry an offset, else as written', () => {
+    expect(matchTime('2026-12-05T14:30:00Z', 'America/New_York')).toMatch(/9:30/);
+    expect(matchTime('2026-12-05T14:30:00', 'America/New_York')).toMatch(/2:30/);
   });
 
   it('marks what is on now (an event with no end counts as an hour)', () => {
