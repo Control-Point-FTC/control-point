@@ -588,6 +588,34 @@ export class NotebookStore {
   }); }
   /** Home → Find Tags. Visibility is decided by the tree first, so protected
    *  pages are never read for someone who can't see them. */
+  /**
+   * Journal: every page this member can see as an entry — when the work
+   * happened (else when it was written), an excerpt, its entry details and
+   * who wrote it — newest first. Protected pages stay out, as in the tree.
+   */
+  journal(ctx: NotebookContext) { return this.session(ctx, async s => {
+    const tree = await s.tree();
+    if (!tree.pages.length) return { entries: [] };
+    const visible = new Map(tree.pages.map(p => [p.id, p]));
+    const sectionTitle = new Map(tree.sections.map(x => [x.id, x.title]));
+    const rows = await s.all(`SELECT p.id, p.plain, p.created_at, m.work_date, m.entry_type, m.stage, m.subsystems, m.awards
+      FROM notebook_pages p LEFT JOIN notebook_page_meta m ON m.page_id = p.id WHERE p.team_id = ? AND p.deleted_at IS NULL`, ctx.teamId);
+    const writers = await s.all(`SELECT c.page_id, m.name FROM notebook_contributors c JOIN members m ON m.id = c.member_id WHERE c.team_id = ? ORDER BY c.last_at ASC`, ctx.teamId);
+    const byPage = new Map<number, string[]>();
+    for (const w of writers) byPage.set(Number(w.page_id), [...(byPage.get(Number(w.page_id)) ?? []), String(w.name).slice(0, 80)]);
+    const entries = rows.filter(r => visible.has(Number(r.id))).map(r => {
+      const page = visible.get(Number(r.id))!;
+      const excerpt = String(r.plain ?? '').replace(/\s+/g, ' ').trim();
+      return {
+        id: page.id, title: page.title, sectionId: page.sectionId, sectionTitle: sectionTitle.get(page.sectionId) ?? '',
+        date: r.work_date ?? String(r.created_at).slice(0, 10), workDate: r.work_date ?? null, createdAt: r.created_at, updatedAt: page.updatedAt,
+        excerpt: excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt, readMinutes: readMinutes(r.plain),
+        type: r.entry_type ?? null, stage: r.stage ?? null, subsystems: parseTagList(r.subsystems), awards: parseTagList(r.awards),
+        authors: byPage.get(Number(r.id)) ?? [],
+      };
+    }).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    return { entries };
+  }); }
   tags(ctx: NotebookContext, filter: { section?: unknown; page?: unknown }) { return this.session(ctx, async s => {
     const wanted = (value: unknown) => {
       if (value === undefined || value === '') return null;
@@ -908,6 +936,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
   app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
   app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
+  app.get('/api/notebook/journal', handle(ctx => store.journal(ctx)));
   app.get('/api/notebook/tags', handle((ctx, req) => store.tags(ctx, { section: req.query.section, page: req.query.page })));
   // Review → Thesaurus (WordNet, on this server; no AI).
   app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));
