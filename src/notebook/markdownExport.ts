@@ -24,13 +24,16 @@ function marked(node: PMNode): string {
   if (!raw) return '';
   const marks = node.marks ?? [];
   const has = (type: string) => marks.some((m) => m.type === type);
-  // Spaces at the edges stay outside the markers, or Markdown won't see them.
-  const [, lead, core, trail] = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw)!;
+  // Code keeps every character, edge spaces included: CommonMark drops one
+  // space on each side when both are present, so pad those (and backticks).
+  // Other marks keep edge spaces outside the markers, or Markdown won't see them.
+  const isCode = has('code');
+  const [, lead, core, trail] = isCode ? ['', '', raw, ''] : /^(\s*)([\s\S]*?)(\s*)$/.exec(raw)!;
   if (!core) return raw;
   let t: string;
-  if (has('code')) {
+  if (isCode) {
     const fence = fenceFor(core, 1);
-    const pad = core.startsWith('`') || core.endsWith('`') ? ' ' : '';
+    const pad = core.startsWith('`') || core.endsWith('`') || (/^ /.test(core) && / $/.test(core) && core.trim()) ? ' ' : '';
     t = `${fence}${pad}${core}${pad}${fence}`;
   } else t = escapeInline(core);
   if (has('bold')) t = `**${t}**`;

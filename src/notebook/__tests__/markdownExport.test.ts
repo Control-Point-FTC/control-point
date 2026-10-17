@@ -81,3 +81,11 @@ describe('Markdown export edge cases', () => {
     expect(md).toContain('**Results** ok [math](https://example.com/Function_%28mathematics%29)');
   });
 });
+
+describe('inline code edge spaces', () => {
+  it('keeps spaces that are part of the code', () => {
+    const md = notebookPageMarkdown({ title: 'x', content: { type: 'doc', content: [p(t('  x', [{ type: 'code' }])), p(t(' y ', [{ type: 'code' }]))] } });
+    expect(md).toContain('`  x`');
+    expect(md).toContain('`  y  `');
+  });
+});
