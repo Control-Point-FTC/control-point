@@ -42,6 +42,12 @@
   .nb-pages-pane .nb-tree-row.is-selected {background:#ffc70014;box-shadow:inset 3px 0 #ffc700}
   .nb-pages-pane .nb-tree-label {padding:6px 8px;font-weight:600}
   .nb-pages-pane .nb-tree-label>svg:first-child {display:none}
+  /* The divider between the pages list and the page: drag (or arrow keys) to resize. */
+  .nb-pane-resizer {flex:0 0 6px;margin-left:-3px;margin-right:-3px;position:relative;z-index:2;cursor:col-resize;touch-action:none;background:transparent}
+  .nb-pane-resizer::after {content:'';position:absolute;inset:0 2px;border-radius:2px;background:transparent;transition:background .15s}
+  .nb-pane-resizer:hover::after,.nb-pane-resizer.is-dragging::after,.nb-pane-resizer:focus-visible::after {background:#ffc700}
+  .nb-pane-resizer:focus-visible {outline:none}
+  body.nb-resizing {cursor:col-resize;user-select:none}
   .nb-export-link {padding:8px;text-align:left;color:#aaa;font-size:11px}
   .nb-main {background:#fff;color:#151515;border-top:0}
   .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#8a6100;color:#151515}
@@ -59,6 +65,29 @@
   .nb-history-list>div {display:flex;flex-direction:column;gap:3px}
   .nb-history-list time {color:#aaa;font-size:11px}
   .nb-paper.nb-ruled {background-image:repeating-linear-gradient(transparent 0,transparent 31px,#dbe6f4 31px,#dbe6f4 32px)}
+
+  /* Light theme: the notebook chrome (ribbon, tabs, explorer, pages) follows
+     the app's light palette instead of staying dark. The paper is already light. */
+  html.light .nb-shell {background:#fafaf9;color:#18181b;--color-text-base:#18181b;--color-text-muted:#52525b;--color-primary:#f4f4f5;--color-elevated:#ffffff;--color-line:#e4e4e7;--color-accent:#a16207}
+  html.light .nb-command-tabs {background:#fafaf9}
+  html.light .nb-command-tabs::before {color:#a16207}
+  html.light .nb-command-tabs button[role=tab] {color:#3f3f46}
+  html.light .nb-command-tabs button[aria-selected=true] {background:#eab3081f;color:#854d0e;box-shadow:inset 0 0 0 1px #eab30866}
+  html.light .nb-command-bar {border-bottom-color:#e4e4e7;background:#fafaf9}
+  html.light .nb-command-bar .nb-toolbar {background:#ffffff;box-shadow:0 0 0 1px #e4e4e7}
+  html.light .nb-command-bar select {background:#ffffff;border-color:#d4d4d8;color:#18181b}
+  html.light .nb-explorer {background:#fafaf9}
+  html.light .nb-navigation-row {color:#52525b}
+  html.light .nb-search {background:#f4f4f5}
+  html.light .nb-book-label {background:#f4f4f5}
+  html.light .nb-tree-row.is-selected {background:#eab3081a;box-shadow:inset 3px 0 #ca8a04}
+  html.light .nb-tree-label:hover {color:#000}
+  html.light .nb-pages-pane {background:#f4f4f5;border-right-color:#e4e4e7}
+  html.light .nb-pages-heading>button {border-color:#ca8a0466;background:#eab3081a;color:#854d0e}
+  html.light .nb-pages-heading>span {color:#3f3f46}
+  html.light .nb-pages-pane .nb-tree-row.is-selected {background:#eab3081f;box-shadow:inset 3px 0 #ca8a04}
+  html.light .nb-export-link {color:#52525b}
+  html.light .nb-history-list time {color:#71717a}
 }
 @media (min-width:768px) and (max-width:1100px) {
   .nb-explorer {width:210px}

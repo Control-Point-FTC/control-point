@@ -10,12 +10,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
+import { applyAppearanceFromReply } from '../../services/brunoAppearance';
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
 import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
 import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
 import type { ScoutingContextRequest } from '../../types/ftcScout';
+import type { BrunoChat, BrunoChatMessage } from '../../types/bruno';
+import { notify } from '../dialog';
 import { starterPoolForPath, nextStarters } from '../brunoStarters';
 import { thinkingSteps, type ThinkingStep } from './BrunoThinking';
 
@@ -48,6 +51,8 @@ const ANALYZE_POOL = {
 // conversation in the draft store) so Stop still works after a mode switch
 // swaps the panel component mid-reply.
 let panelAbort: AbortController | null = null;
+/** Bumped by every choice of conversation (open a chat, new chat, send): a slower chat load that started earlier is dropped. */
+let panelChoice = 0;
 // Answer-length saves: sequence so only the latest response applies, even
 // across a mode switch (the hook instance is replaced, this is not).
 let levelSeq = 0;
@@ -82,7 +87,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     try {
       const result = await applyActionProposalsWithIds(proposals);
       const applied = result.applied;
-      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k));
+      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k === 'part' ? 'cad-parts' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
     } catch (e: any) {
@@ -175,12 +180,48 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   // Every "new chat" starts fresh; past chats stay in the full view.
   const newChat = () => {
     if (getDraft('bruno-panel:busy', false)) return;
+    panelChoice++;
     setChatId(null);
     setMessages(EMPTY_MSGS);
     setProposalState(EMPTY_OBJ);
     setInput('');
     setAttached([]);
     setAttachedPdfs([]);
+  };
+
+  // Recent chats, so a past conversation can be picked up right here in the panel.
+  const [recentChats, setRecentChats] = useState<BrunoChat[] | null>(null);
+  const [recentError, setRecentError] = useState('');
+  const loadRecentChats = async () => {
+    setRecentError('');
+    try {
+      const res = await apiFetch('/api/bruno/chats?limit=15&offset=0');
+      if (!res.ok) throw new Error();
+      setRecentChats(await res.json());
+    } catch {
+      setRecentError("Couldn't load your chats");
+    }
+  };
+  const openChat = async (id: number) => {
+    if (getDraft('bruno-panel:busy', false) || id === getDraft<number | null>('bruno-panel:chat', null)) return;
+    const ep = draftEpoch(), choice = ++panelChoice;
+    try {
+      const res = await apiFetch(`/api/bruno/chats/${id}`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      // Something else (another chat, a new chat, a send) was chosen while it loaded: keep that.
+      if (draftEpoch() !== ep || choice !== panelChoice || getDraft('bruno-panel:busy', false)) return;
+      setChatId(id);
+      setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
+      setProposalState(EMPTY_OBJ);
+      setThinkMeta(EMPTY_OBJ as ThinkMeta);
+      setInput('');
+      setAttached([]);
+      setAttachedPdfs([]);
+    } catch {
+      // The menu has closed by now, so say it where it's seen.
+      if (choice === panelChoice) notify("Couldn't open that chat. Try again, or open it from All chats.", 'error');
+    }
   };
 
   // Report the active conversation so "expand" lands on the same chat.
@@ -212,6 +253,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   const send = async (text?: string, scoutingOverride?: ScoutingContextRequest) => {
     const content = (text ?? input).trim();
     if ((!content && !attached.length && !attachedPdfs.length) || getDraft('bruno-panel:busy', false)) return;
+    panelChoice++;
     // Everything below writes only while the store is still this epoch: a
     // sign-out / workspace switch mid-reply aborts it and drops its writes,
     // so a private conversation can't reappear for the next user.
@@ -272,6 +314,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined, signal: ac.signal });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      // "Turn on light mode": a finished reply's appearance block switches the theme here.
+      applyAppearanceFromReply(agg);
     } catch (e: any) {
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       if (e?.name === 'AbortError') {
@@ -299,6 +343,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
 
   return {
     name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat,
+    recentChats, recentError, loadRecentChats, openChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,

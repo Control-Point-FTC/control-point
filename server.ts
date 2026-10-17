@@ -79,6 +79,7 @@ import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, l
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
+import { MAX_PROMPT_CHARS } from "./server/brunoPowerRankings.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
@@ -2386,6 +2387,28 @@ async function startServer() {
     countAdmins,
     // Declared further down with the member routes; only called per request, after startup.
     removeMembership: (teamId, memberId) => removeMembership(teamId, memberId),
+    // System writing jobs (Scout's power-rankings blurbs): Bruno through aiChat, so the Gemini to
+    // Anthropic failover and timeouts apply, with web search off. Usage is logged under the system
+    // actor (member_id 0, no team), never a member. logAiUsage is declared further down.
+    brunoWrite: async ({ endpoint, system, user, maxTokens }) => {
+      let usage: any = null;
+      try {
+        const r = await aiChat({
+          extraSystem: system,
+          messages: [{ role: "user", text: user, maxChars: MAX_PROMPT_CHARS }],
+          maxTokens,
+          stream: false,
+          offline: true,
+          onUsage: (u) => { usage = u; },
+        });
+        logAiUsage(0, null, usage, system.length + user.length, r.text.length, "ok", r.provider, endpoint);
+        return r.text;
+      } catch (err: any) {
+        const quota = isQuotaError(err) || isAnthropicQuotaError(err);
+        logAiUsage(0, null, usage, 0, 0, quota ? "quota" : "error", err?.aiProvider || "gemini", endpoint);
+        throw err;
+      }
+    },
     sessionEmail: async (req) => {
       const auth = await getAuth(req);
       return auth ? (await authEmail(auth)) || null : null;
@@ -9486,6 +9509,8 @@ Rules:
   }
   const utcStamp = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
 
+  // People counts and the top-users list leave out member_id 0: system jobs (Scout's power-rankings
+  // blurbs, logged under that system actor) count toward messages and tokens, never as a person.
   app.get("/api/owner/ai-overview", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
@@ -9493,7 +9518,7 @@ Rules:
     const nowMs = Date.now();
     const todayStart = utcStamp(zonedMidnightUtcMs(tz, nowMs));
     const today = (await dbGet(
-      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT member_id) AS users FROM ai_usage WHERE created_at >= ?",
+      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT CASE WHEN member_id > 0 THEN member_id END) AS users FROM ai_usage WHERE created_at >= ?",
       todayStart
     )) as any;
     const top = (await dbAll(`
@@ -9502,7 +9527,7 @@ Rules:
       FROM ai_usage u
       LEFT JOIN members m ON m.id = u.member_id
       LEFT JOIN teams t ON t.id = u.team_id
-      WHERE u.created_at >= datetime('now', '-7 days')
+      WHERE u.created_at >= datetime('now', '-7 days') AND u.member_id > 0
       GROUP BY u.member_id ORDER BY tokens DESC LIMIT 10
     `)) as any[];
     const flagRows = (await dbAll("SELECT status, COUNT(*) AS n FROM ai_flags GROUP BY status")) as any[];
@@ -9540,7 +9565,8 @@ Rules:
       if (!bucket) continue;
       bucket.messages += 1;
       bucket.tokens += Number(r.total_tokens) || 0;
-      if (r.member_id != null) bucket.users.add(r.member_id);
+      // member_id 0 is a system job (e.g. Scout's power-rankings blurbs), not a person: counted in messages and tokens only.
+      if (Number(r.member_id) > 0) bucket.users.add(r.member_id);
     }
     const daily = days.map((d) => {
       const b = buckets.get(d.date)!;
@@ -13902,6 +13928,10 @@ Rules:
         t = t.replace(/```away\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```away[\s\S]*$/, "");
         // Checklist runs too.
         t = t.replace(/```checklist\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```checklist[\s\S]*$/, "");
+        // The appearance switch is applied in the browser as the reply finishes; it's never shown or saved.
+        t = t.replace(/```appearance\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```appearance[\s\S]*$/, "");
+        // CAD parts list additions too.
+        t = t.replace(/```parts\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```parts[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -14569,6 +14599,16 @@ Rules:
         }
       }
       // Unavailable times: the confirming member's own; every one is checked before anything is written.
+      // CAD parts list lines: every one is validated (same rules as the Parts List page) before anything is written.
+      const partLines: NonNullable<ReturnType<typeof sanitizePartInput>["value"]>[] = [];
+      for (const a of actions) {
+        if (a?.kind !== "part" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          const p = sanitizePartInput(it);
+          if (!p.ok) return res.status(400).json({ error: `${p.error} — nothing was saved` });
+          partLines.push(p.value!);
+        }
+      }
       const awayRemovals = new Set<number>();
       const awayAdds: Unavailability[] = [];
       for (const a of actions) {
@@ -14882,6 +14922,17 @@ Rules:
             if (!("error" in r)) { made("event-rsvp", event.id); n++; }
           }
           if (n) applied["event-rsvp"] = (applied["event-rsvp"] || 0) + n;
+        } else if (kind === "part") {
+          // Lines added to the CAD Parts List as the confirming member (anyone on the team can, like the page).
+          let n = 0;
+          for (const v of partLines.splice(0)) {
+            const r: any = await dbRun(
+              `INSERT INTO cad_parts (team_id, name, section, quantity, source, unit_cost, status, assignee, notes, created_by, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              auth.teamId, v.name, v.section, v.quantity, v.source, v.unit_cost, v.status, v.assignee, v.notes, auth.memberId, createdAt, createdAt);
+            made("part", r?.lastInsertRowid); n++;
+          }
+          if (n) applied.part = (applied.part || 0) + n;
         } else if (kind === "away") {
           // Written above, before anything else, as one batch.
           continue;

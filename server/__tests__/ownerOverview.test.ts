@@ -80,3 +80,17 @@ describe("owner overview", () => {
     expect(msgs).toEqual(["from before"]);
   });
 });
+
+describe("AI overview", () => {
+  it("system jobs (member_id 0, e.g. Scout's power-rankings blurbs) count as usage, never as a person", async () => {
+    const before = (await t.api("/api/owner/ai-overview", { session: owner })).body;
+    await t.db.execute("INSERT INTO ai_usage (member_id, team_id, endpoint, total_tokens, status, provider) VALUES (0, NULL, 'power-rankings', 5000, 'ok', 'gemini')");
+    const r = await t.api("/api/owner/ai-overview", { session: owner });
+    expect(r.status).toBe(200);
+    expect(Number(r.body.today.messages)).toBe(Number(before.today.messages) + 1);
+    expect(Number(r.body.today.tokens)).toBe(Number(before.today.tokens) + 5000);
+    expect(Number(r.body.today.users)).toBe(Number(before.today.users));
+    expect(r.body.top.some((u: any) => Number(u.id) === 0)).toBe(false);
+    expect(r.body.daily.at(-1).users).toBe(before.daily.at(-1).users);
+  });
+});

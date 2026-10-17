@@ -9,6 +9,7 @@ import { useLocation } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
+import { applyAppearanceFromReply } from '../../services/brunoAppearance';
 import { MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
@@ -162,6 +163,8 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       }, chatId, { ...(opts.persona ? { persona: opts.persona } : {}), signal: ac.signal });
       setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
       if (agg.trim()) keepThinking();
+      // "Turn on light mode": a finished reply's appearance block switches the theme here.
+      applyAppearanceFromReply(agg);
     } catch (err: any) {
       // Stopped by the user: keep what was generated so far.
       if (err?.name !== 'AbortError') throw err;
@@ -280,7 +283,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     try {
       const result = await applyActionProposalsWithIds(proposals);
       const applied = result.applied;
-      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k));
+      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k === 'part' ? 'cad-parts' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
     } catch (e: any) {
