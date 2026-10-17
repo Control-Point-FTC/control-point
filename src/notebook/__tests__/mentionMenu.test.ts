@@ -40,4 +40,21 @@ describe('@ mention list', () => {
     expect(found).toEqual(['@Ana Lee', '@Bo']);
     editor.destroy();
   });
+
+  it('keeps the list open while a full name is typed', () => {
+    const editor = new Editor({ extensions: [StarterKit, MemberMention.configure({ members: () => members, selfId: () => undefined, enabled: () => true, onMention: () => {} })], content: '<p>Ask</p>' });
+    editor.commands.focus('end');
+    editor.commands.insertContent(' @Jenny Pa');
+    expect(mentionKey.getState(editor.state)).toMatchObject({ active: true, query: 'Jenny Pa' });
+    editor.commands.insertContent('rk is here');
+    expect(mentionKey.getState(editor.state)!.active).toBe(false);
+    editor.destroy();
+  });
+
+  it('highlights across bold and italic, but not in inline code or after an email-like prefix', () => {
+    const editor = new Editor({ extensions: [StarterKit], content: '<p>Ask @Jenny <strong>Park</strong> and <code>@Bo</code> and x.@Bo</p>' });
+    const found = mentionDecorations(editor.state.doc, members).find().map(d => editor.state.doc.textBetween(d.from, d.to));
+    expect(found).toEqual(['@Jenny Park']);
+    editor.destroy();
+  });
 });

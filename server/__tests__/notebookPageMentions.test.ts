@@ -70,4 +70,19 @@ describe("@mentions in notebook pages", () => {
     const [note] = await rows("SELECT content FROM notifications WHERE user_id = ?", admin2);
     expect(note.content).toBe("Ada mentioned you on a notebook page");
   });
+
+  it("a notification that can't be saved isn't reported as sent, and trying again delivers it", async () => {
+    const p = (await t.post("/api/notebook/pages", { sectionId: section, title: "Retry page" }, anaSession)).body;
+    await t.db.execute("ALTER TABLE notifications RENAME TO notifications_off");
+    try {
+      const r = await ping(p.id, [lee]);
+      expect(r.status).toBe(503);
+      expect(await rows("SELECT id FROM notebook_page_mentions WHERE page_id = ?", p.id)).toHaveLength(0);
+    } finally {
+      await t.db.execute("ALTER TABLE notifications_off RENAME TO notifications");
+    }
+    const again = await ping(p.id, [lee]);
+    expect(again.body.notified).toEqual([{ id: lee, name: "Lee" }]);
+    expect(await rows("SELECT id FROM notifications WHERE user_id = ? AND content LIKE '%Retry page%'", lee)).toHaveLength(1);
+  });
 });

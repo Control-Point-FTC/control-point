@@ -18,7 +18,7 @@ import { parseSubsystems } from '../src/types/teamModules.js';
 import { parseTagList } from '../src/types/taskTags.js';
 import { NOTEBOOK_TEMPLATES } from '../src/notebook/templates.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
-import { notebookPageMention, notebookPageMentionInbox, notebookReadPageMention } from './notebookPageMentions.js';
+import { notebookForgetPageMention, notebookPageMention, notebookPageMentionInbox, notebookReadPageMention } from './notebookPageMentions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
 import {notebookRestore} from './notebookRecovery.js';
@@ -383,6 +383,7 @@ export class NotebookStore {
   }); }
   mentionInPage(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookPageMention(s, pageId, body)); }
   readPageMention(ctx: NotebookContext, mentionId: number) { return this.session(ctx, s => notebookReadPageMention(s, mentionId)); }
+  forgetPageMention(ctx: NotebookContext, mentionId: number) { return this.session(ctx, s => notebookForgetPageMention(s, mentionId)); }
   readMention(ctx: NotebookContext, commentId: number) { return this.session(ctx, s => notebookReadMention(s, commentId)); }
   sync(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
     if (!s.access.human) throw new NotebookError('Collaboration is available to team members only', 403);
@@ -926,10 +927,18 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   // "@Jenny" picked in the page text: record the ping, then notify each member who wasn't just pinged.
   app.post('/api/notebook/pages/:id/mentions', handle(async (ctx, req) => {
     const r = await store.mentionInPage(ctx, id(req.params.id), req.body ?? {});
-    for (const m of r.notified) {
-      await deps.notify?.(m.id, r.title ? `${r.by} mentioned you in the notebook page "${r.title.slice(0, 120)}"` : `${r.by} mentioned you on a notebook page`, 'mention', { notebook_page_id: r.pageId });
+    const sent: { id: number; name: string }[] = [];
+    for (const [i, m] of r.notified.entries()) {
+      try {
+        await deps.notify?.(m.id, r.title ? `${r.by} mentioned you in the notebook page "${r.title.slice(0, 120)}"` : `${r.by} mentioned you on a notebook page`, 'mention', { notebook_page_id: r.pageId });
+        sent.push({ id: m.id, name: m.name });
+      } catch {
+        // Not saved: undo this ping and the ones not tried yet, so asking again delivers them.
+        for (const left of r.notified.slice(i)) await store.forgetPageMention(ctx, left.mentionId);
+        throw new NotebookError("Couldn't send the notification. Try again in a moment.", 503, { notified: sent });
+      }
     }
-    return { notified: r.notified };
+    return { notified: sent };
   }));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));

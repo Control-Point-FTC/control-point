@@ -11,7 +11,7 @@ const MAX_PER_PING = 10;
 
 export type PageMentionResult = {
   /** Members who were pinged now (not ones pinged moments ago, and never the author). */
-  notified: { id: number; name: string }[];
+  notified: { id: number; name: string; mentionId: number }[];
   /** For the notification: who did it, and the page's title unless the page is protected. */
   by: string; pageId: number; title: string | null;
 };
@@ -28,16 +28,22 @@ export async function notebookPageMention(s: Session, pageId: number, body: Reco
   const eligible = new Map((await notebookMentionMembers(s, pageId)).map(m => [m.id, m.name] as const));
   if (ids.some(n => !eligible.has(n))) throw new NotebookError('A mentioned member cannot open this page');
   const now = new Date(), since = new Date(now.getTime() - PAGE_MENTION_REPEAT_MS).toISOString();
-  const notified: { id: number; name: string }[] = [];
+  const notified: { id: number; name: string; mentionId: number }[] = [];
   for (const memberId of ids) {
     if (memberId === s.ctx.memberId) continue;
     const recent = await s.one('SELECT id FROM notebook_page_mentions WHERE team_id=? AND page_id=? AND member_id=? AND mentioned_by=? AND created_at>=?', s.ctx.teamId, pageId, memberId, s.ctx.memberId, since);
     if (recent) continue;
-    await s.run('INSERT INTO notebook_page_mentions(team_id,page_id,member_id,mentioned_by,created_at) VALUES(?,?,?,?,?)', s.ctx.teamId, pageId, memberId, s.ctx.memberId, now.toISOString());
-    notified.push({ id: memberId, name: eligible.get(memberId) ?? 'Team member' });
+    const r: any = await s.run('INSERT INTO notebook_page_mentions(team_id,page_id,member_id,mentioned_by,created_at) VALUES(?,?,?,?,?)', s.ctx.teamId, pageId, memberId, s.ctx.memberId, now.toISOString());
+    notified.push({ id: memberId, name: eligible.get(memberId) ?? 'Team member', mentionId: Number(r?.lastInsertRowid) });
   }
   const me = await s.one('SELECT name FROM members WHERE id=? AND team_id=?', s.ctx.memberId, s.ctx.teamId);
   return { notified, by: me?.name || 'A teammate', pageId, title: await s.isProtected(page) ? null : (page.title || 'Untitled') };
+}
+
+/** A ping whose notification couldn't be saved: drop it, so trying again isn't skipped as a repeat. */
+export async function notebookForgetPageMention(s: Session, mentionId: number) {
+  await s.run('DELETE FROM notebook_page_mentions WHERE id=? AND team_id=? AND mentioned_by=?', mentionId, s.ctx.teamId, s.ctx.memberId);
+  return { ok: true };
 }
 
 /** Page mentions for the Mentions inbox, filtered to pages the reader can open now. */

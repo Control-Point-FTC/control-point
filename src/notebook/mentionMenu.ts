@@ -43,15 +43,22 @@ export function mentionDecorations(doc: PMNode, members: MentionMember[]): Decor
   if (!names.length) return DecorationSet.empty;
   const found: Decoration[] = [];
   doc.descendants((node, pos) => {
-    if (node.isTextblock && node.type.spec.code) return false;
-    if (!node.isText || !node.text || !node.text.includes('@')) return;
-    const text = node.text;
+    if (!node.isTextblock) return;
+    if (node.type.spec.code) return false;
+    // The block's text as one string, so "@Jenny **Park**" still matches. Each character is one
+    // document position; inline code and non-text nodes become \0 so nothing matches there.
+    let text = '';
+    node.forEach(child => {
+      text += child.isText && !child.marks.some(m => m.type.spec.code) ? child.text ?? '' : '\0'.repeat(child.nodeSize);
+    });
+    if (!text.includes('@')) return false;
     for (let i = text.indexOf('@'); i !== -1; i = text.indexOf('@', i + 1)) {
-      if (i > 0 && /[\w@]/.test(text[i - 1])) continue; // an email address, not a mention
+      if (i > 0 && /[\w@.+-]/.test(text[i - 1])) continue; // an email address, not a mention
       const rest = text.slice(i + 1);
       const name = names.find(n => rest.startsWith(n) && !/[\p{L}\p{N}_]/u.test(rest[n.length] ?? ''));
-      if (name) { found.push(Decoration.inline(pos + i, pos + i + 1 + name.length, { class: 'nb-mention' })); i += name.length; }
+      if (name) { found.push(Decoration.inline(pos + 1 + i, pos + 2 + i + name.length, { class: 'nb-mention' })); i += name.length; }
     }
+    return false;
   });
   return DecorationSet.create(doc, found);
 }
@@ -76,7 +83,8 @@ export const MemberMention = Extension.create<MentionOptions>({
           if ($from.marks().some(m => m.type.spec.code)) return { ...idle, dismissed };
           const before = parent.textBetween(Math.max(0, $from.parentOffset - 40), $from.parentOffset, '\0', '\0');
           // "@" at the start or after a space or bracket, so "name@example.com" doesn't open the list.
-          const match = /(?:^|[\s(\[{"'“])@([^\s@\0]{0,30})$/.exec(before);
+          // Full names too ("@Jenny Pa"): up to three words; the list closes once nothing matches.
+          const match = /(?:^|[\s(\[{"'“])@([^\s@\0]{0,30}(?: [^\s@\0]{0,30}){0,2})$/.exec(before);
           if (!match) return { ...idle, dismissed };
           const from = $from.pos - match[1].length - 1;
           if (dismissed === from) return { ...idle, dismissed };

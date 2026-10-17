@@ -8035,7 +8035,7 @@ async function startServer() {
   // ---- Voice & video calling ----
   registerVoiceRoutes(app, voiceDeps);
 
-  registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow, notify: (memberId, content, type, meta) => createNotification(memberId, content, type, meta) });
+  registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow, notify: (memberId, content, type, meta) => createNotification(memberId, content, type, meta, { throwOnError: true }) });
   const checklists = registerChecklistRoutes(app, { requireAuth: requireAuth as any, hasPerm: hasPerm as any, dbGet, dbAll, dbRun, broadcastToTeam });
   registerStickyNoteRoutes(app, { requireAuth });
 

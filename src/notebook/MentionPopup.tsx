@@ -1,7 +1,10 @@
 // The list for "@" mentions, placed at the caret like the "[[" page-link list.
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/core';
-import { insertMention, memberMatches, mentionKey, type MentionMember, type MentionState } from './mentionMenu';
+import { insertMention, memberMatches, mentionKey, type MentionMember, type MentionOptions, type MentionState } from './mentionMenu';
+
+/** Who can be mentioned on this page; shared with canvas text boxes on the page. */
+export const MentionSourceContext = createContext<MentionOptions | null>(null);
 
 export function MentionPopup({ editor, members, selfId, onMention }: { editor: Editor | null; members: MentionMember[]; selfId?: number; onMention: (m: MentionMember) => void }) {
   const [state, setState] = useState<MentionState | null>(null);

@@ -12,7 +12,8 @@ import { PageLinkMenu } from './pageLinkMenu';
 import { LINK_STATES_REFRESH, LinkStates, linkStatesKey } from './linkStates';
 import { PageLinkPopup, PageLinkSourceContext } from './PageLinkPopup';
 import { MemberMention, mentionKey, type MentionMember } from './mentionMenu';
-import { MentionPopup } from './MentionPopup';
+import { MentionPopup, MentionSourceContext } from './MentionPopup';
+import { ApiError } from '../services/api';
 import { notify } from '../components/dialog';
 import { SlashMenu } from './slashMenu';
 import { BlockMoves } from './blockMoves';
@@ -88,12 +89,33 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [mentionMembers, setMentionMembers] = useState<MentionMember[]>([]);
   const mentionMembersRef = React.useRef(mentionMembers); mentionMembersRef.current = mentionMembers;
   const mentionTeam = sync.scope?.teamId, selfId = sync.scope?.memberId;
-  const sendMention = React.useCallback((member: MentionMember) => {
+  // Pings that couldn't be sent (offline, server busy) wait here, per page, until the page saves again.
+  const pendingKey = `cp-nb-pending-mentions:${mentionTeam}:${sync.pageId}`;
+  const readPending = React.useCallback((): number[] => { try { const v = JSON.parse(localStorage.getItem(pendingKey) || '[]'); return Array.isArray(v) ? v.filter(Number.isSafeInteger) : []; } catch { return []; } }, [pendingKey]);
+  const writePending = React.useCallback((ids: number[]) => { try { if (ids.length) localStorage.setItem(pendingKey, JSON.stringify([...new Set(ids)].slice(0, 50))); else localStorage.removeItem(pendingKey); } catch { /* storage blocked */ } }, [pendingKey]);
+  const postMention = React.useCallback((memberIds: number[]) => {
     const headers = mentionTeam ? { 'X-CP-Notebook-Team': String(mentionTeam), 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
-    void apiJson<{ notified: MentionMember[] }>(`/api/notebook/pages/${sync.pageId}/mentions`, { method: 'POST', headers, body: JSON.stringify({ memberIds: [member.id] }) })
-      .then(r => notify(r.notified.length ? `${member.name} was notified` : `${member.name} was already notified about this page`, 'success'))
-      .catch(e => notify(e instanceof Error ? `Couldn't notify ${member.name}: ${e.message}` : `Couldn't notify ${member.name}`, 'error'));
+    return apiJson<{ notified: MentionMember[] }>(`/api/notebook/pages/${sync.pageId}/mentions`, { method: 'POST', headers, body: JSON.stringify({ memberIds }) });
   }, [sync.pageId, mentionTeam]);
+  // Only a refusal (no access, bad member) is final; anything else is tried again later.
+  const retryable = (e: unknown) => !(e instanceof ApiError) || e.status >= 500 || e.status === 0;
+  const sendMention = React.useCallback((member: MentionMember) => {
+    void postMention([member.id])
+      .then(r => notify(r.notified.length ? `${member.name} was notified` : `${member.name} was already notified about this page`, 'success'))
+      .catch(e => {
+        if (retryable(e)) { writePending([...readPending(), member.id]); notify(`${member.name} will be notified when this page is back online`, 'info'); }
+        else notify(e instanceof Error ? `Couldn't notify ${member.name}: ${e.message}` : `Couldn't notify ${member.name}`, 'error');
+      });
+  }, [postMention, readPending, writePending]);
+  // Send waiting pings once the page has reached the server again.
+  useEffect(() => {
+    if (sync.status !== 'saved' || !mentionTeam || typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const ids = readPending();
+    if (!ids.length) return;
+    let gone = false;
+    void postMention(ids).then(() => { if (!gone) writePending(readPending().filter(id => !ids.includes(id))); }).catch(e => { if (!gone && !retryable(e)) writePending(readPending().filter(id => !ids.includes(id))); });
+    return () => { gone = true; };
+  }, [sync.status, mentionTeam, postMention, readPending, writePending]);
   const sendMentionRef = React.useRef(sendMention); sendMentionRef.current = sendMention;
   const mentions = React.useMemo(() => ({ members: () => mentionMembersRef.current, selfId: () => sync.scope?.memberId, enabled: () => !mobileRef.current, onMention: (m: MentionMember) => sendMentionRef.current(m) }), [sync.scope?.memberId]);
   useEffect(() => {
@@ -292,7 +314,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       <textarea ref={titleBox} hidden={!mobile&&!paperView.showTitle} className="nb-title" aria-label="Page title" rows={1} maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); editor?.commands.focus('start'); } }} onChange={e => { const value = e.target.value.replace(/[\r\n]+/g, ' '); if (value.trim()) sync.doc.getMap('meta').set('title', value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <NotebookEntryMeta pageId={sync.pageId} teamId={sync.scope?.teamId} revision={sync.data?.revision} disabled={blocked} />
-      <RecordNavigationContext.Provider value={openRecordPath}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}{!mobile && <MentionPopup editor={editor} members={mentionMembers} selfId={selfId} onMention={sendMention} />}
+      <RecordNavigationContext.Provider value={openRecordPath}><MentionSourceContext.Provider value={mentions}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></MentionSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}{!mobile && <MentionPopup editor={activeEditor ?? editor} members={mentionMembers} selfId={selfId} onMention={sendMention} />}
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
     </article></div>
