@@ -36,7 +36,15 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
   const SELECT = `SELECT r.*, p.title AS page_title, rq.name AS requested_by_name, rv.name AS reviewer_name FROM notebook_reviews r
     JOIN notebook_pages p ON p.id = r.page_id LEFT JOIN members rq ON rq.id = r.requested_by LEFT JOIN members rv ON rv.id = r.reviewer_id`;
   /** The page must be one this member can open (the notebook's own access rules). */
-  const visiblePage = async (auth: Auth, pageId: number) => { await notebook.page(ctxOf(auth), pageId); };
+  const visiblePage = async (auth: Auth, pageId: number) => notebook.page(ctxOf(auth), pageId);
+  /** Of these members, the ones who can open the page now; a notice never reaches anyone else. */
+  const canOpen = async (teamId: number, pageId: number, ids: number[]) => {
+    const out: number[] = [];
+    for (const id of ids) { try { await notebook.page({ memberId: id, teamId, source: "human" }, pageId); out.push(id); } catch { /* can't open it */ } }
+    return out;
+  };
+  /** The page's name for a notice: a protected page's title stays out of notifications. */
+  const noticeName = (page: { title?: string; protected?: boolean }) => page.protected ? "a notebook entry" : `notebook entry "${String(page.title || "Untitled").slice(0, 80)}"`;
 
   return {
     canReview,
@@ -48,14 +56,21 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
     },
     /** Submits a page for review (anyone who can see it); one open request per page. */
     async request(auth: Auth, pageId: number, note: unknown) {
-      await visiblePage(auth, pageId);
+      const page: any = await visiblePage(auth, pageId);
       const open = await deps.dbGet("SELECT id FROM notebook_reviews WHERE page_id = ? AND team_id = ? AND status = 'pending'", pageId, auth.teamId);
       if (open) throw new NotebookError("This entry is already waiting for review", 409);
       const text = typeof note === "string" ? note.replace(/\s+/g, " ").trim().slice(0, MAX_COMMENT) : "";
-      const r = await deps.dbRun("INSERT INTO notebook_reviews (team_id, page_id, requested_by, requested_at, status, note) VALUES (?, ?, ?, ?, 'pending', ?)",
-        auth.teamId, pageId, auth.memberId, new Date().toISOString(), text);
-      const page = await deps.dbGet("SELECT title FROM notebook_pages WHERE id = ?", pageId);
-      void deps.notify(auth.teamId!, auth.memberId, await reviewers(auth.teamId!), `Notebook entry "${String(page?.title || "Untitled").slice(0, 80)}" is waiting for your review`, { notebookPageId: pageId });
+      let r: any;
+      try {
+        r = await deps.dbRun("INSERT INTO notebook_reviews (team_id, page_id, requested_by, requested_at, status, note) VALUES (?, ?, ?, ?, 'pending', ?)",
+          auth.teamId, pageId, auth.memberId, new Date().toISOString(), text);
+      } catch (e) {
+        // Two people asked at once: the one-open-request index lets only the first through.
+        if (/UNIQUE|constraint/i.test(String((e as Error)?.message))) throw new NotebookError("This entry is already waiting for review", 409);
+        throw e;
+      }
+      const name = noticeName(page);
+      void deps.notify(auth.teamId!, auth.memberId, await canOpen(auth.teamId!, pageId, await reviewers(auth.teamId!)), `${name[0].toUpperCase()}${name.slice(1)} is waiting for your review`, { notebook_page_id: pageId });
       deps.broadcastToTeam(auth.teamId!, { type: "notebook_reviews_changed" });
       return this.forPage(auth, pageId).then((x) => ({ ...x, id: Number(r?.lastInsertRowid) }));
     },
@@ -77,14 +92,14 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
       if (status === "changes" && !comment) throw new NotebookError("Say what should change");
       const r = await deps.dbGet("SELECT * FROM notebook_reviews WHERE id = ? AND team_id = ?", reviewId, auth.teamId);
       if (!r) throw new NotebookError("That review is gone", 404);
-      await visiblePage(auth, Number(r.page_id));
+      const page: any = await visiblePage(auth, Number(r.page_id));
       // Only an open request is decided (two reviewers at once: the first wins).
       const w = await deps.dbRun("UPDATE notebook_reviews SET status = ?, reviewer_id = ?, reviewed_at = ?, comment = ? WHERE id = ? AND status = 'pending'",
         status, auth.memberId, new Date().toISOString(), comment, reviewId);
       if (!Number(w?.changes ?? w?.rowsAffected ?? 0)) throw new NotebookError("Someone already reviewed this entry", 409);
-      const page = await deps.dbGet("SELECT title FROM notebook_pages WHERE id = ?", r.page_id);
-      void deps.notify(auth.teamId!, auth.memberId, [Number(r.requested_by)],
-        `${status === "approved" ? "Approved" : "Changes requested"}: notebook entry "${String(page?.title || "Untitled").slice(0, 80)}"${comment ? ` — ${comment.slice(0, 140)}` : ""}`, { notebookPageId: Number(r.page_id) });
+      // The comment is about the page, so it only goes along when the page isn't protected.
+      void deps.notify(auth.teamId!, auth.memberId, await canOpen(auth.teamId!, Number(r.page_id), [Number(r.requested_by)]),
+        `${status === "approved" ? "Approved" : "Changes requested"}: ${noticeName(page)}${comment && !page.protected ? ` — ${comment.slice(0, 140)}` : ""}`, { notebook_page_id: Number(r.page_id) });
       deps.broadcastToTeam(auth.teamId!, { type: "notebook_reviews_changed" });
       return row(await deps.dbGet(`${SELECT} WHERE r.id = ?`, reviewId));
     },

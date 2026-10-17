@@ -289,6 +289,16 @@ export class NotebookStore {
       return result;
     } catch (e) { await tx.rollback(); throw e; } finally { tx.close(); }
   }
+  /** Mentor reviews (server/notebookReviews.ts) on pages this context can open: open ones, and decisions from the last 30 days. */
+  reviews(ctx: NotebookContext) { return this.session(ctx, async s => {
+    const visible = new Set((await s.tree()).pages.map(p => p.id));
+    const rows = await s.all(`SELECT r.id, r.page_id, r.status, r.note, r.comment, r.requested_at, r.reviewed_at, p.title, rq.name AS requested_by_name, rv.name AS reviewer_name
+      FROM notebook_reviews r JOIN notebook_pages p ON p.id = r.page_id AND p.team_id = r.team_id AND p.deleted_at IS NULL
+      LEFT JOIN members rq ON rq.id = r.requested_by LEFT JOIN members rv ON rv.id = r.reviewer_id
+      WHERE r.team_id = ? AND (r.status = 'pending' OR r.reviewed_at >= ?) ORDER BY r.status = 'pending' DESC, COALESCE(r.reviewed_at, r.requested_at) DESC LIMIT 200`,
+      ctx.teamId, new Date(Date.now() - 30 * 86_400_000).toISOString());
+    return rows.filter(r => visible.has(Number(r.page_id)));
+  }); }
   tree(ctx: NotebookContext) { return this.session(ctx, async s => {
     // Starter uniqueness holds even when two devices first open simultaneously.
     // A deleted starter is not recreated: an intentionally empty team stays empty.
