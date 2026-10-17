@@ -24,3 +24,30 @@ describe('notebook journal grouping', () => {
     expect(filterEntries(list, { type: '', stage: '', subsystem: '', author: 'Lee' }).map((x) => x.id)).toEqual([2]);
   });
 });
+
+import { vi } from 'vitest';
+import { act, fireEvent, render, screen, cleanup } from '@testing-library/react';
+import { NotebookJournal } from '../NotebookJournal';
+import * as api from '../../services/api';
+
+describe('Load older entries', () => {
+  it('a double click loads the next page once, with no repeated cards', async () => {
+    const calls: string[] = [];
+    let release!: (v: any) => void;
+    const spy = vi.spyOn(api, 'apiJson').mockImplementation(((url: string) => {
+      calls.push(url);
+      if (url.includes('offset=0')) return Promise.resolve({ entries: [e(1, '2026-10-16')], more: true, nextOffset: 1, facets: { authors: [], subsystems: [] } });
+      return new Promise((r) => { release = r; });
+    }) as any);
+    render(<NotebookJournal open onClose={() => {}} onOpenPage={() => {}} teamId={1} />);
+    const button = await screen.findByRole('button', { name: 'Load older entries' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(calls.filter((u) => u.includes('offset=1'))).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Loading older entries/ })).toBeDisabled();
+    await act(async () => { release({ entries: [e(2, '2026-10-01')], more: false, nextOffset: 2 }); });
+    expect(screen.getAllByText('Entry 2')).toHaveLength(1);
+    spy.mockRestore();
+    cleanup();
+  });
+});

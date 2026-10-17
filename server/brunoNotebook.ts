@@ -102,7 +102,8 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
         .filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length))));
       return `page #${e.id} ${JSON.stringify(clip(e.title, 120))} ${e.date}${e.workDate ? " (work date)" : ""}${details ? ` · ${details}` : ""}${e.authors.length ? ` · by ${e.authors.slice(0, 6).join(", ")}` : ""}: ${JSON.stringify(clip(e.excerpt, 140))}`;
     });
-    return { lines: lines.length ? lines : ["(no matching entries)"], more, ids: lines.length ? shown.map(e => `page:${e.id}`) : [null] };
+    // No matches is no rows, so the lookup reads as "none found", never "1 found".
+    return { lines, more, ids: shown.map(e => `page:${e.id}`) };
   }
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));

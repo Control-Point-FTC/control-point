@@ -64,5 +64,7 @@ describe("notebook journal", () => {
     const words = await notebookLookup(store, ctx(member), { kind: "notebook_journal", query: "think" });
     expect(words.lines.join("\n")).toMatch(/Intake test/);
     expect(words.lines.join("\n")).not.toMatch(/Kickoff/);
+    // Nothing found is no rows, so the lookup reads as "none found", not "1 found".
+    expect((await notebookLookup(store, ctx(member), { kind: "notebook_journal", query: "zebra unicorn" })).lines).toEqual([]);
   });
 });

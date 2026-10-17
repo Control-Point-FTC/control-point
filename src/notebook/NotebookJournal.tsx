@@ -77,13 +77,23 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
       })
       .catch((e) => { if (mine === listing.current) { setEntries([]); setError(e?.message || 'Could not load the journal'); } });
   }, [open, fetchPage]);
+  // One "Load older entries" at a time: a second click while one is loading would fetch the same page twice.
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderBusy = useRef(false);
   const loadOlder = async () => {
+    if (olderBusy.current) return;
+    olderBusy.current = true; setLoadingOlder(true);
     const mine = listing.current;
     try {
       const d = await fetchPage(next);
       if (mine !== listing.current) return;
-      setEntries((list) => [...(list ?? []), ...(d.entries ?? [])]); setMore(!!d.more); setNext(d.nextOffset ?? next);
+      setEntries((list) => {
+        const seen = new Set((list ?? []).map((e) => e.id));
+        return [...(list ?? []), ...(d.entries ?? []).filter((e) => !seen.has(e.id))];
+      });
+      setMore(!!d.more); setNext(d.nextOffset ?? next);
     } catch (e: any) { setError(e?.message || 'Could not load older entries'); }
+    finally { olderBusy.current = false; setLoadingOlder(false); }
   };
 
   const today = new Date().toLocaleDateString('en-CA');
@@ -141,7 +151,7 @@ export function NotebookJournal({ open, onClose, onOpenPage, teamId }: { open: b
               </ul>
             </section>
           ))}
-          {more && <button type="button" className="w-full rounded-md border border-border py-2 text-sm hover:bg-muted/50" onClick={() => void loadOlder()}>Load older entries</button>}
+          {more && <button type="button" className="w-full rounded-md border border-border py-2 text-sm hover:bg-muted/50" disabled={loadingOlder} aria-busy={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? 'Loading older entries…' : 'Load older entries'}</button>}
         </div>
       </DialogContent>
     </Dialog>
