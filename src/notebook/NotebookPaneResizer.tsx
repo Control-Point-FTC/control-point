@@ -5,22 +5,39 @@ export const PAGES_WIDTH_KEY = 'cp-nb-pages-width';
 export const PAGES_MIN_WIDTH = 180;
 export const PAGES_MAX_WIDTH = 640;
 
-/** Keeps a pane width usable: never below the minimum, never past the cap or half the window. */
-export function clampPaneWidth(w: number, viewport: number = typeof window === 'undefined' ? 1600 : window.innerWidth): number {
-  const max = Math.max(PAGES_MIN_WIDTH, Math.min(PAGES_MAX_WIDTH, Math.floor(viewport * 0.5)));
-  return Math.round(Math.min(Math.max(w, PAGES_MIN_WIDTH), max));
+const windowWidth = () => (typeof window === 'undefined' ? 1600 : window.innerWidth);
+
+/** The widest the pages pane may be in this window: the cap, or half the window if that's less. */
+export function paneMaxWidth(viewport: number = windowWidth()): number {
+  return Math.max(PAGES_MIN_WIDTH, Math.min(PAGES_MAX_WIDTH, Math.floor(viewport * 0.5)));
+}
+
+/** Keeps a pane width usable: never below the minimum, never past paneMaxWidth. */
+export function clampPaneWidth(w: number, viewport: number = windowWidth()): number {
+  return Math.round(Math.min(Math.max(w, PAGES_MIN_WIDTH), paneMaxWidth(viewport)));
 }
 
 function readWidth(): number | null {
   try {
     const n = Number(window.localStorage.getItem(PAGES_WIDTH_KEY));
-    return Number.isFinite(n) && n > 0 ? clampPaneWidth(n) : null;
+    // Only the absolute limits here: the window decides what's shown (see usePagesPaneWidth).
+    return Number.isFinite(n) && n > 0 ? clampPaneWidth(n, Infinity) : null;
   } catch { return null; }
 }
 
-/** The pages pane width: null means the stylesheet's default. Saved per device. */
+/**
+ * The pages pane width: null means the stylesheet's default. The chosen width is saved per
+ * device; what's shown is re-fitted to the window as it resizes, so a narrower window never
+ * squeezes the page out (and widening it again brings the chosen width back).
+ */
 export function usePagesPaneWidth(): [number | null, (w: number | null) => void] {
   const [width, setWidth] = useState<number | null>(readWidth);
+  const [viewport, setViewport] = useState(windowWidth);
+  useEffect(() => {
+    const on = () => setViewport(windowWidth());
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
   const set = useCallback((w: number | null) => {
     const v = w === null ? null : clampPaneWidth(w);
     setWidth(v);
@@ -29,7 +46,7 @@ export function usePagesPaneWidth(): [number | null, (w: number | null) => void]
       else window.localStorage.setItem(PAGES_WIDTH_KEY, String(v));
     } catch { /* storage blocked: the width still applies this visit */ }
   }, []);
-  return [width, set];
+  return [width === null ? null : clampPaneWidth(width, viewport), set];
 }
 
 /**
@@ -53,7 +70,7 @@ export function NotebookPaneResizer({ paneRef, width, onWidth }: { paneRef: RefO
       aria-orientation="vertical"
       aria-label="Resize pages list"
       aria-valuemin={PAGES_MIN_WIDTH}
-      aria-valuemax={PAGES_MAX_WIDTH}
+      aria-valuemax={paneMaxWidth()}
       aria-valuenow={Math.round(current())}
       tabIndex={0}
       title="Drag to resize · double-click to reset"

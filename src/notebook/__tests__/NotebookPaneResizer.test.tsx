@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, beforeEach } from 'vitest';
 import { useRef } from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { clampPaneWidth, NotebookPaneResizer, PAGES_MAX_WIDTH, PAGES_MIN_WIDTH, PAGES_WIDTH_KEY, usePagesPaneWidth } from '../NotebookPaneResizer';
 
 function Harness() {
@@ -44,5 +44,23 @@ describe('notebook pages pane resizer', () => {
     fireEvent.doubleClick(screen.getByRole('separator'));
     expect(screen.getByTestId('pane').style.width).toBe('');
     expect(window.localStorage.getItem(PAGES_WIDTH_KEY)).toBeNull();
+  });
+
+  it('a narrower window re-fits the pane, and its limit is what screen readers hear', () => {
+    const before = window.innerWidth;
+    const setWindow = (w: number) => act(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: w }); window.dispatchEvent(new Event('resize')); });
+    try {
+      setWindow(1600);
+      window.localStorage.setItem(PAGES_WIDTH_KEY, '640');
+      render(<Harness />);
+      expect(screen.getByTestId('pane').style.width).toBe('640px');
+      setWindow(800);
+      expect(screen.getByTestId('pane').style.width).toBe('400px');
+      expect(screen.getByRole('separator').getAttribute('aria-valuemax')).toBe('400');
+      // The chosen width is kept: a wide window shows it again.
+      expect(window.localStorage.getItem(PAGES_WIDTH_KEY)).toBe('640');
+      setWindow(1600);
+      expect(screen.getByTestId('pane').style.width).toBe('640px');
+    } finally { setWindow(before); }
   });
 });
