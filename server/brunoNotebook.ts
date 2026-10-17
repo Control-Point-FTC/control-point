@@ -75,8 +75,9 @@ export function renderNotebookText(content: unknown, canvas: unknown, limit = PA
   return text.length > limit ? { text: `${text.slice(0, limit)}\n… (page continues; the rest is not shown)`, truncated: true } : { text, truncated: false };
 }
 
-export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline";
-export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number }
+export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal";
+export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number; from?: string; to?: string }
+const JOURNAL_LIMIT = 60;
 
 const clip = (s: unknown, n: number) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -92,6 +93,20 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
  *  same whether they are protected, deleted or never existed. */
 /** `ids`: the records actually listed ("page:12", "section:3"), for checking Bruno's references. */
 export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: (string | null)[] }> {
+  if (q.kind === "notebook_journal") {
+    // Entries newest first by when the work happened, with their details and authors.
+    const { entries } = await store.journal(bruno(ctx));
+    const words = String(q.query ?? "").toLowerCase().split(/\s+/).filter(w => w.length > 1).slice(0, 5);
+    const hits = entries.filter(e => (!q.from || e.date >= q.from) && (!q.to || e.date <= q.to)
+      && words.every(w => `${e.title} ${e.excerpt} ${e.subsystems.join(" ")} ${e.awards.join(" ")} ${e.type ?? ""} ${e.stage ?? ""}`.toLowerCase().includes(w)));
+    const shown = hits.slice(0, JOURNAL_LIMIT);
+    const lines = shown.map(e => {
+      const details = entryMetaSummary(Object.fromEntries(Object.entries({ type: e.type, stage: e.stage, subsystems: e.subsystems, awards: e.awards })
+        .filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length))));
+      return `page #${e.id} ${JSON.stringify(clip(e.title, 120))} ${e.date}${e.workDate ? " (work date)" : ""}${details ? ` · ${details}` : ""}${e.authors.length ? ` · by ${e.authors.slice(0, 6).join(", ")}` : ""}: ${JSON.stringify(clip(e.excerpt, 140))}`;
+    });
+    return { lines: lines.length ? lines : ["(no matching entries)"], more: hits.length > JOURNAL_LIMIT, ids: lines.length ? shown.map(e => `page:${e.id}`) : [null] };
+  }
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
     const lines: string[] = [], ids: string[] = [];
