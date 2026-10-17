@@ -180,6 +180,8 @@ export interface FactsInput {
   onTime?: { onTime: number; total: number };
   /** Task board column limits and how many open tasks are in each column. */
   wip?: { limits: WipLimits; todo: number; inProgress: number };
+  /** Whether the team has a pit display link turned on. */
+  pitDisplay?: boolean;
 }
 
 const money = (n: number) => `$${(Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -205,6 +207,9 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   if (f.rsvpFollowThrough?.events) {
     const r = f.rsvpFollowThrough;
     L.push(`- RSVP follow-through (per attendance, last 30 days, ${r.events} event(s) with full RSVP): ${r.percent == null ? "nobody said going" : `${r.came} of ${r.said} who said going came (${r.percent}%)`}.`);
+  }
+  if (f.pitDisplay !== undefined) {
+    L.push(`- Pit display (Calendar → Pit display, admins): ${f.pitDisplay ? "on — a no-login screen link showing this week's events, #announcements, the next match at a live event and the check-in QR" : "off"}.`);
   }
   if (f.noDueOpenTotal !== undefined || f.onTime) {
     const pct = f.onTime ? onTimePercent(f.onTime) : null;
@@ -380,6 +385,7 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     doneLast7: Number(counts?.done7_n || 0),
     noDueOpenTotal: Number(counts?.nodue_n || 0),
     rsvpFollowThrough: { events: rsvpRows.length, ...ft },
+    pitDisplay: !!(await db.dbGet("SELECT 1 AS ok FROM pit_displays WHERE team_id = ?", teamId).catch(() => null)),
     onTime,
     messagesLast7: msgs ? Number(msgs.n || 0) : null,
     openTasks: openTasks.map((t: any) => ({ id: t.id, title: String(t.title || ""), status: String(t.status || "todo"), due_date: t.due_date, assignees: assignees.get(t.id) || [], subsystems: parseTagList(t.subsystems), blockedBy: t.blockers ? String(t.blockers).split(",").map(Number).filter((n) => n > 0) : [] })),

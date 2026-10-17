@@ -238,11 +238,15 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
  *  same tabs in the same place, so the workspace never jumps or looks empty. */
 export function NotebookRibbonShell({ loading }: { loading: boolean }) {
   const [group, setGroup] = useState<Tab>('home');
+  const workspace = useNotebookWorkspace();
+  const section = workspace?.currentSection ?? null;
+  const canStart = !loading && !!workspace?.openTemplates && !!workspace.tree?.permissions.edit && section != null;
   return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
     <RibbonTabs group={group} onSelect={setGroup} collapsed={false} trailing={<TopBar />} />
     <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
       {/* View's layout choice works without a page, so it's never a dead end. */}
       {group === 'view' && <ViewControls />}
+      {canStart && group !== 'view' && <RibbonGroup label="Pages"><RibbonButton label="Start from a template" icon="Template" showLabel onClick={() => workspace!.openTemplates!(section!)} /></RibbonGroup>}
       <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
     </div>
   </div>;

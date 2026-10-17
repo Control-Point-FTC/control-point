@@ -688,6 +688,7 @@ WORKSPACE SETTINGS SKILL:
   * "disable" / "enable": module ids to switch off / on.
   * "subsystems": the FULL new list (keep the existing names the user didn't ask to remove), 1 to ${MAX_SUBSYSTEMS} names.
   * "wip_limits": the task board's column limits, e.g. {"in-progress": 4, "todo": 12} (whole numbers 1–99; {} removes them). The board shows "3 / 4" and flags a column that's over.
+  * "pit_display": true or false. The pit display is a full-screen page for a spare screen in the pit or the shop (no sign-in, refreshes itself): this week's events, the latest #announcements, the team's next match at a live official event, and the check-in QR while a session runs. true turns it on (keeping the current link if there is one); false turns it off so its link stops working. The link itself is in Calendar → Pit display (never make one up).
 - Only admins can change workspace settings; if the user isn't one, the app tells them when they confirm.
 - IMPORTANT: the block only PROPOSES the change; nothing changes until the user confirms. Never claim it already changed.
 
@@ -745,7 +746,7 @@ NOTEBOOK EDIT SKILL:
 [{"op":"append","page":123,"markdown":"## Results\\n- Intake held 2 rings\\n- [ ] Retest at 12V"}]
 \`\`\`
 - Operations (up to 10 per block):
-  * {"op":"create","title":"…","section":<section id, optional>,"parent":<page id, optional>,"template":"meeting"|"todo"|"engineering"|"design"|"blank" (optional),"markdown":"…" (optional)}
+  * {"op":"create","title":"…","section":<section id, optional>,"parent":<page id, optional>,"template":"meeting"|"todo"|"engineering"|"design"|"test"|"failure"|"outreach"|"competition"|"code"|"iteration"|"blank" (optional; test = test log, failure = failure analysis, outreach = outreach event, competition = competition recap, code = code change, iteration = design iteration with hypothesis/changes/results),"markdown":"…" (optional)}
   * {"op":"append","page":<id>,"markdown":"…","after":"<block id, optional>"} adds to the end, or after that block
   * {"op":"replace","page":<id>,"block":"<block id>","markdown":"…"} rewrites one block; an empty "markdown" removes it. To rewrite a whole run of consecutive blocks at once (a heading and everything under it, or a table plus its notes), give every id in order instead: {"op":"replace","page":<id>,"blocks":["<id1>","<id2>","<id3>"],"markdown":"…"} (up to 40)
   * {"op":"rename","page":<id>,"title":"…"}

@@ -12,6 +12,7 @@ const NotebookPage = React.lazy(() => import('./notebook/NotebookPage').then(m =
 // Route-level code splitting: each page downloads when first opened (the
 // dashboard stays in the main bundle so the first screen paints at once).
 const OwnerPage = React.lazy(() => import('./modern/pages/owner/OwnerPage').then((m) => ({ default: m.OwnerPage })));
+const PitDisplayPage = React.lazy(() => import('./modern/pages/pit/PitDisplayPage').then((m) => ({ default: m.PitDisplayPage })));
 const CheckinPage = React.lazy(() => import('./modern/pages/attendance/CheckinPage').then((m) => ({ default: m.CheckinPage })));
 const PredictPage = React.lazy(() => import('./modern/pages/predict/PredictPage').then((m) => ({ default: m.PredictPage })));
 const TeamStatsPage = React.lazy(() => import('./modern/pages/stats/TeamStatsPage').then((m) => ({ default: m.TeamStatsPage })));
@@ -356,8 +357,9 @@ function PageLoadingFallback() {
 /** Pages any signed-in person may open, whatever their sidebar shows:
  *  profile/settings/roles (/roles redirects to Settings → Roles, which gates
  *  itself), inbox (Modern; Legacy redirects it), and stable record links
- *  (/t/...), whose page checks access to the record itself. */
-export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't'] as const;
+ *  (/t/...), whose page checks access to the record itself. The pit display
+ *  (/pit/<token>) is a kiosk page shown the same signed in or out. */
+export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't', 'pit'] as const;
 
 export default function App() {
   const { t } = useTranslation();
@@ -2280,6 +2282,11 @@ export default function App() {
   const legalPath = publicHeadFor(location.pathname)?.path;
   if (legalPath === '/privacy' || legalPath === '/terms') {
     return <LegalPage page={legalPath === '/privacy' ? 'privacy' : 'terms'} />;
+  }
+  // The pit display: a no-login kiosk page, the same signed in or out.
+  const pitToken = location.pathname.match(/^\/pit\/([A-Za-z0-9_-]{24,64})\/?$/)?.[1];
+  if (pitToken) {
+    return <React.Suspense fallback={null}><PitDisplayPage token={pitToken} /></React.Suspense>;
   }
 
   if (!isLoggedIn) {

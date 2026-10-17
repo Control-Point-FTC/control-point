@@ -122,8 +122,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 - [ ] Google Calendar inbound sync (changes made in Google come back into CP)
 
 ### PR 2.5: Pit display
-- [ ] Full-screen kiosk route for a spare screen: agenda, banners, next match, QR check-in
-- [ ] Auto-refresh, no-login token link
+- [x] Full-screen kiosk route for a spare screen: agenda, banners, next match, QR check-in (/pit/<token>: this week, #announcements, next match at a live imported event, the check-in QR while a session runs)
+- [x] Auto-refresh, no-login token link (admins make, replace or turn it off in Calendar → Pit display, or through Bruno's workspace card)
 
 ---
 
@@ -148,8 +148,8 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 
 ### PR 3.3: Templates
 - [x] Blank, meeting, to-do, engineering log, design review
-- [ ] Add: Test Log, Failure Analysis, Outreach Event, Competition Recap, Code Change, Design Iteration (hypothesis/changes/results)
-- [ ] "Start from a template" menu on the notebook toolbar
+- [x] Add: Test Log, Failure Analysis, Outreach Event, Competition Recap, Code Change, Design Iteration (hypothesis/changes/results)
+- [x] "Start from a template" menu on the notebook toolbar (on the ribbon before a page is open; Insert → Page templates with one)
 
 ### PR 3.4: Mentor review queue
 - [ ] Submit entry for review → mentor approves / requests changes, with comments

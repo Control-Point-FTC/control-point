@@ -14,6 +14,7 @@ const KNOWN = [
   new RegExp(`^/(${APP_SEGMENTS.join('|')})/?$`, 'i'),
   /^\/notebook(\/.*)?$/i,
   /^\/checkin\/[A-Za-z0-9]+\/?$/i,
+  /^\/pit\/[A-Za-z0-9_-]{24,64}\/?$/,
   /^\/join\/[^/]+\/?$/i,
   // Stable record links: /t/<team>/<type>/<id>.
   /^\/t\/\d+\/[a-z_]+\/\d+\/?$/i,
