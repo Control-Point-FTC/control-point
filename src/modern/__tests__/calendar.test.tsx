@@ -467,6 +467,27 @@ describe('High-contrast blocks', () => {
     expect(screen.getByRole('button', { name: /High contrast/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('finished events: struck through and full strength in Month and Week (faded only without high contrast)', async () => {
+    const events = [{ id: 9, title: 'Early sync', date: today, start_time: '00:00', end_time: '00:01', event_type: 'meeting' }];
+    const monthChip = () => screen.getAllByRole('button', { name: /Early sync/ }).find((b) => b.className.includes('px-1.5'))!;
+    const weekBlock = () => screen.getAllByRole('button', { name: /Early sync/ }).find((b) => b.querySelector('.line-clamp-2'))!;
+    setup({ events });
+    expect(monthChip().className).toMatch(/opacity-55/);
+    fireEvent.click(screen.getByRole('button', { name: /High contrast/ }));
+    expect(monthChip().className).not.toMatch(/opacity-55/);
+    expect(monthChip().className).toMatch(/bg-card/);
+    expect(monthChip().querySelector('.line-through')).not.toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Week' }));
+    await waitFor(() => expect(weekBlock()).toBeTruthy());
+    expect(weekBlock().className).not.toMatch(/opacity-55/);
+    expect(weekBlock().className).toMatch(/bg-card/);
+    expect(weekBlock().className).toMatch(/text-foreground/);
+    expect(weekBlock().querySelector('.line-through')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /High contrast/ }));
+    expect(weekBlock().className).toMatch(/opacity-55/);
+    expect(weekBlock().className).not.toMatch(/bg-card/);
+  });
+
   it('turns on by itself when the system asks for more contrast', () => {
     (window as any).matchMedia = (q: string) => ({ matches: q === '(prefers-contrast: more)', addEventListener() {}, removeEventListener() {} });
     setup();
