@@ -745,7 +745,7 @@ NOTEBOOK EDIT SKILL:
 [{"op":"append","page":123,"markdown":"## Results\\n- Intake held 2 rings\\n- [ ] Retest at 12V"}]
 \`\`\`
 - Operations (up to 10 per block):
-  * {"op":"create","title":"…","section":<section id, optional>,"parent":<page id, optional>,"template":"meeting"|"todo"|"engineering"|"design"|"blank" (optional),"markdown":"…" (optional)}
+  * {"op":"create","title":"…","section":<section id, optional>,"parent":<page id, optional>,"template":"meeting"|"todo"|"engineering"|"design"|"test"|"failure"|"outreach"|"competition"|"code"|"iteration"|"blank" (optional; test = test log, failure = failure analysis, outreach = outreach event, competition = competition recap, code = code change, iteration = design iteration with hypothesis/changes/results),"markdown":"…" (optional)}
   * {"op":"append","page":<id>,"markdown":"…","after":"<block id, optional>"} adds to the end, or after that block
   * {"op":"replace","page":<id>,"block":"<block id>","markdown":"…"} rewrites one block; an empty "markdown" removes it. To rewrite a whole run of consecutive blocks at once (a heading and everything under it, or a table plus its notes), give every id in order instead: {"op":"replace","page":<id>,"blocks":["<id1>","<id2>","<id3>"],"markdown":"…"} (up to 40)
   * {"op":"rename","page":<id>,"title":"…"}

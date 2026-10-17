@@ -304,6 +304,10 @@ describe("team notebook", () => {
     // unknown template ids are ignored, not stored
     await patch(`/sections/${section}`, { defaultTemplate: "nope" });
     expect((await get("/tree")).body.sections[0].defaultTemplate).toBe("meeting");
+    // The newer templates are valid section defaults too.
+    await patch(`/sections/${section}`, { defaultTemplate: "failure" });
+    expect((await get("/tree")).body.sections[0].defaultTemplate).toBe("failure");
+    await patch(`/sections/${section}`, { defaultTemplate: "meeting" });
     // clearing works
     await patch(`/sections/${section}`, { defaultTemplate: null, dateStamp: false });
     expect((await get("/tree")).body.sections[0]).toMatchObject({ defaultTemplate: null, dateStamp: false });

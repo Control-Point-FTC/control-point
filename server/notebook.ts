@@ -13,6 +13,7 @@ import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.j
 import { notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
 import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
+import { NOTEBOOK_TEMPLATES } from '../src/notebook/templates.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
@@ -521,7 +522,7 @@ export class NotebookStore {
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
     s.require("organize_notebook");
     const row = await s.item(kind, itemId);
-    const validTemplates = ["blank", "meeting", "todo", "engineering", "design"];
+    const validTemplates = NOTEBOOK_TEMPLATES.map(t => t.id) as string[];
     const defaultTemplate = body.defaultTemplate === undefined ? row.default_template
       : body.defaultTemplate === null ? null
       : validTemplates.includes(String(body.defaultTemplate)) ? String(body.defaultTemplate) : row.default_template;
