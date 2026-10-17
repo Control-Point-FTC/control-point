@@ -26,19 +26,23 @@ describe('Notebook entry details', () => {
   });
 
   it('saves one field at a time and rolls back on an error', async () => {
+    // Like the server: a saved change is what the next read returns.
+    let saved: any = base;
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (init?.method === 'PUT') {
         const body = JSON.parse(init.body);
-        if (body.stage === 'iterate') return { meta: { ...base.meta, stage: 'iterate' } };
-        throw new Error('Subsystems must be on the team\'s list');
+        if (body.stage === 'iterate') { saved = { ...saved, meta: { ...saved.meta, stage: 'iterate' } }; return { meta: saved.meta }; }
+        throw new Error("Subsystems must be on the team's list");
       }
-      return base;
+      return saved;
     });
     render(<NotebookEntryMeta pageId={5} teamId={1} revision={2} />);
     fireEvent.change(await screen.findByLabelText('Design stage'), { target: { value: 'iterate' } });
     await waitFor(() => expect(api.apiJson).toHaveBeenCalledWith('/api/notebook/pages/5/meta', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ stage: 'iterate' }) })));
     expect((screen.getByLabelText('Design stage') as HTMLSelectElement).value).toBe('iterate');
+    // Chips are sent as relative changes.
     fireEvent.click(screen.getByRole('button', { name: 'Remove subsystem Intake' }));
+    await waitFor(() => expect(api.apiJson).toHaveBeenCalledWith('/api/notebook/pages/5/meta', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ subsystemsRemove: ['Intake'] }) })));
     expect(await screen.findByRole('alert')).toHaveTextContent(/team's list/);
     expect(screen.getByText('Intake')).toBeInTheDocument();
   });

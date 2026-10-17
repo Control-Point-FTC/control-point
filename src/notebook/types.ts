@@ -7,4 +7,6 @@ export interface NotebookTree {
 }
 export interface NotebookPageData extends NotebookPageItem {
   content: unknown; canvas: unknown; createdBy: number | null; updatedBy: number | null; createdAt: string;
+  /** Entry details (work date, type, stage, subsystems, awards); null when none are set. */
+  entry?: import('./entryMeta').EntryMeta | null;
 }

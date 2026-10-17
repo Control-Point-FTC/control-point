@@ -13,7 +13,7 @@ import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.j
 import { notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
 import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
-import { cleanEntryMetaPatch, readMinutes, type EntryMeta } from '../src/notebook/entryMeta.js';
+import { cleanEntryMetaPatch, readMinutes, resolveListChanges, type EntryMeta } from '../src/notebook/entryMeta.js';
 import { parseSubsystems } from '../src/types/teamModules.js';
 import { parseTagList } from '../src/types/taskTags.js';
 import { NOTEBOOK_TEMPLATES } from '../src/notebook/templates.js';
@@ -155,7 +155,14 @@ export class Session {
   async page(row: Row) {
     return { id: row.id, sectionId: row.section_id, parentId: row.parent_id, title: row.title, sort: row.position,
       protected: await this.isProtected(row), ownProtected: !!row.protected, content: JSON.parse(row.content), canvas: JSON.parse(row.canvas), revision: row.revision,
-      createdBy: row.created_by, updatedBy: row.updated_by, createdAt: row.created_at, updatedAt: row.updated_at };
+      createdBy: row.created_by, updatedBy: row.updated_by, createdAt: row.created_at, updatedAt: row.updated_at,
+      // Entry details travel with the page (exports, print, history views).
+      entry: await this.entryOf(row.id) };
+  }
+  /** A page's saved entry details, or null when none were ever set. */
+  async entryOf(pageId: number): Promise<(EntryMeta & { updatedAt: string }) | null> {
+    const m = await this.one('SELECT * FROM notebook_page_meta WHERE page_id=? AND team_id=?', pageId, this.ctx.teamId);
+    return m ? { workDate: m.work_date ?? null, type: m.entry_type ?? null, stage: m.stage ?? null, subsystems: parseTagList(m.subsystems), awards: parseTagList(m.awards), updatedAt: String(m.updated_at) } : null;
   }
   async tree() {
     const notebooks = await this.all("SELECT * FROM notebook_books WHERE team_id=? AND deleted_at IS NULL ORDER BY position,id", this.ctx.teamId);
@@ -648,13 +655,12 @@ export class NotebookStore {
   /** A page's entry metadata, read time and byline (who wrote it, who edited it last). */
   entryMeta(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
     const page = await s.item('page', pageId);
-    const row = await s.one('SELECT * FROM notebook_page_meta WHERE page_id=? AND team_id=?', pageId, ctx.teamId);
-    const meta: EntryMeta = {
-      workDate: row?.work_date ?? null, type: row?.entry_type ?? null, stage: row?.stage ?? null,
-      subsystems: parseTagList(row?.subsystems), awards: parseTagList(row?.awards),
-    };
+    const saved = await s.entryOf(pageId);
+    const meta: EntryMeta = saved ? { workDate: saved.workDate, type: saved.type, stage: saved.stage, subsystems: saved.subsystems, awards: saved.awards }
+      : { workDate: null, type: null, stage: null, subsystems: [], awards: [] };
+    // Everyone who has edited the page (a team's roster bounds it).
     const writers = await s.all(`SELECT m.id, m.name FROM notebook_contributors c JOIN members m ON m.id=c.member_id
-      WHERE c.team_id=? AND c.page_id=? ORDER BY c.last_at ASC LIMIT 20`, ctx.teamId, pageId);
+      WHERE c.team_id=? AND c.page_id=? ORDER BY c.last_at ASC`, ctx.teamId, pageId);
     const editor = page.updated_by ? await s.one('SELECT name FROM members WHERE id=? AND team_id=?', page.updated_by, ctx.teamId) : undefined;
     const team = await s.one('SELECT subsystems FROM teams WHERE id=?', ctx.teamId);
     return {
@@ -665,6 +671,8 @@ export class NotebookStore {
       createdAt: page.created_at,
       teamSubsystems: parseSubsystems(team?.subsystems),
       canEdit: s.can('edit_notebook'),
+      /** Changes when anyone saves details, so open pages can tell theirs is stale. */
+      version: saved?.updatedAt ?? null,
     };
   }); }
   /** Changes some of a page's entry metadata (fields not sent are kept). */
@@ -672,7 +680,9 @@ export class NotebookStore {
     s.require('edit_notebook');
     await s.item('page', pageId);
     const team = await s.one('SELECT subsystems FROM teams WHERE id=?', ctx.teamId);
-    const c = cleanEntryMetaPatch(body, parseSubsystems(team?.subsystems));
+    // Chip toggles are applied to the saved lists here, inside the transaction.
+    const current = await s.entryOf(pageId);
+    const c = cleanEntryMetaPatch(resolveListChanges(body, { subsystems: current?.subsystems ?? [], awards: current?.awards ?? [] }), parseSubsystems(team?.subsystems));
     if ('error' in c) throw new NotebookError(c.error, 400);
     const p = c.patch;
     const now = new Date().toISOString();
@@ -687,8 +697,8 @@ export class NotebookStore {
         updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
       pageId, ctx.teamId, p.workDate ?? null, p.type ?? null, p.stage ?? null, JSON.stringify(p.subsystems ?? []), JSON.stringify(p.awards ?? []), ctx.memberId, now,
       'workDate' in p ? 1 : 0, 'type' in p ? 1 : 0, 'stage' in p ? 1 : 0, 'subsystems' in p ? 1 : 0, 'awards' in p ? 1 : 0);
-    const row = await s.one('SELECT * FROM notebook_page_meta WHERE page_id=?', pageId);
-    return { meta: { workDate: row?.work_date ?? null, type: row?.entry_type ?? null, stage: row?.stage ?? null, subsystems: parseTagList(row?.subsystems), awards: parseTagList(row?.awards) } };
+    const row = (await s.entryOf(pageId))!;
+    return { meta: { workDate: row.workDate, type: row.type, stage: row.stage, subsystems: row.subsystems, awards: row.awards }, version: row.updatedAt };
   }); }
   backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
     await s.item('page', pageId);

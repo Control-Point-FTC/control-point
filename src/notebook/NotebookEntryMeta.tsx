@@ -2,7 +2,7 @@
 // work happened, entry type, design stage, subsystem and award chips (each
 // award explains what judges look for on hover), the read time, and a byline:
 // "Written by … · last edited by …". Saved beside the page, not in its text.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Award, CalendarDays, Clock, Cog, Plus, X } from 'lucide-react';
 import { apiJson } from '../services/api';
 import { FTC_AWARDS, awardById } from '../types/taskTags';
@@ -16,42 +16,68 @@ type MetaResponse = {
   createdAt: string;
   teamSubsystems: string[];
   canEdit: boolean;
+  version?: string | null;
 };
+
+/** How often an open page checks for teammates' changes to its details. */
+const REFRESH_MS = 20_000;
 
 export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { pageId: number; teamId?: number | null; revision?: number; disabled?: boolean }) {
   const [data, setData] = useState<MetaResponse | null>(null);
   const [error, setError] = useState('');
   const headers = teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined;
+  // Saves run one at a time, in order; a reload never lands while one is pending.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const pending = useRef(0);
 
-  // Reload when the page changes or is saved (the byline and read time follow edits).
-  useEffect(() => {
-    let live = true;
-    apiJson<MetaResponse>(`/api/notebook/pages/${pageId}/meta`, { headers, cache: 'no-store' })
+  const load = useCallback(() => {
+    if (pending.current) return Promise.resolve();
+    return apiJson<MetaResponse>(`/api/notebook/pages/${pageId}/meta`, { headers, cache: 'no-store' })
       // Only a well-formed answer is shown (the row never takes the page down with it).
-      .then((d) => { if (live) { setData(d && d.meta && Array.isArray(d.meta.subsystems) && Array.isArray(d.meta.awards) ? d : null); setError(''); } })
-      .catch(() => { if (live) setData(null); });
-    return () => { live = false; };
-  }, [pageId, revision]); // eslint-disable-line react-hooks/exhaustive-deps
+      .then((d) => { if (!pending.current) setData(d && d.meta && Array.isArray(d.meta.subsystems) && Array.isArray(d.meta.awards) ? d : null); })
+      .catch(() => {});
+  }, [pageId, teamId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload when the page changes or is saved (the byline and read time follow
+  // edits), when the window comes back into focus, and every 20 s for
+  // teammates' changes to the details.
+  useEffect(() => { setData(null); setError(''); }, [pageId]);
+  useEffect(() => { void load(); }, [load, revision]);
+  useEffect(() => {
+    const onFocus = () => { if (document.visibilityState !== 'hidden') void load(); };
+    const timer = window.setInterval(onFocus, REFRESH_MS);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); };
+  }, [load]);
 
   if (!data) return null;
   const { meta } = data;
   const editable = data.canEdit && !disabled;
 
-  const save = async (patch: Partial<EntryMeta>) => {
-    const before = data;
-    setData({ ...data, meta: { ...meta, ...patch } });
-    try {
-      const r = await apiJson<{ meta: EntryMeta }>(`/api/notebook/pages/${pageId}/meta`, { method: 'PUT', headers, body: JSON.stringify(patch) });
-      setData((d) => (d ? { ...d, meta: r.meta } : d));
-      setError('');
-    } catch (e: any) {
-      setData(before);
-      setError(e?.message || 'Could not save that — try again.');
-    }
+  /** Shows the change at once, then saves it after any earlier save. Chip
+   *  changes go as add/remove so a teammate's tags are never overwritten. */
+  const save = (shown: Partial<EntryMeta>, body: Record<string, unknown> = shown) => {
+    setData((d) => (d ? { ...d, meta: { ...d.meta, ...shown } } : d));
+    pending.current++;
+    queue.current = queue.current.then(async () => {
+      try {
+        const r = await apiJson<{ meta: EntryMeta; version?: string }>(`/api/notebook/pages/${pageId}/meta`, { method: 'PUT', headers, body: JSON.stringify(body) });
+        // The newest saved state wins once the last queued save is done.
+        if (pending.current === 1) setData((d) => (d ? { ...d, meta: r.meta, version: r.version ?? d.version } : d));
+        setError('');
+      } catch (e: any) {
+        setError(e?.message || 'Could not save that — try again.');
+      } finally {
+        pending.current--;
+        // After a refusal, show what is really saved.
+        if (!pending.current) void load();
+      }
+    });
   };
   const toggle = (key: 'subsystems' | 'awards', value: string) => {
-    const list = meta[key];
-    void save({ [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] } as Partial<EntryMeta>);
+    const on = meta[key].includes(value);
+    void save({ [key]: on ? meta[key].filter((v) => v !== value) : [...meta[key], value] } as Partial<EntryMeta>, { [on ? `${key}Remove` : `${key}Add`]: [value] });
   };
 
   const chip = 'inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs';

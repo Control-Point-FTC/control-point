@@ -8,7 +8,7 @@ import { NotebookStore, type NotebookContext } from "../notebook";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "../brunoNotebookActions";
 import { notebookLookup } from "../brunoNotebook";
 import { seedMember, seedTeam, startTestServer, type TestServer } from "./helpers/testServer";
-import { cleanEntryMetaPatch, readMinutes } from "../../src/notebook/entryMeta";
+import { cleanEntryMetaPatch, readMinutes, resolveListChanges } from "../../src/notebook/entryMeta";
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -23,6 +23,14 @@ describe("entry metadata rules", () => {
     expect(cleanEntryMetaPatch({ subsystems: ["Intake", "Lift"] }, team)).toHaveProperty("error");
     expect(cleanEntryMetaPatch({ awards: ["Best hair"] }, team)).toHaveProperty("error");
     expect(cleanEntryMetaPatch({}, team)).toHaveProperty("error");
+    // null clears lists too.
+    expect(cleanEntryMetaPatch({ subsystems: null, awards: null }, team)).toEqual({ patch: { subsystems: [], awards: [] } });
+  });
+  it("chip changes apply to the saved lists, so two people tagging both keep their tags", () => {
+    const saved = { subsystems: ["Intake"], awards: ["think"] };
+    expect(resolveListChanges({ awardsAdd: ["design"] }, saved)).toEqual({ awards: ["think", "design"] });
+    expect(resolveListChanges({ awardsAdd: ["Think"], subsystemsRemove: ["intake"] }, saved)).toEqual({ awards: ["think"], subsystems: [] });
+    expect(resolveListChanges({ type: "test" }, saved)).toEqual({ type: "test" });
   });
   it("estimates read time at about 200 words a minute", () => {
     expect(readMinutes("")).toBe(0);
@@ -63,6 +71,14 @@ describe("notebook entry metadata", () => {
     expect((await put({ subsystems: [sub], awards: ["think"] })).body.meta).toEqual({ workDate: "2026-10-15", type: "test", stage: "test", subsystems: [sub], awards: ["think"] });
     expect((await put({ stage: null })).body.meta.stage).toBeNull();
     expect((await put({ type: "Dance" })).status).toBe(400);
+    // Two chip additions sent at the same time both stick (relative changes, applied server-side).
+    await Promise.all([put({ awardsAdd: ["design"] }), put({ awardsAdd: ["control"] })]);
+    expect((await api(`/pages/${p.id}/meta`)).body.meta.awards.sort()).toEqual(["control", "design", "think"]);
+    expect((await put({ awardsRemove: ["design", "control"] })).body.meta.awards).toEqual(["think"]);
+    // The page itself carries its details (exports and print use them).
+    expect((await api(`/pages/${p.id}`)).body.entry).toMatchObject({ type: "test", workDate: "2026-10-15", awards: ["think"] });
+    const version = (await api(`/pages/${p.id}/meta`)).body.version;
+    expect(version).toEqual(expect.any(String));
     expect((await api(`/pages/${p.id}/meta`)).body.meta.type).toBe("test");
     // Another member edits the page: the byline lists both, last edited by them.
     await store.save(ctx(peer), p.id, { baseRevision: (await store.page(ctx(peer), p.id)).revision, title: "Intake test v2" });
@@ -92,6 +108,7 @@ describe("notebook entry metadata", () => {
     expect((await previewNotebookOps(store, ctx(member), badOps))[0].error).toMatch(/team's list/);
     await expect(applyNotebookOps(store, ctx(member), badOps, "receipt-bad-tag-000001")).rejects.toMatchObject({ status: 400 });
     expect(() => parseNotebookOps([{ op: "tag", page: p.id, type: "Dance" }])).toThrow();
+    expect(parseNotebookOps([{ op: "tag", page: p.id, awards: null }])[0]).toMatchObject({ op: "tag", meta: { awards: null } });
     const r = await applyNotebookOps(store, ctx(member), ops, "receipt-tag-0000000001");
     expect(JSON.stringify(r)).toMatch(/"op":"tag"/);
     const read = await notebookLookup(store, ctx(member), { kind: "notebook_page", page: p.id } as any);

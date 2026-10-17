@@ -68,6 +68,9 @@ export function cleanEntryMetaPatch(input: any, teamSubsystems: readonly string[
     if (!s && !empty(input.stage)) return { error: `Stage is one of: ${ENTRY_STAGES.map((x) => x.label).join(', ')}` };
     patch.stage = s;
   }
+  // null clears a list, like the other fields.
+  if (input.subsystems === null) input = { ...input, subsystems: [] };
+  if (input.awards === null) input = { ...input, awards: [] };
   if ('subsystems' in input) {
     if (!Array.isArray(input.subsystems)) return { error: 'Subsystems are a list' };
     const clean = cleanRecordSubsystems(input.subsystems, teamSubsystems);
@@ -85,6 +88,27 @@ export function cleanEntryMetaPatch(input: any, teamSubsystems: readonly string[
 }
 
 /** Minutes to read a page's text at about 200 words a minute (at least 1 when there's any text). */
+/**
+ * Applies relative chip changes ({subsystemsAdd, subsystemsRemove, awardsAdd,
+ * awardsRemove}) to the saved lists, so two people tagging at once both keep
+ * their tags. Returns the input with full lists in their place.
+ */
+export function resolveListChanges(input: any, saved: { subsystems: string[]; awards: string[] }): any {
+  if (!input || typeof input !== 'object') return input;
+  const out = { ...input };
+  for (const key of ['subsystems', 'awards'] as const) {
+    const add = input[`${key}Add`], remove = input[`${key}Remove`];
+    delete out[`${key}Add`]; delete out[`${key}Remove`];
+    if (add === undefined && remove === undefined) continue;
+    if ((add !== undefined && !Array.isArray(add)) || (remove !== undefined && !Array.isArray(remove))) { out[key] = 'invalid'; continue; }
+    const drop = new Set((remove ?? []).map((v: unknown) => String(v).trim().toLowerCase()));
+    const kept = saved[key].filter((v) => !drop.has(v.toLowerCase()));
+    const have = new Set(kept.map((v) => v.toLowerCase()));
+    out[key] = [...kept, ...(add ?? []).filter((v: unknown) => !have.has(String(v).trim().toLowerCase()))];
+  }
+  return out;
+}
+
 export function readMinutes(plain: string | null | undefined): number {
   const words = String(plain ?? '').trim().split(/\s+/).filter(Boolean).length;
   return words ? Math.max(1, Math.round(words / 200)) : 0;
