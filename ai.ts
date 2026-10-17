@@ -749,6 +749,7 @@ NOTEBOOK EDIT SKILL:
   * {"op":"append","page":<id>,"markdown":"…","after":"<block id, optional>"} adds to the end, or after that block
   * {"op":"replace","page":<id>,"block":"<block id>","markdown":"…"} rewrites one block; an empty "markdown" removes it. To rewrite a whole run of consecutive blocks at once (a heading and everything under it, or a table plus its notes), give every id in order instead: {"op":"replace","page":<id>,"blocks":["<id1>","<id2>","<id3>"],"markdown":"…"} (up to 40)
   * {"op":"rename","page":<id>,"title":"…"}
+  * {"op":"tag","page":<id>,"type":"test","stage":"iterate","workDate":"2026-10-15","subsystems":["Intake"],"awards":["think"]} sets the entry's details (any of these keys; null clears one). type: prototype, build, code, test, outreach, meeting, competition, failure. stage: identify, brainstorm, research, design, build, program, test, iterate. subsystems: only the team's own list. awards: think, connect, reach, sustain, innovate, control, design, inspire. workDate is when the work happened (not when it was written). A notebook_page lookup shows the current details after "entry:".
   * {"op":"move","page":<id>,"section":<section id>} or {"op":"move","page":<id>,"parent":<page id or null>}
   * {"op":"delete","page":<id>} moves the page and its subpages to Trash
 - Write the content as Markdown (headings, lists, "- [ ]" checklists, tables, **bold**, \`code\`, and links); it becomes real, editable notebook blocks.

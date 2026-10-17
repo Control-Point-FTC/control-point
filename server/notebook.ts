@@ -13,6 +13,9 @@ import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.j
 import { notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
 import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
+import { cleanEntryMetaPatch, readMinutes, type EntryMeta } from '../src/notebook/entryMeta.js';
+import { parseSubsystems } from '../src/types/teamModules.js';
+import { parseTagList } from '../src/types/taskTags.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
@@ -641,6 +644,51 @@ export class NotebookStore {
     await s.contributed(Number(copy.lastInsertRowid));
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
   }); }
+  /** A page's entry metadata, read time and byline (who wrote it, who edited it last). */
+  entryMeta(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
+    const page = await s.item('page', pageId);
+    const row = await s.one('SELECT * FROM notebook_page_meta WHERE page_id=? AND team_id=?', pageId, ctx.teamId);
+    const meta: EntryMeta = {
+      workDate: row?.work_date ?? null, type: row?.entry_type ?? null, stage: row?.stage ?? null,
+      subsystems: parseTagList(row?.subsystems), awards: parseTagList(row?.awards),
+    };
+    const writers = await s.all(`SELECT m.id, m.name FROM notebook_contributors c JOIN members m ON m.id=c.member_id
+      WHERE c.team_id=? AND c.page_id=? ORDER BY c.last_at ASC LIMIT 20`, ctx.teamId, pageId);
+    const editor = page.updated_by ? await s.one('SELECT name FROM members WHERE id=? AND team_id=?', page.updated_by, ctx.teamId) : undefined;
+    const team = await s.one('SELECT subsystems FROM teams WHERE id=?', ctx.teamId);
+    return {
+      meta,
+      readMinutes: readMinutes(page.plain),
+      writtenBy: writers.map(w => String(w.name).slice(0, 80)),
+      lastEditedBy: editor ? String(editor.name).slice(0, 80) : null,
+      createdAt: page.created_at,
+      teamSubsystems: parseSubsystems(team?.subsystems),
+      canEdit: s.can('edit_notebook'),
+    };
+  }); }
+  /** Changes some of a page's entry metadata (fields not sent are kept). */
+  saveEntryMeta(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
+    s.require('edit_notebook');
+    await s.item('page', pageId);
+    const team = await s.one('SELECT subsystems FROM teams WHERE id=?', ctx.teamId);
+    const c = cleanEntryMetaPatch(body, parseSubsystems(team?.subsystems));
+    if ('error' in c) throw new NotebookError(c.error, 400);
+    const p = c.patch;
+    const now = new Date().toISOString();
+    await s.run(`INSERT INTO notebook_page_meta (page_id, team_id, work_date, entry_type, stage, subsystems, awards, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(page_id) DO UPDATE SET
+        work_date = CASE WHEN ? THEN excluded.work_date ELSE work_date END,
+        entry_type = CASE WHEN ? THEN excluded.entry_type ELSE entry_type END,
+        stage = CASE WHEN ? THEN excluded.stage ELSE stage END,
+        subsystems = CASE WHEN ? THEN excluded.subsystems ELSE subsystems END,
+        awards = CASE WHEN ? THEN excluded.awards ELSE awards END,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      pageId, ctx.teamId, p.workDate ?? null, p.type ?? null, p.stage ?? null, JSON.stringify(p.subsystems ?? []), JSON.stringify(p.awards ?? []), ctx.memberId, now,
+      'workDate' in p ? 1 : 0, 'type' in p ? 1 : 0, 'stage' in p ? 1 : 0, 'subsystems' in p ? 1 : 0, 'awards' in p ? 1 : 0);
+    const row = await s.one('SELECT * FROM notebook_page_meta WHERE page_id=?', pageId);
+    return { meta: { workDate: row?.work_date ?? null, type: row?.entry_type ?? null, stage: row?.stage ?? null, subsystems: parseTagList(row?.subsystems), awards: parseTagList(row?.awards) } };
+  }); }
   backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
     await s.item('page', pageId);
     const tree = await s.tree();
@@ -869,6 +917,8 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get("/api/notebook/pages/:id", handle((ctx, req) => store.page(ctx, id(req.params.id))));
   app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
   app.get('/api/notebook/pages/:id/backlinks', handle((ctx, req) => store.backlinks(ctx, id(req.params.id))));
+  app.get('/api/notebook/pages/:id/meta', handle((ctx, req) => store.entryMeta(ctx, id(req.params.id))));
+  app.put('/api/notebook/pages/:id/meta', handle((ctx, req) => store.saveEntryMeta(ctx, id(req.params.id), req.body ?? {})));
   app.get('/api/notebook/pages/:id/threads', handle((ctx, req) => store.threads(ctx, id(req.params.id), req.query.before, req.query.thread)));
   app.get('/api/notebook/pages/:id/threads/:tid/comments', handle((ctx, req) => store.threadComments(ctx, id(req.params.id), id(req.params.tid), req.query.before, req.query.limit)));
   app.post('/api/notebook/pages/:id/comments', handle((ctx, req) => store.comment(ctx, id(req.params.id), req.body ?? {})));

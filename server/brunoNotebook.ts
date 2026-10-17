@@ -6,6 +6,7 @@
 // Only typed text is rendered. Attachments appear by file name; their bytes,
 // PDF pages and images are never read, OCR'd or summarised from here.
 import { NotebookError, type NotebookStore, type NotebookContext } from "./notebook.js";
+import { entryMetaSummary } from "../src/notebook/entryMeta.js";
 
 export type BrunoNotebookCtx = Omit<NotebookContext, "source">;
 const bruno = (ctx: BrunoNotebookCtx): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno" });
@@ -126,7 +127,11 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
   try {
     const page = await store.page(bruno(ctx), pageId);
     const { text, truncated } = renderNotebookText(page.content, page.canvas);
-    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated, ids: [`page:${page.id}`, null] };
+    // Entry details (type, stage, work date, subsystems, awards, byline, read time).
+    const em = await store.entryMeta(bruno(ctx), pageId).catch(() => null);
+    const details = em ? [entryMetaSummary(Object.fromEntries(Object.entries(em.meta).filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length)))),
+      em.writtenBy.length ? `written by ${em.writtenBy.join(", ")}` : "", em.lastEditedBy ? `last edited by ${em.lastEditedBy}` : "", em.readMinutes ? `${em.readMinutes} min read` : ""].filter(Boolean).join(" · ") : "";
+    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt})${details ? ` — entry: ${details}` : ""}:`, text || "(no typed text)"], more: truncated, ids: [`page:${page.id}`, null] };
   } catch (e) {
     if (e instanceof NotebookError && (e.status === 404 || e.status === 403)) return { lines: [`(page ${pageId} is not available to Bruno)`], more: false };
     throw e;

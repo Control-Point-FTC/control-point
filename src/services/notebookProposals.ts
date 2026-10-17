@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { apiJson } from './api';
 
-export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete' | 'sticky_create' | 'sticky_edit' | 'sticky_delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
+export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete' | 'tag' | 'sticky_create' | 'sticky_edit' | 'sticky_delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
 /** Page changes report pageId; sticky note changes report noteId. */
 export type NotebookOpResult = { op: NotebookOpPreview['op']; pageId?: number; noteId?: number; title: string };
 /** Sticky note changes travel in the same block but always get their own card. */
