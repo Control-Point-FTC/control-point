@@ -30,6 +30,7 @@ const resources = {
         outreach: 'Outreach',
         budget: 'Budget',
         resources: 'Resources',
+        checklists: 'Checklists',
         owner: 'Owner',
         profile: 'Profile',
         teamSettings: 'Team Settings',
