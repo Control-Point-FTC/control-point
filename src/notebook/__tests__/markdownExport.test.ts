@@ -47,3 +47,37 @@ describe('notebook page as Markdown', () => {
     expect(markdownFileName('')).toBe('notebook-page.md');
   });
 });
+
+describe('Markdown export edge cases', () => {
+  const doc = (...content: any[]) => ({ title: 'x', content: { type: 'doc', content } });
+  const body = (md: string) => md.split('\n').slice(2).join('\n');
+
+  it('names drawings and keeps canvas text boxes', () => {
+    const md = notebookPageMarkdown({ title: 'x', content: { type: 'doc', content: [] }, canvas: { version: 1, objects: [
+      { type: 'stroke' }, { type: 'stroke' }, { type: 'shape' },
+      { type: 'text', content: { type: 'doc', content: [p(t('Gear ratio 3:1'))] } },
+    ] } });
+    expect(md).toContain('[drawing: 2 strokes, 1 shape]');
+    expect(md).toContain('Text boxes on the page:\n\nGear ratio 3:1');
+  });
+  it('nests children under ordered items and keeps blocks inside an item', () => {
+    const md = notebookPageMarkdown(doc({ type: 'orderedList', content: [{ type: 'listItem', content: [p(t('Parent')), { type: 'bulletList', content: [{ type: 'listItem', content: [p(t('child'))] }] }, { type: 'codeBlock', content: [t('x = 1')] }] }] }));
+    expect(body(md)).toBe(['1. Parent', '   - child', '', '   ```', '   x = 1', '   ```', ''].join('\n'));
+  });
+  it('keeps blank lines inside code and fences longer than the code\'s backticks', () => {
+    const md = notebookPageMarkdown(doc({ type: 'codeBlock', content: [t('a\n\n\nb\n```')] }, p(t('use `x`', [{ type: 'code' }]))));
+    expect(md).toContain('````\na\n\n\nb\n```\n````');
+    expect(md).toContain('`` use `x` ``');
+  });
+  it('escapes plain text that would become formatting, including the title', () => {
+    const md = notebookPageMarkdown({ title: '*Intake*', content: { type: 'doc', content: [p(t('~~retired~~')), p(t('1. not a list')), p(t('- not a bullet'))] } });
+    expect(md).toContain(String.raw`# \*Intake\*`);
+    expect(md).toContain(String.raw`\~\~retired\~\~`);
+    expect(md).toContain(String.raw`1\. not a list`);
+    expect(md).toContain(String.raw`\- not a bullet`);
+  });
+  it('keeps spaces outside formatting markers and encodes parentheses in links', () => {
+    const md = notebookPageMarkdown(doc(p(t('Results ', [{ type: 'bold' }]), t('ok'), t(' math', [{ type: 'link', attrs: { href: 'https://example.com/Function_(mathematics)' } }]))));
+    expect(md).toContain('**Results** ok [math](https://example.com/Function_%28mathematics%29)');
+  });
+});
