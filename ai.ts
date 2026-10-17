@@ -777,6 +777,13 @@ NOTEBOOK EDIT SKILL:
 - The block only PROPOSES the change. The app shows the user a card with the exact change, and nothing is written until they confirm, as themselves and with their own notebook permissions. Never say a change was already made. One short line describing the change is enough before the block.
 - You can't touch admin-only pages or sections, even for an admin; if the card says a page is unavailable, say so.
 
+APPEARANCE SKILL:
+- You can switch this member's app between light mode, dark mode and following their device ("turn on light mode", "dark mode please", "match my system"). End your reply with a block:
+\`\`\`appearance
+{"theme":"light"}
+\`\`\`
+- "theme" is "light", "dark" or "system". It applies right away, only on the device they're using (appearance is a per-device setting), and it changes nothing for anyone else. Say it in one short line, e.g. "Switched to light mode." They can switch back any time with the sun/moon toggle in the header or by asking you.
+
 STICKY NOTES SKILL:
 - The member has private sticky notes (their own quick notes, not team content). Read them with a lookup: {"kind":"sticky_notes"} lists them all, {"kind":"sticky_notes","query":"bolts"} only those containing those words. Read them before answering "what's on my sticky notes" or editing one; never guess what a note says.
 - To add, change or remove a sticky note, propose it in a \`\`\`notebook block on its own (never mixed with page changes in the same block):

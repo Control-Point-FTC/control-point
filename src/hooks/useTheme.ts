@@ -62,6 +62,14 @@ function persistAndApply(choice: ThemeChoice): Theme {
 }
 
 /**
+ * Sets the appearance from outside a component (Bruno's "turn on light
+ * mode"): saved like the toggle, and every useTheme() instance follows.
+ */
+export function setAppearance(choice: ThemeChoice): Theme {
+  return persistAndApply(choice);
+}
+
+/**
  * Light/dark theme state for Control Point.
  *
  * - Default 'dark' — preserves the app's current Volt & Carbon look.

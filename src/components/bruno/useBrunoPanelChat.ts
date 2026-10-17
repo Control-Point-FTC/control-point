@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
+import { applyAppearanceFromReply } from '../../services/brunoAppearance';
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
 import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
@@ -272,6 +273,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined, signal: ac.signal });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      // "Turn on light mode": a finished reply's appearance block switches the theme here.
+      applyAppearanceFromReply(agg);
     } catch (e: any) {
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       if (e?.name === 'AbortError') {

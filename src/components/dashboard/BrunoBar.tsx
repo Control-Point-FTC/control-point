@@ -9,6 +9,7 @@ import { resultLinks, type ResultLink } from '../bruno/resultLinks';
 import { extractNotebookOps, extractStickyOps, newReceiptKey } from '../../services/notebookProposals';
 import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
+import { applyAppearanceFromReply } from '../../services/brunoAppearance';
 import {
   streamBuildHelper,
   stripEventBlocks,
@@ -93,6 +94,8 @@ export default function BrunoBar({ botName }: { botName?: string }) {
         : t('dashboard.brunoSnag', { name });
       setMessages([...next, { role: 'model', text: finalText }]);
       setProposals(extractActionProposals(agg));
+      // "Turn on light mode" from the dashboard switches the theme too.
+      applyAppearanceFromReply(agg);
     } catch (e: any) {
       stream.finish();
       const msg = e?.serverError || t('dashboard.brunoUnreachable', { name });

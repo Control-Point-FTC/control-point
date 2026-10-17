@@ -526,7 +526,7 @@ function rsvpNames(raw: unknown): string {
   return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");
 }
 
-const HIDDEN_BLOCK_KINDS = ["parts", "checklist", "away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
+const HIDDEN_BLOCK_KINDS = ["parts", "appearance", "checklist", "away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 
