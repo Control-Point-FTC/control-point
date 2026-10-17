@@ -19,6 +19,13 @@ type MetaResponse = {
   version?: string | null;
 };
 
+/** Each page's queue of detail saves, so exports can wait for it: resolves true when every save so far succeeded. */
+const savesByPage = new Map<number, Promise<boolean>>();
+/** Waits for a page's pending detail saves; false if any of them failed. */
+export function entryMetaSettled(pageId: number): Promise<boolean> {
+  return savesByPage.get(pageId) ?? Promise.resolve(true);
+}
+
 /** How often an open page checks for teammates' changes to its details. */
 const REFRESH_MS = 20_000;
 
@@ -65,6 +72,7 @@ export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { page
     setData((d) => (d ? { ...d, meta: { ...d.meta, ...shown } } : d));
     pending.current++;
     ticket.current++;
+    let failed = false;
     queue.current = queue.current.then(async () => {
       try {
         const r = await apiJson<{ meta: EntryMeta; version?: string }>(`/api/notebook/pages/${pageId}/meta`, { method: 'PUT', headers, body: JSON.stringify(body) });
@@ -72,6 +80,7 @@ export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { page
         if (pending.current === 1) setData((d) => (d ? { ...d, meta: r.meta, version: r.version ?? d.version } : d));
         setError('');
       } catch (e: any) {
+        failed = true;
         setError(e?.message || 'Could not save that — try again.');
       } finally {
         pending.current--;
@@ -79,6 +88,11 @@ export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { page
         if (!pending.current) void load();
       }
     });
+    const before = savesByPage.get(pageId) ?? Promise.resolve(true);
+    const settled = Promise.all([before, queue.current]).then(([ok]) => ok && !failed);
+    savesByPage.set(pageId, settled);
+    // Once this is the newest save and it's done, the page has nothing pending.
+    void settled.then(() => { if (savesByPage.get(pageId) === settled && !pending.current) savesByPage.delete(pageId); });
   };
   const toggle = (key: 'subsystems' | 'awards', value: string) => {
     const on = meta[key].includes(value);

@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 
 const api = vi.hoisted(() => ({ apiJson: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
-import { NotebookEntryMeta } from '../NotebookEntryMeta';
+import { NotebookEntryMeta, entryMetaSettled } from '../NotebookEntryMeta';
 
 afterEach(() => { cleanup(); api.apiJson.mockReset(); });
 
@@ -14,6 +14,21 @@ const base = {
 };
 
 describe('Notebook entry details', () => {
+  it('exports can wait for pending saves, and learn when one failed', async () => {
+    let fail = false;
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (init?.method === 'PUT') { if (fail) throw new Error('nope'); return { meta: { ...base.meta, stage: 'iterate' } }; }
+      return base;
+    });
+    render(<NotebookEntryMeta pageId={9} teamId={1} revision={2} />);
+    fireEvent.change(await screen.findByLabelText('Design stage'), { target: { value: 'iterate' } });
+    expect(await entryMetaSettled(9)).toBe(true);
+    fail = true;
+    fireEvent.change(screen.getByLabelText('Entry type'), { target: { value: 'build' } });
+    expect(await entryMetaSettled(9)).toBe(false);
+  });
+
+
   it('shows the details, byline and read time; awards explain what judges look for', async () => {
     api.apiJson.mockResolvedValue(base);
     render(<NotebookEntryMeta pageId={5} teamId={1} revision={2} />);
