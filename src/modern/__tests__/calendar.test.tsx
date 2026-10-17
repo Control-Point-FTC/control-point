@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -468,6 +468,10 @@ describe('High-contrast blocks', () => {
   });
 
   it('finished events: struck through and full strength in Month and Week (faded only without high contrast)', async () => {
+    // Noon today, so the 00:00–00:01 event has finished whenever the test runs.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0));
+    onTestFinished(() => { vi.useRealTimers(); });
     const events = [{ id: 9, title: 'Early sync', date: today, start_time: '00:00', end_time: '00:01', event_type: 'meeting' }];
     const monthChip = () => screen.getAllByRole('button', { name: /Early sync/ }).find((b) => b.className.includes('px-1.5'))!;
     const weekBlock = () => screen.getAllByRole('button', { name: /Early sync/ }).find((b) => b.querySelector('.line-clamp-2'))!;
