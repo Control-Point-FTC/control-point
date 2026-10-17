@@ -93,3 +93,42 @@ describe("Bruno's table rules", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/both add it correctly AND remove the wrong copy/);
   });
 });
+
+describe("tables in every shape", () => {
+  it("a whole new table with a one-dash separator is still a new table", () => {
+    expect(pipeRowsOnly("| A | B |\n| - | - |\n| 1 | 2 |")).toBeNull();
+    expect(pipeRowsOnly("| Bolt | - |")).toEqual([["Bolt", "-"]]);
+  });
+
+  it("finds a table inside a quote or list, by id or as the page's only table", () => {
+    const doc = { type: "doc", content: markdownToNotebookBlocks(`> | A | B |\n> |---|---|\n> | 1 | 2 |`) };
+    addTableRows(doc, [["3", "4"]]);
+    const quote = doc.content[0];
+    const table = quote.content!.find((n: any) => n.type === "table")!;
+    expect(table.content).toHaveLength(3);
+    addTableRows(doc, [["5", "6"]], table.attrs!.id);
+    expect(table.content).toHaveLength(4);
+  });
+
+  it("counts the columns merged cells cover", () => {
+    const cell = (text: string, colspan = 1) => ({ type: "tableCell", attrs: { colspan }, content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    const doc: any = { type: "doc", content: [{ type: "table", attrs: { id: "t1" }, content: [{ type: "tableRow", content: [cell("Part", 2), cell("Cost")] }] }] };
+    addTableRows(doc, [["Wheel", "4", "$12.99"]]);
+    expect(doc.content[0].content[1].content).toHaveLength(3);
+    expect(() => addTableRows(doc, [["a", "b", "c", "d"]])).toThrow(/3 columns/);
+  });
+});
+
+describe("what the card shows", () => {
+  it("never shows the [#block-id] markers Bruno reads pages with", async () => {
+    const p = (await t.post("/api/notebook/pages", { sectionId: section, title: "Ids page", content: { type: "doc", content: markdownToNotebookBlocks("Old line") } }, session)).body;
+    const page = await store.page(ctx(member), p.id);
+    const block = (page.content as any).content[0].attrs.id;
+    const preview = await previewNotebookOps(store, ctx(member), parseNotebookOps([
+      { op: "append", page: p.id, markdown: "## Amazon\n\n| Item | Price |\n|---|---|\n| Nuts | $5.99 |" },
+      { op: "replace", page: p.id, block, markdown: "New line" },
+    ]));
+    for (const x of preview) for (const text of [x.before, x.after]) if (text) expect(text).not.toMatch(/\[#/);
+    expect(preview[0].after).toContain("Amazon");
+  });
+});

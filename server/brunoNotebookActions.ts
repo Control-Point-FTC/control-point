@@ -51,7 +51,7 @@ const markdownOf = (v: unknown, required: boolean) => {
 export function pipeRowsOnly(markdown: string): string[][] | null {
   const lines = markdown.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (!lines.length || lines.some(l => !/^\|.*\|$/.test(l) || l.length < 3)) return null;
-  if (lines.some(l => /^\|(\s*:?-{2,}:?\s*\|)+$/.test(l))) return null; // a whole new table, header and all
+  if (lines.some(l => /^\|(\s*:?-+:?\s*\|)+$/.test(l))) return null; // a whole new table, header and all (any GFM separator)
   return lines.map(l => l.slice(1, -1).split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, "|")));
 }
 function rowsOf(raw: unknown): string[][] {
@@ -175,19 +175,28 @@ export function locateRange(doc: PMNode, block: string, blocks?: string[]) {
   return { siblings: at.siblings, index: at.index, count: ids.length };
 }
 
-/** The table rows go into: the named block (or the table holding it), else the page's only table. */
+/** Every table on the page, however deep (inside a quote or a list item too). */
+function allTables(node: PMNode, out: PMNode[] = []): PMNode[] {
+  for (const n of node.content ?? []) { if (n.type === "table") out.push(n); else allTables(n, out); }
+  return out;
+}
+/** The table rows go into: the named table (or the table holding the named block), else the page's only table. */
 export function findTable(doc: PMNode, table?: string): PMNode {
+  const tables = allTables(doc);
   if (table) {
-    const top = (doc.content ?? []).find(n => n.attrs?.id === table || !!locate(n, table));
-    if (!top) throw changed();
-    if (top.type !== "table") throw bad("That block isn't a table. Ask Bruno to read the page again and pick the table.");
-    return top;
+    const hit = tables.find(t => t.attrs?.id === table || !!locate(t, table));
+    if (hit) return hit;
+    if (!locate(doc, table)) throw changed();
+    throw bad("That block isn't a table. Ask Bruno to read the page again and pick the table.");
   }
-  const tables = (doc.content ?? []).filter(n => n.type === "table");
   if (tables.length === 1) return tables[0];
   throw bad(tables.length ? `This page has ${tables.length} tables. Ask Bruno which one to add the rows to.` : "This page has no table to add rows to.");
 }
 const escapeCell = (c: string) => c.replace(/\|/g, "\\|");
+/** How many columns a table has: the widest row, counting what merged cells span. */
+export function tableWidth(table: PMNode): number {
+  return Math.max(1, ...(table.content ?? []).map(r => (r.content ?? []).reduce((n, c) => n + Math.max(1, Number(c.attrs?.colspan) || 1), 0)));
+}
 /** Notebook table rows (fresh ids) for cells written as Markdown, padded to the table's width. */
 export function tableRows(width: number, rows: string[][]): PMNode[] {
   if (rows.some(r => r.length > width)) throw bad(`That table has ${width} column${width === 1 ? "" : "s"}; a row has more cells than that.`);
@@ -198,8 +207,7 @@ export function tableRows(width: number, rows: string[][]): PMNode[] {
 export function addTableRows(doc: PMNode, rows: string[][], table?: string): PMNode {
   const node = findTable(doc, table);
   node.content = node.content ?? [];
-  const width = Math.max(1, ...node.content.map(r => r.content?.length ?? 0));
-  node.content.push(...tableRows(width, rows));
+  node.content.push(...tableRows(tableWidth(node), rows));
   return doc;
 }
 
@@ -217,6 +225,8 @@ export function replaceBlock(doc: PMNode, block: string, markdown: string, run?:
 
 const bruno = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno" });
 const confirmed = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno_confirmed" });
+/** Card text without the [#block-id] markers Bruno reads pages with. */
+const shown = (t: string) => t.replace(/^\[#[^\]]*\]\s?/gm, "");
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 // The card shows everything a change writes (bounded by the input limit).
@@ -250,7 +260,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       const where = destination(tree, op);
       const target = section(where.sectionId) ?? (where.error ? undefined : tree.sections[0]);
       if (!target) { out.push({ op: "create", summary: `New page "${clip(op.title, 80)}"`, error: where.error ?? "There is no notebook section to add a page to." }); continue; }
-      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
+      const body = op.markdown ? shown(renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text) : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
       out.push({ op: "create", summary: `New page "${clip(op.title, 80)}" in ${clip(target.title, 60)}${op.parent ? ` under "${clip(pageTitle(op.parent), 60)}"` : ""}`, ...(body ? { after: body } : {}) });
       continue;
     }
@@ -270,8 +280,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       try {
         const page = await store.page(bruno(ctx), op.page);
         const node = findTable(page.content as PMNode, op.table);
-        const width = Math.max(1, ...(node.content ?? []).map(r => r.content?.length ?? 0));
-        const rows = tableRows(width, op.rows).map(r => (r.content ?? []).map(c => renderNotebookText({ type: "doc", content: c.content ?? [] }, {}, MAX_CELL + 50).text.replace(/^\[#[^\]]*\]\s*/, "")).join(" | "));
+        const rows = tableRows(tableWidth(node), op.rows).map(r => (r.content ?? []).map(c => shown(renderNotebookText({ type: "doc", content: c.content ?? [] }, {}, MAX_CELL + 50).text).replace(/\s+/g, " ").trim()).join(" | "));
         out.push({ op: "add_rows", summary, after: rows.join("\n") });
       } catch (e) {
         out.push({ op: "add_rows", summary, error: e instanceof NotebookError && e.status !== 404 && e.status !== 403 ? e.message : "This page isn't available to Bruno." });
@@ -285,7 +294,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
     } else {
       let page;
       try { page = await store.page(bruno(ctx), op.page); } catch { out.push(unavailable(op.op)); continue; }
-      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text;
+      const added = shown(renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text);
       if (op.op === "append") out.push({ op: "append", summary: `Add to ${name}`, after: added });
       else {
         const at = locateRange(page.content as PMNode, op.block, op.blocks);
@@ -293,7 +302,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
         // Everything removed must be reviewable on the card.
         const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT);
         if (before.truncated) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part is too long to review in one card. Ask Bruno to rewrite it in smaller parts." }); continue; }
-        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: before.text, ...(added ? { after: added } : {}), destructive: !added });
+        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: shown(before.text), ...(added ? { after: added } : {}), destructive: !added });
       }
     }
   }
