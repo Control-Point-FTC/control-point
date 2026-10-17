@@ -32,7 +32,10 @@ export const SCOUT_SEASONS = [2022, 2023, 2024, 2025];
 export function endgameField(season: number): string {
   if (season <= 2023) return "egPoints";
   if (season === 2024) return "dcParkPoints";
-  return "dcBasePoints";
+  if (season === 2025) return "dcBasePoints";
+  // BIOBUZZ (2026): the end-of-match park. DECODE's dcBasePoints doesn't exist on
+  // MatchScores2026Alliance / its stat groups, and GraphQL rejects the whole query.
+  return "dcParkPoints";
 }
 
 /**
@@ -45,7 +48,9 @@ export function dcIncludesEndgame(season: number): boolean {
 
 /** Fields requested from every TeamEventStats<season>Group / MatchScores alliance. */
 export function scoutPointFields(season: number): string {
-  return `autoPoints dcPoints ${endgameField(season)} penaltyPointsCommitted penaltyPointsByOpp totalPointsNp totalPoints`;
+  // BIOBUZZ: HIVE TIPs (auto + TeleOp), Section 13 Table 13-1's second qualification sort key.
+  // FTC Scout exposes `tips` on 2026 match scores and team-event stat groups alike.
+  return `autoPoints dcPoints ${endgameField(season)} penaltyPointsCommitted penaltyPointsByOpp totalPointsNp totalPoints${season >= 2026 ? " tips" : ""}`;
 }
 
 export function teamEventStatsFragment(season: number): string {
@@ -136,6 +141,8 @@ export function normalizePointSplit(raw: unknown, season: number): FtcPointSplit
     penaltiesCommitted: round1(num(raw.penaltyPointsCommitted)),
     penaltiesByOpp: round1(num(raw.penaltyPointsByOpp)),
   };
+  // BIOBUZZ HIVE TIPs, when FTC Scout reports them (fed to the prediction engine's tiebreak).
+  if (season >= 2026 && num(raw.tips) != null) split.tips = num(raw.tips);
   return Object.values(split).some((v) => v != null) ? split : null;
 }
 

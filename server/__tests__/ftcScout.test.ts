@@ -59,6 +59,8 @@ describe("season field mapping", () => {
     expect(endgameField(2023)).toBe("egPoints");
     expect(endgameField(2024)).toBe("dcParkPoints");
     expect(endgameField(2025)).toBe("dcBasePoints");
+    // BIOBUZZ: the park. DECODE's dcBasePoints doesn't exist on 2026 types (the query would fail).
+    expect(endgameField(2026)).toBe("dcParkPoints");
     expect(dcIncludesEndgame(2023)).toBe(false);
     expect(dcIncludesEndgame(2025)).toBe(true);
   });
@@ -232,5 +234,24 @@ describe("mergeEventFull", () => {
     const ev = mergeEventFull(2026, "USNJCMPPKWY", firstPieces(), null, meta);
     expect(ev.field.find((t) => t.teamNumber === 4215)?.opr).toBeNull();
     expect(ev.matches.find((m) => m.key === "qual:0:1")?.breakdownSource).toBe("first-events");
+  });
+});
+
+describe("BIOBUZZ (2026): park endgame and HIVE TIPs from FTC Scout", () => {
+  it("asks 2026 types for park points and tips, and earlier seasons for neither", () => {
+    const q26 = scoutEventQuery(2026), q25 = scoutEventQuery(2025);
+    expect(q26).toContain("dcParkPoints");
+    expect(q26).toContain(" tips");
+    expect(q26).not.toContain("dcBasePoints");
+    expect(q25).not.toContain(" tips");
+    expect(q25).toContain("dcBasePoints");
+  });
+
+  it("maps tips onto the alliance split (2026 only)", () => {
+    const raw = { autoPoints: 40, dcPoints: 120, dcParkPoints: 10, penaltyPointsCommitted: 0, penaltyPointsByOpp: 5, totalPointsNp: 160, totalPoints: 165, tips: 6 };
+    const s = normalizePointSplit(raw, 2026)!;
+    expect(s).toMatchObject({ auto: 40, endgame: 10, teleop: 110, tips: 6 });
+    expect(normalizePointSplit({ ...raw, dcBasePoints: 10 }, 2025)!.tips).toBeUndefined();
+    expect(normalizePointSplit({ ...raw, tips: undefined }, 2026)!.tips).toBeUndefined();
   });
 });
