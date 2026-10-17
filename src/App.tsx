@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { isNavIdDisabled, parseDisabledModules } from './types/teamModules';
 import { Routes, Route, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { LayoutDashboard, Users, Crown, Pencil, CalendarCheck, CheckSquare, Wallet, Globe, Newspaper, Mail, X, ChevronRight, ChevronDown, Plus, AtSign, TrendingUp, MessageSquare, Lock, Calendar, UserCheck, Zap, Trash2, Bolt, Code2, Check, ShieldCheck, UserX, Copy, Sparkles, Save, Trophy, Layers, Box, FileBox, ClipboardCheck, Package, ChevronUp, Phone, Video, ScanLine, Keyboard, BadgeCheck, Loader2, CheckCircle2, Clock3, ListTodo } from 'lucide-react';
+import { LayoutDashboard, Users, Crown, Pencil, CalendarCheck, CheckSquare, Wallet, Globe, Newspaper, Mail, X, ChevronRight, ChevronDown, Plus, AtSign, TrendingUp, MessageSquare, Lock, Calendar, UserCheck, Zap, Trash2, Bolt, Code2, Check, ShieldCheck, UserX, Copy, Sparkles, Save, Trophy, Layers, Box, FileBox, ClipboardCheck, ClipboardList, Package, ChevronUp, Phone, Video, ScanLine, Keyboard, BadgeCheck, Loader2, CheckCircle2, Clock3, ListTodo } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion } from 'motion/react';
 // Heavy libraries stay out of the initial bundle: recharts (via TaskAnalytics),
@@ -31,6 +31,7 @@ const SettingsPage = React.lazy(() => import('./modern/pages/settings/SettingsPa
 const BudgetPage = React.lazy(() => import('./modern/pages/budget/BudgetPage').then((m) => ({ default: m.BudgetPage })));
 const InventoryPage = React.lazy(() => import('./modern/pages/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
 const OutreachPage = React.lazy(() => import('./modern/pages/outreach/OutreachPage').then((m) => ({ default: m.OutreachPage })));
+const ChecklistsPage = React.lazy(() => import('./modern/pages/checklists/ChecklistsPage').then((m) => ({ default: m.ChecklistsPage })));
 const ResourcesPage = React.lazy(() => import('./modern/pages/resources/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
 const CadPage = React.lazy(() => import('./modern/pages/cad/CadPage').then((m) => ({ default: m.CadPage })));
 
@@ -298,6 +299,7 @@ const navItems = [
   { id: 'comm', path: 'comm', labelKey: 'nav.communication', icon: Mail, group: 'Team' },
   { id: 'tasks', path: 'tasks', labelKey: 'nav.tasks', icon: CheckSquare, group: 'Engineering' },
   { id: 'inventory', path: 'inventory', labelKey: 'nav.inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
+  { id: 'checklists', path: 'checklists', labelKey: 'nav.checklists', icon: ClipboardList, group: 'Engineering' },
   {
     id: 'cad', path: 'cad', labelKey: 'nav.cad', icon: Box, group: 'Engineering',
     children: [
@@ -1137,6 +1139,9 @@ export default function App() {
         } else if (msg.type === 'notebook_reviews_changed') {
           // A notebook entry was submitted for review or reviewed: open review bars refresh.
           window.dispatchEvent(new CustomEvent('notebook-reviews-changed'));
+        } else if (msg.type === 'checklists_changed') {
+          // A run was started or an item checked off: the Checklists page refetches.
+          window.dispatchEvent(new CustomEvent('checklists-changed', { detail: { runId: msg.run_id } }));
         } else if (msg.type === 'resources_changed') {
           // ResourcesView owns its list — nudge it to refetch.
           window.dispatchEvent(new CustomEvent('resources-changed'));
@@ -1836,7 +1841,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'notebook', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'notebook', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources', 'checklists'];
   // Modules the workspace switched off (Settings → Workspace → Modules).
   const disabledModules = useMemo(
     () => parseDisabledModules(teams.find((t: any) => t.id === currentUser?.team_id)?.disabled_modules),
@@ -2254,6 +2259,7 @@ export default function App() {
         <Route path="/comm" element={<CommunicationPage {...viewProps} />} />
         <Route path="/chat" element={<MessagesPage {...viewProps} memberMenuItems={memberMenuItems} />} />
         <Route path="/resources" element={<ResourcesPage />} />
+        <Route path="/checklists" element={<ChecklistsPage events={events} members={members} />} />
         <Route path="/bruno" element={<BrunoPage key={currentUser?.team_id ?? 'none'} {...viewProps} />} />
         <Route path="/profile" element={<Navigate to="/settings?section=profile" replace />} />
         <Route path="/settings" element={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />

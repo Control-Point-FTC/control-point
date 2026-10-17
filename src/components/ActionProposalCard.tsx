@@ -94,6 +94,7 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   'task-comment': { label: 'Task comments', icon: MessageSquare },
   'event-rsvp': { label: 'RSVP', icon: CalendarCheck },
   away: { label: 'Unavailable times', icon: CalendarOff },
+  checklist: { label: 'Checklists', icon: ListChecks },
 };
 
 /** "Turn off Code · Turn on Predict · Subsystems: Drivetrain, Lift" */
@@ -148,6 +149,12 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
     const name = typeof it.title === 'string' && it.title.trim() ? it.title.trim().slice(0, 60) : `Event #${String(it.id ?? '').replace(/^#/, '')}`;
     const reason = typeof it.reason === 'string' && it.reason.trim() ? ` · ${it.reason.trim().slice(0, 80)}` : '';
     return `${name} — ${s || 'Take back my answer'}${reason}`;
+  }
+  if (kind === 'checklist') {
+    if (it?.start !== undefined) return `Start the "${String(it.start).replace(/^#/, '').slice(0, 60)}" checklist${it.title ? ` as "${String(it.title).slice(0, 60)}"` : ''}${it.event ? ` for event #${String(it.event).replace(/^#/, '')}` : ''}`;
+    const items = Array.isArray(it?.items) ? it.items.map(String) : [];
+    const state = ({ done: 'done', partial: 'partly done', na: 'N/A', open: 'not done' } as Record<string, string>)[it?.state ?? 'done'] ?? 'done';
+    return `Run #${String(it?.run ?? '').replace(/^#/, '')}: mark ${items.length} item${items.length === 1 ? '' : 's'} ${state}${items.length ? ` (${items.slice(0, 4).join(', ').slice(0, 120)}${items.length > 4 ? ', …' : ''})` : ''}`;
   }
   if (kind === 'away') {
     if (it?.remove !== undefined) return `Remove unavailable time #${String(it.remove).replace(/^#/, '')}`;

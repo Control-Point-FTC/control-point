@@ -84,6 +84,7 @@ import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerNotebookReviewRoutes } from "./server/notebookReviews.js";
+import { registerChecklistRoutes } from "./server/checklists.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
 import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
@@ -2047,6 +2048,7 @@ const ROLE_PERMISSIONS = [
   { key: "manage_attendance", label: "Manage attendance" },
   { key: "manage_tasks", label: "Manage tasks" },
   { key: "manage_outreach", label: "Manage outreach" },
+  { key: "manage_checklists", label: "Manage checklists" },
   { key: "manage_documentation", label: "Manage documentation" },
   { key: "edit_notebook", label: "Edit notebook pages" },
   { key: "organize_notebook", label: "Organize notebooks" },
@@ -2120,14 +2122,14 @@ async function ensureRolesSeeded(teamId: number | null | undefined) {
   if (!names.has("Member")) {
     const memberRole = (await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach", "edit_notebook", "organize_notebook"]), 1
+      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach", "manage_checklists", "edit_notebook", "organize_notebook"]), 1
     )) as any;
     memberRoleId = Number(memberRole.lastInsertRowid);
   }
   if (!names.has("Verified Member")) {
     await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget", "edit_notebook", "organize_notebook"]), 2
+      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget", "manage_checklists", "edit_notebook", "organize_notebook"]), 2
     );
   }
 
@@ -5333,6 +5335,9 @@ async function startServer() {
       { sql: "DELETE FROM channel_categories WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM custom_emoji WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM resources WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM checklist_run_items WHERE run_id IN (SELECT id FROM checklist_runs WHERE team_id = ?)", args: [teamId] },
+      { sql: "DELETE FROM checklist_runs WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM checklist_templates WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_invites WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_join_requests WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM scouting_entries WHERE team_id = ?", args: [teamId] },
@@ -8010,6 +8015,7 @@ async function startServer() {
   registerVoiceRoutes(app, voiceDeps);
 
   registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
+  const checklists = registerChecklistRoutes(app, { requireAuth: requireAuth as any, hasPerm: hasPerm as any, dbGet, dbAll, dbRun, broadcastToTeam });
   registerStickyNoteRoutes(app, { requireAuth });
 
   // Stable links (/t/<team>/<type>/<id>): what a reference is and where it
@@ -13901,6 +13907,8 @@ Rules:
         t = t.replace(/```event-rsvp\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```event-rsvp[\s\S]*$/, "");
         // Unavailable times too.
         t = t.replace(/```away\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```away[\s\S]*$/, "");
+        // Checklist runs too.
+        t = t.replace(/```checklist\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```checklist[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -14586,6 +14594,46 @@ Rules:
           awayAdds.push(c.value);
         }
       }
+      // Checklists: a run to start (template by #id or name) or items to set on
+      // an open run; every one is checked before anything is written.
+      const checklistPlan: ({ type: "start"; templateId: number; title?: string; eventId?: number } | { type: "set"; runId: number; itemIds: string[]; state: string })[] = [];
+      for (const a of actions) {
+        if (a?.kind !== "checklist" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const it of a.items) {
+          if (it?.start !== undefined) {
+            const ref = String(it.start).replace(/^#/, "").trim();
+            const t = /^\d+$/.test(ref)
+              ? await dbGet("SELECT id FROM checklist_templates WHERE id = ? AND team_id = ? AND archived_at IS NULL", Number(ref), auth.teamId)
+              : await dbGet("SELECT id FROM checklist_templates WHERE team_id = ? AND archived_at IS NULL AND LOWER(title) = LOWER(?)", auth.teamId, ref);
+            if (!t) return res.status(400).json({ error: `There's no "${ref.slice(0, 60)}" checklist — nothing was saved` });
+            const eventId = it.event !== undefined && it.event !== null ? Number(String(it.event).replace(/^#/, "")) : undefined;
+            if (eventId !== undefined && !(await dbGet("SELECT id FROM events WHERE id = ? AND team_id = ?", eventId, auth.teamId))) return res.status(400).json({ error: `Event #${eventId} isn't on the calendar — nothing was saved` });
+            // The same card can't delete the event a new run is for (it would fail halfway).
+            const deleting = actions.some((d: any) => d?.kind === "delete-event" && Array.isArray(d.items) && d.items.some((x: any) => Number(String(x?.id ?? "").replace(/^#/, "")) === eventId));
+            if (eventId !== undefined && deleting) return res.status(400).json({ error: `This card deletes event #${eventId} and starts a checklist for it — nothing was saved` });
+            checklistPlan.push({ type: "start", templateId: Number(t.id), ...(typeof it.title === "string" && it.title.trim() ? { title: it.title } : {}), ...(eventId !== undefined ? { eventId } : {}) });
+            continue;
+          }
+          const runId = Number(String(it?.run ?? "").replace(/^#/, ""));
+          const run = Number.isSafeInteger(runId) && runId > 0 ? await dbGet("SELECT sections, status FROM checklist_runs WHERE id = ? AND team_id = ?", runId, auth.teamId) : null;
+          if (!run) return res.status(400).json({ error: `Checklist run #${runId} no longer exists — nothing was saved` });
+          if (run.status !== "open") return res.status(400).json({ error: `Checklist run #${runId} is finished — nothing was saved` });
+          const state = it?.state ?? "done";
+          if (!["open", "done", "partial", "na"].includes(state)) return res.status(400).json({ error: "Mark items done, partial, na or open — nothing was saved" });
+          let sections: any[] = [];
+          try { sections = JSON.parse(String(run.sections)); } catch { /* none */ }
+          const all = sections.flatMap((s: any) => s.items ?? []);
+          const itemIds: string[] = [];
+          for (const ref of Array.isArray(it?.items) ? it.items.slice(0, 120) : []) {
+            const key = String(ref).trim();
+            const hit = all.find((i: any) => i.id === key) ?? all.find((i: any) => String(i.text).toLowerCase() === key.toLowerCase());
+            if (!hit) return res.status(400).json({ error: `"${key.slice(0, 60)}" isn't on checklist run #${runId} — nothing was saved` });
+            itemIds.push(hit.id);
+          }
+          if (!itemIds.length) return res.status(400).json({ error: "Name the items to check off — nothing was saved" });
+          checklistPlan.push({ type: "set", runId, itemIds, state });
+        }
+      }
       // Comments go on tasks this member can see, checked before anything is written.
       const commentTargets = new Map<number, any>();
       for (const a of actions) {
@@ -14844,6 +14892,14 @@ Rules:
         } else if (kind === "away") {
           // Written above, before anything else, as one batch.
           continue;
+        } else if (kind === "checklist") {
+          // Runs started and items checked off as the confirming member (anyone on the team can).
+          let n = 0;
+          for (const step of checklistPlan.splice(0)) {
+            if (step.type === "start") { made("checklist", (await checklists.startRun(auth as any, { templateId: step.templateId, title: step.title, eventId: step.eventId })).id); n++; }
+            else for (const itemId of step.itemIds) { await checklists.setItem(auth as any, step.runId, itemId, { state: step.state }); n++; }
+          }
+          if (n) applied.checklist = (applied.checklist || 0) + n;
         } else if (kind === "task-comment") {
           // Comments on tasks, posted as the confirming member (mentions and followers are notified).
           let n = 0;
