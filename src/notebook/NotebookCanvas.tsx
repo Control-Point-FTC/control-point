@@ -7,6 +7,8 @@ import { notebookExtensions } from './editorSchema';
 import { AutoCapitalize, autoCapitalizeEnabled, rememberCapital } from './autoCapitalize';
 import { PageLinkMenu } from './pageLinkMenu';
 import { PageLinkSourceContext } from './PageLinkPopup';
+import { MentionSourceContext } from './MentionPopup';
+import { MemberMention } from './mentionMenu';
 import { RecordNavigationContext } from './recordNavigation';
 import { appRecordPath } from './recordLinks';
 import type { NotebookSync } from './NotebookSync';
@@ -49,8 +51,9 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
     onRemoved: (editor: Editor) => void;
 }) {
     const links = useContext(PageLinkSourceContext);
+    const mentions = useContext(MentionSourceContext);
     const openRecord = useRef(useContext(RecordNavigationContext)); openRecord.current = useContext(RecordNavigationContext);
-    const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, ...(links ? [PageLinkMenu.configure(links)] : []), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
+    const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, ...(links ? [PageLinkMenu.configure(links)] : []), ...(mentions ? [MemberMention.configure(mentions)] : []), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
         // Double-click selects a word (browser default); triple-click selects the whole box.
         handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; },
         // Record links (tasks, meetings…) open in the app, as in the page text.

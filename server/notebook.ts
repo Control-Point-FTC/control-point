@@ -18,6 +18,7 @@ import { parseSubsystems } from '../src/types/teamModules.js';
 import { parseTagList } from '../src/types/taskTags.js';
 import { NOTEBOOK_TEMPLATES } from '../src/notebook/templates.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
+import { notebookForgetPageMention, notebookPageMention, notebookPageMentionInbox, notebookReadPageMention } from './notebookPageMentions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
 import {notebookRestore} from './notebookRecovery.js';
@@ -374,7 +375,15 @@ export class NotebookStore {
   editComment(ctx: NotebookContext, pageId: number, commentId: number, body: Row, remove = false) { return this.session(ctx, s => notebookEditComment(s, pageId, commentId, body, remove)); }
   resolveThread(ctx: NotebookContext, pageId: number, threadId: number, resolved: unknown) { return this.session(ctx, s => notebookResolveThread(s, pageId, threadId, resolved)); }
   mentionMembers(ctx: NotebookContext, pageId: number) { return this.session(ctx, s => notebookMentionMembers(s, pageId)); }
-  mentionInbox(ctx: NotebookContext) { return this.session(ctx, s => notebookMentionInbox(s)); }
+  // Discussion mentions and "@name" pings in page text, newest first.
+  mentionInbox(ctx: NotebookContext) { return this.session(ctx, async s => {
+    const comments = await notebookMentionInbox(s);
+    const pages = await notebookPageMentionInbox(s, new Set((await s.tree()).pages.map(p => p.id)));
+    return [...comments, ...pages].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 100);
+  }); }
+  mentionInPage(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookPageMention(s, pageId, body)); }
+  readPageMention(ctx: NotebookContext, mentionId: number) { return this.session(ctx, s => notebookReadPageMention(s, mentionId)); }
+  forgetPageMention(ctx: NotebookContext, mentionId: number) { return this.session(ctx, s => notebookForgetPageMention(s, mentionId)); }
   readMention(ctx: NotebookContext, commentId: number) { return this.session(ctx, s => notebookReadMention(s, commentId)); }
   sync(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
     if (!s.access.human) throw new NotebookError('Collaboration is available to team members only', 403);
@@ -870,7 +879,9 @@ export class NotebookStore {
   }); }
 }
 
-type NotebookDeps = { requireAuth: (req: any, res: any) => Promise<{ memberId: number; teamId: number | null } | null>; ensureRolesSeeded: (teamId: number) => Promise<void>;deleteStoredRow?:(id:number)=>Promise<void> };
+type NotebookDeps = { requireAuth: (req: any, res: any) => Promise<{ memberId: number; teamId: number | null } | null>; ensureRolesSeeded: (teamId: number) => Promise<void>;deleteStoredRow?:(id:number)=>Promise<void>;
+  /** Sends an app notification (the bell / Inbox); "@name" pings in page text use it. */
+  notify?: (memberId: number, content: string, type: string, meta?: Record<string, any>) => Promise<void> };
 export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new NotebookStore()) {
   const initializing = new Map<number, Promise<void>>();
   const initializeRoles = async (teamId: number) => {
@@ -912,6 +923,23 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   // Review → Thesaurus (WordNet, on this server; no AI).
   app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));
   app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));
+  app.put('/api/notebook/page-mentions/:id/read', handle((ctx, req) => store.readPageMention(ctx, id(req.params.id))));
+  // "@Jenny" picked in the page text: record the ping, then notify each member who wasn't just pinged.
+  app.post('/api/notebook/pages/:id/mentions', handle(async (ctx, req) => {
+    const r = await store.mentionInPage(ctx, id(req.params.id), req.body ?? {});
+    const sent: { id: number; name: string }[] = [];
+    for (const [i, m] of r.notified.entries()) {
+      try {
+        await deps.notify?.(m.id, r.title ? `${r.by} mentioned you in the notebook page "${r.title.slice(0, 120)}"` : `${r.by} mentioned you on a notebook page`, 'mention', { notebook_page_id: r.pageId });
+        sent.push({ id: m.id, name: m.name });
+      } catch {
+        // Not saved: undo this ping and the ones not tried yet, so asking again delivers them.
+        for (const left of r.notified.slice(i)) await store.forgetPageMention(ctx, left.mentionId);
+        throw new NotebookError("Couldn't send the notification. Try again in a moment.", 503, { notified: sent });
+      }
+    }
+    return { notified: sent };
+  }));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
     app.delete(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.remove(ctx, kind, id(req.params.id))));
