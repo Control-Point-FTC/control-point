@@ -468,6 +468,15 @@ describe('Unavailable times', () => {
     expect(within(sheet).queryByText(/Ben/)).toBeNull();
   });
 
+  it('a month far from today loads its unavailable times too', async () => {
+    api.apiFetch.mockImplementation(async (url: string) => awayList([])(url));
+    setup({ manage: false });
+    for (let i = 0; i < 6; i++) fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    const far = new Date(now.getFullYear(), now.getMonth() + 6, 1);
+    const month = `${far.getFullYear()}-${String(far.getMonth() + 1).padStart(2, '0')}`;
+    await waitFor(() => expect(api.apiFetch.mock.calls.some((c: any[]) => /^\/api\/unavailability\?from=/.test(c[0]) && String(c[0]).split('to=')[1] > `${month}-28`)).toBe(true));
+  });
+
   it('My availability adds a weekly slot and lists your own with a remove button', async () => {
     api.apiFetch.mockImplementation(async (url: string, init?: any) => (init?.method === 'POST'
       ? { ok: true, json: async () => ({ success: true, id: 5 }) }
@@ -475,7 +484,7 @@ describe('Unavailable times', () => {
     setup({ manage: false });
     fireEvent.click(screen.getByRole('button', { name: /My availability/ }));
     const sheet = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(sheet).getByText('Tuesdays 4 PM – 6 PM')).toBeInTheDocument());
+    await waitFor(() => expect(within(sheet).getByText(/^Tuesdays 4 PM – 6 PM from /)).toBeInTheDocument());
     expect(within(sheet).getByRole('button', { name: /Remove unavailable time Tuesdays/ })).toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('radio', { name: 'Every week' }));
     fireEvent.click(within(sheet).getByRole('switch', { name: 'All day' }));

@@ -111,11 +111,11 @@ function shortDate(d: string): string {
   return new Date(Date.UTC(y, m - 1, day)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
-/** "Dec 5 – Dec 7", "Dec 5, 4 PM – 6 PM", "Tuesdays 4 PM – 6 PM until Jan 9" (en-US; Bruno and the server use it too). */
+/** "Dec 5 – Dec 7", "Dec 5, 4 PM – 6 PM", "Tuesdays 4 PM – 6 PM from Oct 20 until Jan 9" (en-US; Bruno and the server use it too). */
 export function describeUnavailability(u: Unavailability): string {
   const times = u.start_time && u.end_time ? `${hm(u.start_time)} – ${hm(u.end_time)}` : 'all day';
   if (u.weekday !== null && u.weekday !== undefined) {
-    return `${WEEKDAYS[Number(u.weekday)]}s ${times}${u.end_date ? ` until ${shortDate(u.end_date)}` : ''}`;
+    return `${WEEKDAYS[Number(u.weekday)]}s ${times} from ${shortDate(u.start_date)}${u.end_date ? ` until ${shortDate(u.end_date)}` : ''}`;
   }
   const days = !u.end_date || u.end_date === u.start_date ? shortDate(u.start_date) : `${shortDate(u.start_date)} – ${shortDate(u.end_date)}`;
   return u.start_time ? `${days}, ${times}` : days;

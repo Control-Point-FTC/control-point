@@ -209,7 +209,7 @@ import { parseTagList } from "./src/types/taskTags.js";
 import { cleanAgenda, cleanEventType, eventExportNotes } from "./src/types/eventTypes.js";
 import { cleanRsvpMode, parseAttendeeRoles, rsvpStatusFor, MAX_RSVP_REASON } from "./src/types/eventRsvp.js";
 import { FOLLOW_THROUGH_SQL, daysBefore, lateWindowEnds } from "./src/utils/eventAttendance.js";
-import { cleanUnavailability, overlapsRange } from "./src/utils/unavailability.js";
+import { cleanUnavailability, overlapsRange, type Unavailability } from "./src/utils/unavailability.js";
 import { insertedOnly, listedEvents, planFirstImport } from "./server/firstImport.js";
 import { cleanSketch, cleanSketchTitle, MAX_SKETCHES_PER_TASK, parseSketch } from "./src/types/taskSketch.js";
 import { EVERYONE_DONE_SQL } from "./server/taskCompletion.js";
@@ -11174,25 +11174,55 @@ Rules:
       `SELECT u.*, m.name AS member_name FROM member_unavailability u JOIN members m ON m.id = u.member_id
         WHERE u.team_id = ? AND m.team_id = u.team_id AND COALESCE(m.is_active, 1) = 1
           AND u.start_date <= ? AND (u.end_date IS NULL OR u.end_date >= ?)
-        ORDER BY u.start_date, m.name LIMIT 1000`,
+        ORDER BY u.start_date, m.name`,
       teamId, to, from,
     )) as any[];
     return rows.filter((r) => overlapsRange({ ...r, weekday: r.weekday === null ? null : Number(r.weekday) }, from, to));
+  }
+
+  /** Most unavailable times a member keeps that haven't ended (ended ones don't count). */
+  const MAX_AWAY_CURRENT = 100;
+  const AWAY_LIMIT_ERROR = `That would pass ${MAX_AWAY_CURRENT} current unavailable times — remove some first`;
+
+  /**
+   * Removes some and adds some of one member's unavailable times as a single
+   * write: a final guard fails the whole batch (nothing saved) if it would leave
+   * the member over the limit, so a parallel add can't leave it half done.
+   * The caller has validated every entry and checked who may.
+   */
+  async function saveAwayBatch(teamId: number, memberId: number, adds: Unavailability[], removeIds: number[]): Promise<{ error: string } | { ids: number[] }> {
+    const today = await workspaceToday(teamId);
+    const now = new Date().toISOString();
+    const stmts = [
+      ...removeIds.map((id) => ({ sql: "DELETE FROM member_unavailability WHERE id = ? AND team_id = ?", args: [id, teamId] })),
+      ...adds.map((v) => ({
+        sql: "INSERT INTO member_unavailability (team_id, member_id, start_date, end_date, weekday, start_time, end_time, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        args: [teamId, memberId, v.start_date, v.end_date, v.weekday, v.start_time, v.end_time, v.note || "", now],
+      })),
+      // json() of text that isn't JSON raises an error, which rolls the batch back.
+      ...(adds.length ? [{
+        sql: "SELECT CASE WHEN (SELECT COUNT(*) FROM member_unavailability WHERE member_id = ? AND (end_date IS NULL OR end_date >= ?)) > ? THEN json('away limit') ELSE 1 END",
+        args: [memberId, today, MAX_AWAY_CURRENT],
+      }] : []),
+    ];
+    if (!stmts.length) return { ids: [] };
+    let results: { lastInsertRowid: number }[];
+    try {
+      results = await dbBatchResults(stmts);
+    } catch (e: any) {
+      if (/malformed JSON/i.test(String(e?.message || e))) return { error: AWAY_LIMIT_ERROR };
+      throw e;
+    }
+    broadcastToTeam(teamId, { type: "availability_changed" });
+    return { ids: results.slice(removeIds.length, removeIds.length + adds.length).map((r) => Number(r.lastInsertRowid)) };
   }
 
   /** Adds one unavailable time for a member of this team; the caller has checked who may. */
   async function addUnavailability(teamId: number, memberId: number, input: any): Promise<{ error: string } | { id: number }> {
     const c = cleanUnavailability(input);
     if ("error" in c) return c;
-    const n = (await dbGet("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", memberId)) as any;
-    if (Number(n?.n || 0) >= 100) return { error: "That's 100 unavailable times already — remove some old ones first" };
-    const v = c.value;
-    const r = (await dbRun(
-      "INSERT INTO member_unavailability (team_id, member_id, start_date, end_date, weekday, start_time, end_time, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      teamId, memberId, v.start_date, v.end_date, v.weekday, v.start_time, v.end_time, v.note || "", new Date().toISOString(),
-    )) as any;
-    broadcastToTeam(teamId, { type: "availability_changed" });
-    return { id: Number(r?.lastInsertRowid) };
+    const r = await saveAwayBatch(teamId, memberId, [c.value], []);
+    return "error" in r ? r : { id: r.ids[0] };
   }
 
   /** Removes one; members their own, attendance managers anyone's on the team. */
@@ -14406,7 +14436,7 @@ Rules:
       }
       // Unavailable times: the confirming member's own; every one is checked before anything is written.
       const awayRemovals = new Set<number>();
-      let awayAdds = 0;
+      const awayAdds: Unavailability[] = [];
       for (const a of actions) {
         if (a?.kind !== "away" || !Array.isArray(a.items) || a.items.length > 20) continue;
         for (const it of a.items) {
@@ -14420,12 +14450,8 @@ Rules:
           }
           const c = cleanUnavailability(it);
           if ("error" in c) return res.status(400).json({ error: `${c.error} — nothing was saved` });
-          awayAdds++;
+          awayAdds.push(c.value);
         }
-      }
-      if (awayAdds) {
-        const have = (await dbGet("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", auth.memberId)) as any;
-        if (Number(have?.n || 0) + awayAdds > 100) return res.status(400).json({ error: "That would pass 100 unavailable times — remove some old ones first; nothing was saved" });
       }
       // Comments go on tasks this member can see, checked before anything is written.
       const commentTargets = new Map<number, any>();
@@ -14467,6 +14493,14 @@ Rules:
       const created: Record<string, number[]> = {};
       const made = (kind: string, id: unknown) => { const n = Number(id); if (Number.isSafeInteger(n) && n > 0) (created[kind] ||= []).push(n); };
       const createdAt = new Date().toISOString();
+      // Unavailable times go first, as one all-or-nothing write: if it's refused
+      // (the limit, reached meanwhile), nothing on the card has been saved yet.
+      if (awayAdds.length || awayRemovals.size) {
+        const r = await saveAwayBatch(auth.teamId!, auth.memberId, awayAdds, [...awayRemovals]);
+        if ("error" in r) return res.status(400).json({ error: `${r.error} — nothing was saved` });
+        for (const id of r.ids) made("away", id);
+        applied.away = awayAdds.length + awayRemovals.size;
+      }
       for (const a of actions) {
         const kind = a?.kind;
         const items = Array.isArray(a?.items) ? a.items : [];
@@ -14663,18 +14697,8 @@ Rules:
           }
           if (n) applied["event-rsvp"] = (applied["event-rsvp"] || 0) + n;
         } else if (kind === "away") {
-          // The confirming member's own unavailable times (anyone can mark when they're away).
-          let n = 0;
-          for (const it of items) {
-            if (it?.remove !== undefined) {
-              const id = Number(String(it.remove).replace(/^#/, ""));
-              if (awayRemovals.has(id) && "ok" in (await removeUnavailability(auth, id))) n++;
-              continue;
-            }
-            const r = await addUnavailability(auth.teamId!, auth.memberId, it);
-            if (!("error" in r)) { made("away", r.id); n++; }
-          }
-          if (n) applied.away = (applied.away || 0) + n;
+          // Written above, before anything else, as one batch.
+          continue;
         } else if (kind === "task-comment") {
           // Comments on tasks, posted as the confirming member (mentions and followers are notified).
           let n = 0;

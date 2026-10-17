@@ -176,8 +176,8 @@ async function awayRows(db: DbAll, teamId: number, from: string, to: string, per
   let sql = `SELECT u.id, u.member_id, u.start_date, u.end_date, u.weekday, u.start_time, u.end_time, m.name AS member_name
     FROM member_unavailability u JOIN members m ON m.id = u.member_id
     WHERE u.team_id = ? AND m.team_id = u.team_id AND COALESCE(m.is_active, 1) = 1 AND u.start_date <= ? AND (u.end_date IS NULL OR u.end_date >= ?)`;
-  if (person) { sql += " AND LOWER(m.name) LIKE ? ESCAPE '\'"; args.push(`%${likeEsc(person.toLowerCase())}%`); }
-  sql += " ORDER BY u.start_date, m.name LIMIT 500";
+  if (person) { sql += " AND LOWER(m.name) LIKE ? ESCAPE '\\'"; args.push(`%${likeEsc(person.toLowerCase())}%`); }
+  sql += " ORDER BY u.start_date, m.name";
   const rows = await db(sql, ...args).catch(() => [] as any[]);
   return rows
     .map((r: any) => ({ ...r, weekday: r.weekday === null || r.weekday === undefined ? null : Number(r.weekday) }))

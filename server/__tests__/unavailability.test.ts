@@ -37,7 +37,8 @@ describe("unavailability rules", () => {
     expect(coversSlot(piano, "2026-10-27", "15:30", null)).toBe(true); // a start-only event runs an hour
     expect(overlapsRange(piano, "2026-10-21", "2026-10-26")).toBe(false); // Wed..Mon, no Tuesday
     expect(overlapsRange(piano, "2026-10-21", "2026-10-27")).toBe(true);
-    expect(describeUnavailability(piano)).toBe("Tuesdays 4 PM – 6 PM");
+    expect(describeUnavailability(piano)).toBe("Tuesdays 4 PM – 6 PM from Oct 20");
+    expect(describeUnavailability({ ...piano, end_date: "2027-01-09" })).toBe("Tuesdays 4 PM – 6 PM from Oct 20 until Jan 9");
     expect(describeUnavailability(trip)).toBe("Dec 5 – Dec 7");
   });
 });
@@ -63,6 +64,30 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("unavailable times", () => {
+  it("only current entries count toward the limit, and a card at the limit saves nothing", async () => {
+    const cy = await seedMember(t.db, team, "Cy", "cy@away.test");
+    const cySession = await t.session(cy);
+    // 100 ended entries don't block a new one.
+    for (let i = 0; i < 100; i++) await t.db.execute({ sql: "INSERT INTO member_unavailability (team_id, member_id, start_date, end_date, created_at) VALUES (?, ?, '2001-01-01', '2001-01-02', 'x')", args: [team, cy] });
+    expect((await t.post("/api/unavailability", { start_date: "2099-05-01" }, cySession)).status).toBe(200);
+    // 99 more current ones fill the limit.
+    for (let i = 0; i < 99; i++) await t.db.execute({ sql: "INSERT INTO member_unavailability (team_id, member_id, start_date, end_date, created_at) VALUES (?, ?, '2099-06-01', '2099-06-02', 'x')", args: [team, cy] });
+    const r = await t.post("/api/unavailability", { start_date: "2099-05-02" }, cySession);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/current unavailable times/);
+    // A Bruno card that would pass it saves none of its entries.
+    const before = (await rows("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", cy))[0].n;
+    const card = await t.post("/api/ai/apply-actions", { actions: [{ kind: "away", items: [{ start_date: "2099-07-01" }, { start_date: "2099-07-02" }] }] }, cySession);
+    expect(card.status).toBe(400);
+    expect((await rows("SELECT COUNT(*) AS n FROM member_unavailability WHERE member_id = ?", cy))[0].n).toBe(before);
+    // Removing one and adding one in the same card fits.
+    const one = (await rows("SELECT id FROM member_unavailability WHERE member_id = ? AND start_date = '2099-06-01' LIMIT 1", cy))[0].id;
+    const swap = await t.post("/api/ai/apply-actions", { actions: [{ kind: "away", items: [{ remove: one }, { start_date: "2099-07-03" }] }] }, cySession);
+    expect(swap.status).toBe(200);
+    expect(swap.body.applied.away).toBe(2);
+    await t.db.execute({ sql: "DELETE FROM member_unavailability WHERE member_id = ?", args: [cy] });
+  });
+
   it("members add their own; everyone sees who and when; notes only for the member and managers", async () => {
     const r = await t.post("/api/unavailability", { start_date: "2099-12-05", end_date: "2099-12-07", note: "Family trip" }, ana);
     expect(r.status).toBe(200);
@@ -110,6 +135,10 @@ describe("unavailable times", () => {
     expect(list).toMatch(/Ana unavailable 2099-12-05 to 2099-12-07, all day/);
     expect(list).not.toMatch(/Family trip/);
     expect(list).toMatch(/Ben unavailable every Tuesday/);
+    // Filtered to one person (the LIKE needs a real escape character).
+    const anaOnly = await runLookups(db, team, "UTC", [{ kind: "availability", from: "2099-01-01", to: "2099-12-31", person: "ana" } as any]);
+    expect(anaOnly).toMatch(/Ana unavailable 2099-12-05/);
+    expect(anaOnly).not.toMatch(/Ben unavailable/);
 
     const add = await t.post("/api/ai/apply-actions", { actions: [{ kind: "away", items: [{ start_date: "2099-08-10", end_date: "2099-08-12", note: "Camp" }] }] }, ben);
     expect(add.status).toBe(200);

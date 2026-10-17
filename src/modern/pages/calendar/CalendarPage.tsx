@@ -54,7 +54,7 @@ export function CalendarPage(props: any) {
   const [over, setOver] = useState<string | null>(null);
   const [subscribeOpen, setSubscribeOpen] = useState(false);
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
-  const away = useUnavailability(ctl.todayKey);
+  const away = useUnavailability(ctl.todayKey, toDateKey(ctl.cursor));
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);

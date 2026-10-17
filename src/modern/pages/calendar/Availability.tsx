@@ -21,22 +21,30 @@ const shift = (iso: string, days: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-/** The team's unavailable times from two months back to most of a year ahead; follows live changes. */
-export function useUnavailability(todayKey: string) {
+/**
+ * The team's unavailable times around today (for "Next up") and around the
+ * month being viewed (for its events), so an event opened anywhere is checked
+ * against loaded data. Follows live changes.
+ */
+export function useUnavailability(todayKey: string, focusKey: string = todayKey) {
   const [items, setItems] = useState<AwayItem[]>([]);
   const [canManage, setCanManage] = useState(false);
+  // The viewed month's window, only when it falls outside today's.
+  const focusWindow = focusKey < shift(todayKey, -30) || focusKey > shift(todayKey, 90) ? focusKey.slice(0, 7) : '';
   const load = useCallback(() => {
-    const from = shift(todayKey, -60);
-    const to = shift(todayKey, 330);
-    return apiFetch(`/api/unavailability?from=${from}&to=${to}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d || !Array.isArray(d.items)) return;
-        setItems(d.items);
-        setCanManage(!!d.can_manage);
+    const windows: [string, string][] = [[shift(todayKey, -60), shift(todayKey, 150)]];
+    if (focusWindow) windows.push([shift(`${focusWindow}-01`, -14), shift(`${focusWindow}-01`, 75)]);
+    return Promise.all(windows.map(([from, to]) => apiFetch(`/api/unavailability?from=${from}&to=${to}`).then((r) => (r.ok ? r.json() : null))))
+      .then((all) => {
+        const ok = all.filter((d) => d && Array.isArray(d.items));
+        if (!ok.length) return;
+        const byId = new Map<number, AwayItem>();
+        for (const d of ok) for (const u of d.items) byId.set(u.id, u);
+        setItems([...byId.values()]);
+        setCanManage(ok.some((d) => !!d.can_manage));
       })
       .catch(() => {});
-  }, [todayKey]);
+  }, [todayKey, focusWindow]);
   useEffect(() => {
     void load();
     const on = () => { void load(); };
