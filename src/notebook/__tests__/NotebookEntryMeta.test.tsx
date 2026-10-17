@@ -47,6 +47,26 @@ describe('Notebook entry details', () => {
     expect(screen.getByText('Intake')).toBeInTheDocument();
   });
 
+  it('a reload that started before a save never overwrites it', async () => {
+    let releaseGet: (v: any) => void = () => {};
+    let gets = 0;
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (init?.method === 'PUT') return { meta: { ...base.meta, type: 'build' } };
+      gets++;
+      if (gets === 2) return new Promise((r) => { releaseGet = r; }); // a slow refresh
+      return gets > 2 ? { ...base, meta: { ...base.meta, type: 'build' } } : base;
+    });
+    render(<NotebookEntryMeta pageId={5} teamId={1} revision={2} />);
+    await screen.findByLabelText('Entry type');
+    window.dispatchEvent(new Event('focus')); // starts the slow refresh
+    await waitFor(() => expect(gets).toBe(2));
+    fireEvent.change(screen.getByLabelText('Entry type'), { target: { value: 'build' } });
+    await waitFor(() => expect(gets).toBe(3));
+    releaseGet(base); // the old answer arrives last
+    await new Promise((r) => setTimeout(r, 20));
+    expect((screen.getByLabelText('Entry type') as HTMLSelectElement).value).toBe('build');
+  });
+
   it('read-only for members who can\'t edit the notebook', async () => {
     api.apiJson.mockResolvedValue({ ...base, canEdit: false });
     render(<NotebookEntryMeta pageId={5} />);

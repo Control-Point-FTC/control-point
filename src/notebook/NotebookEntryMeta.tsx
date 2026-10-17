@@ -29,19 +29,23 @@ export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { page
   // Saves run one at a time, in order; a reload never lands while one is pending.
   const queue = useRef<Promise<void>>(Promise.resolve());
   const pending = useRef(0);
+  // Each reload takes a ticket; a save (or another page) issues a new one, so
+  // a reload that started before a save can never land after it.
+  const ticket = useRef(0);
 
   const load = useCallback(() => {
     if (pending.current) return Promise.resolve();
+    const mine = ++ticket.current;
     return apiJson<MetaResponse>(`/api/notebook/pages/${pageId}/meta`, { headers, cache: 'no-store' })
-      // Only a well-formed answer is shown (the row never takes the page down with it).
-      .then((d) => { if (!pending.current) setData(d && d.meta && Array.isArray(d.meta.subsystems) && Array.isArray(d.meta.awards) ? d : null); })
+      // Only the newest reload, and only a well-formed answer (the row never takes the page down with it).
+      .then((d) => { if (mine === ticket.current && !pending.current) setData(d && d.meta && Array.isArray(d.meta.subsystems) && Array.isArray(d.meta.awards) ? d : null); })
       .catch(() => {});
   }, [pageId, teamId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reload when the page changes or is saved (the byline and read time follow
   // edits), when the window comes back into focus, and every 20 s for
   // teammates' changes to the details.
-  useEffect(() => { setData(null); setError(''); }, [pageId]);
+  useEffect(() => { ticket.current++; setData(null); setError(''); }, [pageId]);
   useEffect(() => { void load(); }, [load, revision]);
   useEffect(() => {
     const onFocus = () => { if (document.visibilityState !== 'hidden') void load(); };
@@ -60,6 +64,7 @@ export function NotebookEntryMeta({ pageId, teamId, revision, disabled }: { page
   const save = (shown: Partial<EntryMeta>, body: Record<string, unknown> = shown) => {
     setData((d) => (d ? { ...d, meta: { ...d.meta, ...shown } } : d));
     pending.current++;
+    ticket.current++;
     queue.current = queue.current.then(async () => {
       try {
         const r = await apiJson<{ meta: EntryMeta; version?: string }>(`/api/notebook/pages/${pageId}/meta`, { method: 'PUT', headers, body: JSON.stringify(body) });
