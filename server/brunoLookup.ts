@@ -18,8 +18,9 @@
 import { awardById, parseTagList } from "../src/types/taskTags.js";
 import { describeActivity } from "./taskActivity.js";
 import { coversSlot, describeUnavailability, overlapsRange, type Unavailability } from "../src/utils/unavailability.js";
+import { runProgress, ITEM_STATE_LABELS, isItemState, type ChecklistSection } from "../src/types/checklists.js";
 
-export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability";
+export type LookupKind = "messages" | "tasks" | "task_activity" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes" | "availability" | "checklists";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -52,7 +53,7 @@ const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_out
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability"];
+const KINDS: LookupKind[] = ["messages", "tasks", "task_activity", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes", "availability", "checklists"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -320,6 +321,31 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, inc
       ids.push(`event:${r.id}`);
       lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.rsvp_mode && r.rsvp_mode !== "none" ? ` (RSVP${r.rsvp_mode === "decline_only" ? ", can't-make-it only" : ""}: ${Number(r.going_n || 0)} going, ${Number(r.maybe_n || 0)} maybe, ${Number(r.no_n || 0)} can't make it${rsvpNames(r.rsvp_names)})` : ""}${awayFor(r) ? ` (${awayFor(r).slice(2)})` : ""}${r.agenda ? ` — agenda: ${clip(String(r.agenda).replace(/\s*\n\s*/g, "; "), 300)}` : ""}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
+  } else if (q.kind === "checklists") {
+    // Templates, and runs (open ones first) with progress and what's still to do.
+    const parse = (raw: unknown): ChecklistSection[] => { try { const v = JSON.parse(String(raw)); return Array.isArray(v) ? v : []; } catch { return []; } };
+    const w = wordsWhere(q.query, ["r.title"]);
+    const templates = await db("SELECT id, title, sections FROM checklist_templates WHERE team_id = ? AND archived_at IS NULL ORDER BY title", teamId).catch(() => [] as any[]);
+    for (const t of templates.slice(0, 40)) lines.push(`checklist template #${t.id} ${JSON.stringify(clip(t.title, 80))} (${parse(t.sections).reduce((n, s) => n + s.items.length, 0)} items)`);
+    const runs = await db(`SELECT r.id, r.title, r.status, r.sections, r.started_at, r.finished_at, e.title AS event_title FROM checklist_runs r LEFT JOIN events e ON e.id = r.event_id
+      WHERE r.team_id = ?${w.sql} ORDER BY r.status = 'open' DESC, COALESCE(r.finished_at, r.started_at) DESC LIMIT 11`, teamId, ...w.args).catch(() => [] as any[]);
+    const c = capped(runs, 10);
+    more = c.more;
+    for (const r of c.rows) {
+      const sections = parse(r.sections);
+      const items = await db("SELECT i.item_id, i.state, m.name AS who, a.name AS assignee FROM checklist_run_items i LEFT JOIN members m ON m.id = i.set_by LEFT JOIN members a ON a.id = i.assignee_id WHERE i.run_id = ?", r.id);
+      const st: Record<string, any> = Object.fromEntries(items.map((i: any) => [String(i.item_id), i]));
+      const p = runProgress(sections, Object.fromEntries(items.map((i: any) => [String(i.item_id), isItemState(i.state) ? i.state : "open"])));
+      lines.push(`checklist run #${r.id} ${JSON.stringify(clip(r.title, 80))} ${r.status === "open" ? "open" : `finished ${String(r.finished_at).slice(0, 10)}`}${r.event_title ? ` for event ${JSON.stringify(clip(r.event_title, 60))}` : ""}: ${p.done} of ${p.total} done${p.na ? `, ${p.na} N/A` : ""}`);
+      if (r.status !== "open") continue;
+      for (const s of sections) for (const it of s.items) {
+        const i = st[it.id];
+        const state = i && isItemState(i.state) ? i.state : "open";
+        if (state === "done" || state === "na") continue;
+        lines.push(`  - [${it.id}] ${s.title ? `${clip(s.title, 30)}: ` : ""}${clip(it.text, 120)} (${ITEM_STATE_LABELS[state as keyof typeof ITEM_STATE_LABELS]}${i?.assignee ? `, assigned to ${clip(i.assignee, 40)}` : ""})`);
+      }
+    }
+    if (!templates.length && !runs.length) summary = "The team has no checklists yet.";
   } else if (q.kind === "availability") {
     // When members can't be there: date ranges and weekly slots, never the private note.
     const from = q.from || teamToday(tz);
@@ -485,7 +511,7 @@ function rsvpNames(raw: unknown): string {
   return Object.keys(label).filter((k) => by[k]?.length).map((k) => `; ${label[k]}: ${by[k].slice(0, 15).join(", ")}${by[k].length > 15 ? ", …" : ""}`).join("");
 }
 
-const HIDDEN_BLOCK_KINDS = ["away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
+const HIDDEN_BLOCK_KINDS = ["checklist", "away", "event-rsvp", "lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook", "workspace", "task-comment"];
 /** One of those blocks, including one left unfinished. */
 const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
 

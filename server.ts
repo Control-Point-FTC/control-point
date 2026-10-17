@@ -83,6 +83,7 @@ import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
+import { registerChecklistRoutes } from "./server/checklists.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
 import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
@@ -2046,6 +2047,7 @@ const ROLE_PERMISSIONS = [
   { key: "manage_attendance", label: "Manage attendance" },
   { key: "manage_tasks", label: "Manage tasks" },
   { key: "manage_outreach", label: "Manage outreach" },
+  { key: "manage_checklists", label: "Manage checklists" },
   { key: "manage_documentation", label: "Manage documentation" },
   { key: "edit_notebook", label: "Edit notebook pages" },
   { key: "organize_notebook", label: "Organize notebooks" },
@@ -2118,14 +2120,14 @@ async function ensureRolesSeeded(teamId: number | null | undefined) {
   if (!names.has("Member")) {
     const memberRole = (await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach", "edit_notebook", "organize_notebook"]), 1
+      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach", "manage_checklists", "edit_notebook", "organize_notebook"]), 1
     )) as any;
     memberRoleId = Number(memberRole.lastInsertRowid);
   }
   if (!names.has("Verified Member")) {
     await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget", "edit_notebook", "organize_notebook"]), 2
+      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget", "manage_checklists", "edit_notebook", "organize_notebook"]), 2
     );
   }
 
@@ -5331,6 +5333,9 @@ async function startServer() {
       { sql: "DELETE FROM channel_categories WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM custom_emoji WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM resources WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM checklist_run_items WHERE run_id IN (SELECT id FROM checklist_runs WHERE team_id = ?)", args: [teamId] },
+      { sql: "DELETE FROM checklist_runs WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM checklist_templates WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_invites WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_join_requests WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM scouting_entries WHERE team_id = ?", args: [teamId] },
@@ -8008,6 +8013,7 @@ async function startServer() {
   registerVoiceRoutes(app, voiceDeps);
 
   registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
+  const checklists = registerChecklistRoutes(app, { requireAuth: requireAuth as any, hasPerm: hasPerm as any, dbGet, dbAll, dbRun, broadcastToTeam });
   registerStickyNoteRoutes(app, { requireAuth });
 
   // Stable links (/t/<team>/<type>/<id>): what a reference is and where it
