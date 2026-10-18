@@ -19,7 +19,7 @@ const send = (url: string, method: string, body?: unknown, teamId?: number | nul
   apiJson<any>(url, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: teamId ? { 'X-CP-Notebook-Team': String(teamId) } : undefined });
 
 export function NotebookReviewBar({ pageId, teamId }: { pageId: number; teamId?: number | null }) {
-  const [state, setState] = useState<{ review: Review | null; canReview: boolean } | null>(null);
+  const [state, setState] = useState<{ review: Review | null; canReview: boolean; canWithdraw?: boolean } | null>(null);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,7 +57,7 @@ export function NotebookReviewBar({ pageId, teamId }: { pageId: number; teamId?:
           </span>
         )}
         {!pending && !asking && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAsking(true)}><Send className="size-3.5" /> {r ? 'Submit again' : 'Submit for review'}</Button>}
-        {pending && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => send(`/api/notebook/pages/${pageId}/review`, 'DELETE', undefined, teamId))}>Withdraw</Button>}
+        {pending && state.canWithdraw && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => send(`/api/notebook/pages/${pageId}/review`, 'DELETE', undefined, teamId))}>Withdraw</Button>}
       </div>
       {r?.status === 'changes' && r.comment && <p className="mt-1 rounded-md bg-warning/10 px-2 py-1 text-foreground">“{r.comment}”</p>}
       {asking && (
@@ -79,7 +79,14 @@ export function NotebookReviewQueue({ open, onClose, onOpenPage, teamId }: { ope
   const [comment, setComment] = useState<Record<number, string>>({});
   const [error, setError] = useState('');
   const load = useCallback(() => send('/api/notebook/reviews', 'GET', undefined, teamId).then(setData).catch((e) => setError(e?.message || 'Could not load reviews')), [teamId]);
-  useEffect(() => { if (open) void load(); }, [open, load]);
+  // Teammates' requests and decisions show up while the queue is open.
+  useEffect(() => {
+    if (!open) return;
+    void load();
+    const on = () => { void load(); };
+    window.addEventListener('notebook-reviews-changed', on);
+    return () => window.removeEventListener('notebook-reviews-changed', on);
+  }, [open, load]);
   const decide = async (r: Review, status: 'approved' | 'changes') => {
     try { await send(`/api/notebook/reviews/${r.id}`, 'PUT', { status, comment: comment[r.id] ?? '' }, teamId); setError(''); void load(); }
     catch (e: any) { setError(e?.message || 'Could not save the review'); }

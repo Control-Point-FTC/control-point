@@ -52,7 +52,10 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
     async forPage(auth: Auth, pageId: number) {
       await visiblePage(auth, pageId);
       const r = await deps.dbGet(`${SELECT} WHERE r.page_id = ? AND r.team_id = ? ORDER BY r.id DESC LIMIT 1`, pageId, auth.teamId);
-      return { review: row(r) ?? null, canReview: await canReview(auth) };
+      const reviewer = await canReview(auth);
+      // Withdraw is offered only to who may use it: the requester, or a reviewer.
+      const canWithdraw = !!r && r.status === "pending" && (Number(r.requested_by) === auth.memberId || reviewer);
+      return { review: row(r) ?? null, canReview: reviewer, canWithdraw };
     },
     /** Submits a page for review (anyone who can see it); one open request per page. */
     async request(auth: Auth, pageId: number, note: unknown) {
@@ -76,10 +79,13 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
     },
     /** Withdraws an open request (its requester, or a reviewer). */
     async withdraw(auth: Auth, pageId: number) {
+      await visiblePage(auth, pageId);
       const open = await deps.dbGet("SELECT id, requested_by FROM notebook_reviews WHERE page_id = ? AND team_id = ? AND status = 'pending'", pageId, auth.teamId);
       if (!open) throw new NotebookError("There's no open review request for this entry", 404);
       if (Number(open.requested_by) !== auth.memberId && !(await canReview(auth))) throw new NotebookError("Only the person who asked can withdraw it", 403);
-      await deps.dbRun("DELETE FROM notebook_reviews WHERE id = ?", open.id);
+      // Only while still open: a reviewer's decision that landed meanwhile is never erased.
+      const w = await deps.dbRun("DELETE FROM notebook_reviews WHERE id = ? AND status = 'pending'", open.id);
+      if (!Number(w?.changes ?? w?.rowsAffected ?? 0)) throw new NotebookError("Someone already reviewed this entry", 409);
       deps.broadcastToTeam(auth.teamId!, { type: "notebook_reviews_changed" });
       return { ok: true };
     },
@@ -106,12 +112,12 @@ export function reviewStore(deps: ReviewDeps, notebook: NotebookStore) {
     /** The queue: open requests (all of them for reviewers, a member's own otherwise), plus recent decisions. */
     async queue(auth: Auth) {
       const reviewer = await canReview(auth);
-      const rows = await deps.dbAll(`${SELECT} WHERE r.team_id = ? AND p.deleted_at IS NULL${reviewer ? "" : " AND r.requested_by = ?"}
+      // Only pages this member can open (protected ones stay hidden), filtered before the limit.
+      const visible = (await notebook.tree(ctxOf(auth))).pages.map((p) => p.id);
+      const rows = await deps.dbAll(`${SELECT} WHERE r.team_id = ? AND p.deleted_at IS NULL AND r.page_id IN (SELECT value FROM json_each(?))${reviewer ? "" : " AND r.requested_by = ?"}
         AND (r.status = 'pending' OR r.reviewed_at >= ?) ORDER BY r.status = 'pending' DESC, COALESCE(r.reviewed_at, r.requested_at) DESC LIMIT 200`,
-        auth.teamId, ...(reviewer ? [] : [auth.memberId]), new Date(Date.now() - 30 * 86_400_000).toISOString());
-      // Only pages this member can open (protected ones stay hidden).
-      const visible = new Set((await notebook.tree(ctxOf(auth))).pages.map((p) => p.id));
-      const items = rows.filter((r) => visible.has(Number(r.page_id))).map(row);
+        auth.teamId, JSON.stringify(visible), ...(reviewer ? [] : [auth.memberId]), new Date(Date.now() - 30 * 86_400_000).toISOString());
+      const items = rows.map(row);
       return { canReview: reviewer, pending: items.filter((i) => i.status === "pending").length, items };
     },
   };
@@ -124,7 +130,11 @@ export function registerNotebookReviewRoutes(app: any, deps: ReviewDeps, noteboo
     const auth = await deps.requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
-    try { res.json(await fn(auth, req)); }
+    try {
+      // Same rule as the notebook routes: a tab still showing another workspace can't read or decide here.
+      if (req.headers["x-cp-notebook-team"] !== undefined && Number(req.headers["x-cp-notebook-team"]) !== auth.teamId) throw new NotebookError("Workspace changed; reopen this notebook in its workspace", 409);
+      res.json(await fn(auth, req));
+    }
     catch (e) {
       if (e instanceof NotebookError) return res.status(e.status).json({ error: e.message });
       console.error("notebook review request failed", e);

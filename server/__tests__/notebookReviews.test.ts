@@ -85,3 +85,34 @@ describe("mentor review", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/\{"kind":"notebook_reviews"\} lists entries waiting for mentor review/);
   });
 });
+
+describe("mentor review edge cases", () => {
+  it("withdrawing follows page access, and Withdraw is offered only to the requester or a reviewer", async () => {
+    const lee = await seedMember(t.db, team, "Lee", "lee@rev.test");
+    const leeSession = await t.session(lee);
+    const p = await newPage("Shared page");
+    await t.post(`/api/notebook/pages/${p.id}/review`, {}, anaSession);
+    expect((await t.api(`/api/notebook/pages/${p.id}/review`, { session: anaSession })).body.canWithdraw).toBe(true);
+    expect((await t.api(`/api/notebook/pages/${p.id}/review`, { session: leeSession })).body.canWithdraw).toBe(false);
+    expect((await t.api(`/api/notebook/pages/${p.id}/review`, { method: "DELETE", session: leeSession })).status).toBe(403);
+    const secret = await newPage("Protected plan", adaSession, { protected: true });
+    await t.post(`/api/notebook/pages/${secret.id}/review`, {}, adaSession);
+    expect((await t.api(`/api/notebook/pages/${secret.id}/review`, { method: "DELETE", session: anaSession })).status).toBe(404);
+  });
+
+  it("a tab showing another workspace can't read or decide reviews", async () => {
+    const r = await t.api("/api/notebook/reviews", { session: adaSession, headers: { "X-CP-Notebook-Team": String(team + 999) } });
+    expect(r.status).toBe(409);
+  });
+
+  it("pages the reader can't open never crowd visible reviews out of the list", async () => {
+    const secret = await newPage("Hidden decisions", adaSession, { protected: true });
+    const visible = await newPage("Old visible decision");
+    const old = new Date(Date.now() - 86_400_000).toISOString(), now = new Date().toISOString();
+    await t.db.execute({ sql: "INSERT INTO notebook_reviews (team_id, page_id, requested_by, requested_at, status, reviewer_id, reviewed_at) VALUES (?, ?, ?, ?, 'approved', ?, ?)", args: [team, visible.id, ana, old, ada, old] });
+    for (let i = 0; i < 205; i++) await t.db.execute({ sql: "INSERT INTO notebook_reviews (team_id, page_id, requested_by, requested_at, status, reviewer_id, reviewed_at) VALUES (?, ?, ?, ?, 'approved', ?, ?)", args: [team, secret.id, ada, now, ada, now] });
+    const lookup = await notebookLookup(new NotebookStore(t.db), { memberId: ana, teamId: team } as any, { kind: "notebook_reviews" });
+    expect(lookup.lines.join("\n")).toContain("Old visible decision");
+    expect((await t.api("/api/notebook/reviews", { session: anaSession })).body.items.some((i: any) => i.pageId === visible.id)).toBe(true);
+  });
+});
