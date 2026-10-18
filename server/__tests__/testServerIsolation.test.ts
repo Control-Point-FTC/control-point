@@ -9,7 +9,8 @@
  * own database never changed.)
  */
 import { describe, it, expect, afterAll, vi } from "vitest";
-import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
+import { EventEmitter } from "node:events";
+import { startTestServer, seedTeam, seedMember, waitForBoundPort, type TestServer } from "./helpers/testServer";
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -17,9 +18,27 @@ const servers: TestServer[] = [];
 afterAll(async () => { await Promise.all(servers.map((s) => s.stop())); });
 
 describe("test servers", () => {
+  it("read the whole port, even when the startup line arrives in pieces", async () => {
+    const proc: any = Object.assign(new EventEmitter(), { stdout: new EventEmitter() });
+    const port = waitForBoundPort(proc, 5000);
+    proc.stdout.emit("data", Buffer.from("[boot] ok\nServer running on http://localhost:43"));
+    proc.stdout.emit("data", Buffer.from("217\r\nmore"));
+    expect(await port).toBe(43217);
+  });
+
+  it("fail when the server exits before it is ready", async () => {
+    const proc: any = Object.assign(new EventEmitter(), { stdout: new EventEmitter() });
+    const port = waitForBoundPort(proc, 5000);
+    proc.emit("exit", 1);
+    await expect(port).rejects.toThrow(/exited before it was ready/);
+  });
+
   it("booted together, each answers from its own database", async () => {
-    servers.push(...await Promise.all([startTestServer("cp-iso-a-"), startTestServer("cp-iso-b-")]));
-    const [a, b] = servers;
+    // Each server is kept for cleanup as soon as it is up, even if the other fails.
+    const started = await Promise.allSettled(["cp-iso-a-", "cp-iso-b-"].map(async (p) => { const s = await startTestServer(p); servers.push(s); return s; }));
+    const failed = started.find((r) => r.status === "rejected");
+    if (failed) throw (failed as PromiseRejectedResult).reason;
+    const [a, b] = started.map((r) => (r as PromiseFulfilledResult<TestServer>).value);
     expect(a.port).not.toBe(b.port);
     expect(a.port).toBeGreaterThan(0);
     const sessions = await Promise.all(servers.map(async (s, i) => {

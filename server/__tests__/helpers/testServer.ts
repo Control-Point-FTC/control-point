@@ -87,7 +87,8 @@ export function waitForBoundPort(proc: ChildProcess, timeoutMs = 60_000): Promis
     const done = (fn: () => void) => { clearTimeout(timer); proc.stdout?.off("data", onData); proc.off("exit", onExit); fn(); };
     const onData = (chunk: Buffer) => {
       seen = (seen + chunk.toString("utf8")).slice(-4000);
-      const m = seen.match(/Server running on http:\/\/localhost:(\d+)/);
+      // Only a whole line: a chunk can end in the middle of the port number.
+      const m = seen.match(/Server running on http:\/\/localhost:(\d+)\r?\n/);
       if (m) done(() => resolve(Number(m[1])));
     };
     const onExit = (code: number | null) => done(() => reject(new Error(`server exited before it was ready (code ${code})`)));
