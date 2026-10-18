@@ -76,8 +76,9 @@ export function renderNotebookText(content: unknown, canvas: unknown, limit = PA
   return text.length > limit ? { text: `${text.slice(0, limit)}\n… (page continues; the rest is not shown)`, truncated: true } : { text, truncated: false };
 }
 
-export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline";
-export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number }
+export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal";
+export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number; from?: string; to?: string }
+const JOURNAL_LIMIT = 60;
 
 const clip = (s: unknown, n: number) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -93,6 +94,18 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
  *  same whether they are protected, deleted or never existed. */
 /** `ids`: the records actually listed ("page:12", "section:3"), for checking Bruno's references. */
 export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: (string | null)[] }> {
+  if (q.kind === "notebook_journal") {
+    // Entries newest first by when the work happened, with their details and authors.
+    // Dates and words are matched in the database against the full page text.
+    const { entries: shown, more } = await store.journal(bruno(ctx), { from: q.from, to: q.to, query: q.query, limit: JOURNAL_LIMIT });
+    const lines = shown.map(e => {
+      const details = entryMetaSummary(Object.fromEntries(Object.entries({ type: e.type, stage: e.stage, subsystems: e.subsystems, awards: e.awards })
+        .filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length))));
+      return `page #${e.id} ${JSON.stringify(clip(e.title, 120))} ${e.date}${e.workDate ? " (work date)" : ""}${details ? ` · ${details}` : ""}${e.authors.length ? ` · by ${e.authors.slice(0, 6).join(", ")}` : ""}: ${JSON.stringify(clip(e.excerpt, 140))}`;
+    });
+    // No matches is no rows, so the lookup reads as "none found", never "1 found".
+    return { lines, more, ids: shown.map(e => `page:${e.id}`) };
+  }
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
     const lines: string[] = [], ids: string[] = [];
