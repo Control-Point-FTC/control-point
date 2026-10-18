@@ -24,6 +24,9 @@ export function NotebookReviewBar({ pageId, teamId }: { pageId: number; teamId?:
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Reviewers decide right here too (phones have no View ribbon, so no queue there).
+  const [changing, setChanging] = useState(false);
+  const [comment, setComment] = useState('');
   const load = useCallback(() => {
     const id = pageId;
     return send(`/api/notebook/pages/${id}/review`, 'GET', undefined, teamId).then((d) => { if (id === pageId) setState(d && 'review' in d ? d : null); }).catch(() => setState(null));
@@ -39,7 +42,7 @@ export function NotebookReviewBar({ pageId, teamId }: { pageId: number; teamId?:
   const r = state.review;
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
-    try { await fn(); setError(''); setAsking(false); setNote(''); await load(); }
+    try { await fn(); setError(''); setAsking(false); setNote(''); setChanging(false); setComment(''); await load(); }
     catch (e: any) { setError(e?.message || 'Could not do that — try again.'); }
     finally { setBusy(false); }
   };
@@ -57,8 +60,21 @@ export function NotebookReviewBar({ pageId, teamId }: { pageId: number; teamId?:
           </span>
         )}
         {!pending && !asking && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAsking(true)}><Send className="size-3.5" /> {r ? 'Submit again' : 'Submit for review'}</Button>}
+        {pending && state.canReview && !changing && <>
+          <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => send(`/api/notebook/reviews/${r!.id}`, 'PUT', { status: 'approved' }, teamId))}><CheckCircle2 className="size-3.5" /> Approve</Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => setChanging(true)}><MessageSquareWarning className="size-3.5" /> Ask for changes</Button>
+        </>}
         {pending && state.canWithdraw && <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => void run(() => send(`/api/notebook/pages/${pageId}/review`, 'DELETE', undefined, teamId))}>Withdraw</Button>}
       </div>
+      {pending && changing && (
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
+          <Textarea aria-label="What should change" rows={2} maxLength={1000} placeholder="What should change? (needed)" value={comment} onChange={(e) => setComment(e.target.value)} className="text-xs" />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={busy || !comment.trim()} onClick={() => void run(() => send(`/api/notebook/reviews/${r!.id}`, 'PUT', { status: 'changes', comment }, teamId))}>{busy ? <Loader2 className="animate-spin" /> : <MessageSquareWarning />} Send</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setChanging(false); setComment(''); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
       {r?.status === 'changes' && r.comment && <p className="mt-1 rounded-md bg-warning/10 px-2 py-1 text-foreground">“{r.comment}”</p>}
       {asking && (
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
