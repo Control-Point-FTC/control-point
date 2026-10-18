@@ -2,7 +2,7 @@
 
 Snapshot of `docs/parity-checklist.md` on 2026-10-17, with the owner's decisions applied.
 
-**Shortlist: about 68% done** (85 done, 5 in an open PR, 2 partly done, 35 to do). 137 unfinished items are off the shortlist and struck through below; they stay listed for reference. The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
+**Shortlist: about 69% done** (86 done, 2 in an open PR, 4 partly done, 35 to do). 137 unfinished items are off the shortlist and struck through below; they stay listed for reference. The percentage counts shipped work only: partly done items count as half, and work in an open PR doesn't count until it merges.
 
 **Paused** at the owner’s request after the work below; nothing new starts until they say continue.
 
@@ -12,7 +12,7 @@ Legend: ✅ done · 🔄 in an open PR · 🟡 partly done · ⬜ not started ·
 
 "We don’t need an exact replica of all the features." What stays, in order:
 
-1. Finish the journal (3.2, open PR #289) and the mentor review queue (3.4, open PR #298)
+1. Journal (3.2, shipped in #289) and the mentor review queue (3.4, open PR #298)
 2. Awards page (7.1)
 3. Judge-ready PDF (3.5)
 4. Orders, approvals and paste-a-link (8.2–8.4)
@@ -76,9 +76,10 @@ Everything else not already shipped is dropped.
 | #294 | @mention a teammate in a notebook page to notify them |
 | #295 | Recent chats in the Bruno side panel |
 | #296 | Bruno adds rows into notebook tables and cleans up its own stray copies |
+| #289 | Notebook journal: entries by week or award, filters across the whole notebook, Bruno lookup |
 | #297 | Bruno reads pasted store links and goBILDA part numbers (names, links, prices) |
 
-**Open:** [#289](https://github.com/Control-Point-FTC/control-point/pull/289) the journal (3.2) and [#298](https://github.com/Control-Point-FTC/control-point/pull/298) mentor review (3.4), both in review. Amazon links can’t be read from the production server (Amazon blocks datacenter IPs and asks for its Product Advertising API); using that API needs an Associates account, so it’s the owner’s call.
+**Open:** [#298](https://github.com/Control-Point-FTC/control-point/pull/298) mentor review (3.4), in review. Amazon links can’t be read from the production server (Amazon blocks datacenter IPs and asks for its Product Advertising API); using that API needs an Associates account, so it’s the owner’s call.
 
 ## Progress by phase
 
@@ -87,7 +88,7 @@ Everything else not already shipped is dropped.
 | 0. Shared foundations (unblocks almost everything else) | 7 | 0 | 0 | 1 | 11 | 88% |
 | 1. Tasks overhaul | 29 | 0 | 0 | 0 | 4 | 100% |
 | 2. Calendar, events and attendance | 22 | 0 | 0 | 0 | 3 | 100% |
-| 3. Engineering notebook upgrades | 13 | 5 | 0 | 1 | 4 | 68% |
+| 3. Engineering notebook upgrades | 14 | 2 | 2 | 1 | 4 | 79% |
 | 4. Checklists and 3D printing (new modules) | 7 | 0 | 0 | 0 | 12 | 100% |
 | 5. Practice and competition | 0 | 0 | 0 | 9 | 2 | 0% |
 | 6. Scouting and event day | 1 | 0 | 0 | 0 | 13 | 100% |
@@ -225,12 +226,12 @@ Everything else not already shipped is dropped.
 - ~~Linked records rail: link tasks, events, orders, checklist runs~~ *(not on the shortlist)*
 - [x] Read-time estimate
 
-### 3.2 Journal and Board views · 🔄 In open PR — [PR #289](https://github.com/Control-Point-FTC/control-point/pull/289)
+### 3.2 Journal and Board views · 🟡 Partly done
 - [x] Book/section/page tree
-- [ ] 🔄 Journal view: entries grouped by week ("This week", "Last week"), cards with excerpt, photos, chips, authors *(in open PR #289)*
+- [ ] 🟡 Journal view: entries grouped by week ("This week", "Last week"), cards with excerpt, photos, chips, authors (all but photos) *(partly done)*
 - ~~Board view: kanban by subsystem, drag to retag, "New entry in X" per column, Alt+arrow move~~ *(not on the shortlist)*
-- [ ] 🔄 Awards view: entries grouped by award *(in open PR #289)*
-- [ ] 🔄 Filters by type/stage/subsystem/author/season *(in open PR #289)*
+- [x] Awards view: entries grouped by award
+- [ ] 🟡 Filters by type/stage/subsystem/author/season (all but season) *(partly done)*
 
 ### 3.3 Templates · ✅ Done
 - [x] Blank, meeting, to-do, engineering log, design review
