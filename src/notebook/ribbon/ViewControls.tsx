@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { notebookPageLink } from '../pageLinks';
 import { useNotebookWorkspace } from '../workspaceContext';
 import { RibbonButton, RibbonGroup } from './RibbonParts';
+import { NotebookReviewQueue } from '../NotebookReview';
 import { NotebookJournal } from '../NotebookJournal';
 
 export const DOCK_WIDTH = 440;
@@ -16,6 +17,7 @@ export function dockFeatures(screenInfo: { availWidth: number; availHeight: numb
 export function ViewControls({ pageId }: { pageId?: number }) {
   const workspace = useNotebookWorkspace();
   const [notice, notify] = useState('');
+  const [reviews, setReviews] = useState(false);
   const [journal, setJournal] = useState(false);
   const layout = workspace?.navigationLayout ?? 'panes';
   const dock = () => {
@@ -26,6 +28,8 @@ export function ViewControls({ pageId }: { pageId?: number }) {
     else { opened.focus(); notify('Opened this page in a docked window on the right of your screen.'); }
   };
   return <>
+    {workspace?.openPage && <RibbonGroup label="Review"><RibbonButton label="Review queue" icon="Template" showLabel onClick={() => setReviews(true)} /></RibbonGroup>}
+    {reviews && <NotebookReviewQueue open onClose={() => setReviews(false)} onOpenPage={(id) => workspace?.openPage?.(id)} teamId={workspace?.teamId} />}
     {workspace?.openPage && <RibbonGroup label="Entries"><RibbonButton label="Journal" icon="Template" showLabel onClick={() => setJournal(true)} /></RibbonGroup>}
     {journal && <NotebookJournal open onClose={() => setJournal(false)} onOpenPage={(id) => workspace?.openPage?.(id)} teamId={workspace?.teamId} />}
     {workspace?.setNavigationLayout && <RibbonGroup label="Navigation">

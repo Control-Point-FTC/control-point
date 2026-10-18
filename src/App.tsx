@@ -1136,6 +1136,9 @@ export default function App() {
           setMembers((prev: any[]) => prev.filter((m: any) => m.id !== msg.id));
         } else if (msg.type === 'join_requests_changed') {
           window.dispatchEvent(new CustomEvent(JOIN_REQUESTS_EVENT));
+        } else if (msg.type === 'notebook_reviews_changed') {
+          // A notebook entry was submitted for review or reviewed: open review bars refresh.
+          window.dispatchEvent(new CustomEvent('notebook-reviews-changed'));
         } else if (msg.type === 'checklists_changed') {
           // A run was started or an item checked off: the Checklists page refetches.
           window.dispatchEvent(new CustomEvent('checklists-changed', { detail: { runId: msg.run_id } }));

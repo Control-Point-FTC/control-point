@@ -85,6 +85,7 @@ import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
+import { registerNotebookReviewRoutes } from "./server/notebookReviews.js";
 import { registerChecklistRoutes } from "./server/checklists.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
@@ -2054,6 +2055,7 @@ const ROLE_PERMISSIONS = [
   { key: "edit_notebook", label: "Edit notebook pages" },
   { key: "organize_notebook", label: "Organize notebooks" },
   { key: "delete_notebook", label: "Delete notebook items" },
+  { key: "review_notebook", label: "Review notebook entries" },
   { key: "manage_communications", label: "Manage communications" },
   { key: "manage_voice", label: "Manage voice channels" },
   { key: "moderate_calls", label: "Moderate calls" },
@@ -8384,6 +8386,11 @@ async function startServer() {
   }
 
   registerNotebookFileRoutes(app,{requireAuth,ensureRolesSeeded,storeFile,deleteStoredRow,readStoredBytes},new NotebookStore());
+  registerNotebookReviewRoutes(app, {
+    requireAuth: requireAuth as any, memberPerms: getMemberPerms, dbGet, dbAll, dbRun, broadcastToTeam,
+    // Review requests and decisions are direct notices (someone is waiting on them).
+    notify: async (_teamId, actorId, ids, content, meta) => { for (const id of new Set(ids)) if (id !== actorId) void createNotification(id, content, "system", meta); },
+  }, new NotebookStore());
 
   // Copy existing files into R2 in the background (the owner asked for every
   // existing image and file to move). Each copy is verified by size before

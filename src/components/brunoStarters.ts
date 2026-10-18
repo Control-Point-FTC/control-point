@@ -283,6 +283,7 @@ const POOLS: Record<string, StarterPool> = {
       'Explain the BIOBUZZ scoring to me',
       'Help me plan our build season timeline',
       'What makes a good engineering notebook?',
+      'Which notebook entries are waiting for review?',
       'How do we pick an alliance partner?',
     ],
   },

@@ -76,7 +76,7 @@ export function renderNotebookText(content: unknown, canvas: unknown, limit = PA
   return text.length > limit ? { text: `${text.slice(0, limit)}\n… (page continues; the rest is not shown)`, truncated: true } : { text, truncated: false };
 }
 
-export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal";
+export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal" | "notebook_reviews";
 export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number; from?: string; to?: string }
 const JOURNAL_LIMIT = 60;
 
@@ -94,6 +94,15 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
  *  same whether they are protected, deleted or never existed. */
 /** `ids`: the records actually listed ("page:12", "section:3"), for checking Bruno's references. */
 export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: (string | null)[] }> {
+  if (q.kind === "notebook_reviews") {
+    // Mentor review: entries waiting for a reviewer, and recent decisions (pages Bruno can see only).
+    const rows = await store.reviews(bruno(ctx));
+    const day = (iso: unknown) => String(iso ?? "").slice(0, 10);
+    const lines = rows.slice(0, 60).map((r: any) => r.status === "pending"
+      ? `page #${r.page_id} ${JSON.stringify(clip(r.title, 120))}: waiting for review since ${day(r.requested_at)} (asked by ${clip(r.requested_by_name ?? "a member", 60)}${r.note ? `: ${JSON.stringify(clip(r.note, 200))}` : ""})`
+      : `page #${r.page_id} ${JSON.stringify(clip(r.title, 120))}: ${r.status === "approved" ? "approved" : "changes requested"} by ${clip(r.reviewer_name ?? "a reviewer", 60)} on ${day(r.reviewed_at)}${r.comment ? `: ${JSON.stringify(clip(r.comment, 200))}` : ""}`);
+    return { lines, more: rows.length > 60, ids: rows.slice(0, 60).map((r: any) => `page:${r.page_id}`) };
+  }
   if (q.kind === "notebook_journal") {
     // Entries newest first by when the work happened, with their details and authors.
     // Dates and words are matched in the database against the full page text.
