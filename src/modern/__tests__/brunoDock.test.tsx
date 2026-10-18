@@ -249,4 +249,22 @@ describe('Bruno dock and the corner', () => {
     expect(applied).toHaveLength(1);
     fireEvent.click(screen.getByRole('switch', { name: /Auto-apply/ }));
   });
+
+  it('Auto-apply turned on after a reply finished never applies that reply', async () => {
+    const applied: string[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/bruno/chats' && init?.method === 'POST') return json({ id: 56 });
+      if (url === '/api/ai/apply-actions') { applied.push(init.body); return json({ ok: true, applied: { event: 1 }, created: { event: [9] } }); }
+      return json({});
+    });
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => { onChunk('Adding it.\n```event\n[{"title":"Late night","date":"2026-11-03"}]\n```'); });
+    render(wrap(<BrunoDock {...props()} />));
+    fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'Add late night' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText(/Late night/);
+    fireEvent.click(screen.getByRole('switch', { name: /Auto-apply/ }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(applied).toHaveLength(0);
+    fireEvent.click(screen.getByRole('switch', { name: /Auto-apply/ }));
+  });
 });

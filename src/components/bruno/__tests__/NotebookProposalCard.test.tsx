@@ -161,3 +161,20 @@ describe('auto-apply and redo', () => {
     expect(apiJson).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('redo after a failed apply', () => {
+  beforeEach(() => apiJson.mockReset());
+  afterEach(cleanup);
+  it('a teammate moved the block after the preview: Apply fails and Bruno can redo it (not while it is answering)', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'replace', summary: 'Rewrite part of "BOM"', after: 'x' }] });
+    apiJson.mockRejectedValueOnce(new Error('That part of the page changed or was removed since Bruno read it. Ask Bruno to read the page again.'));
+    const onAsk = vi.fn();
+    const r = render(<MemoryRouter><NotebookProposalCard ops={[{ op: 'replace', page: 3, block: 'a', markdown: 'x' }]} scope={`late-${++scopeN}`} onAsk={onAsk} askDisabled /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
+    const redo = await screen.findByRole('button', { name: 'Ask Bruno to redo it' });
+    expect(redo).toBeDisabled();
+    r.rerender(<MemoryRouter><NotebookProposalCard ops={[{ op: 'replace', page: 3, block: 'a', markdown: 'x' }]} scope={`late-${scopeN}`} onAsk={onAsk} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Bruno to redo it' }));
+    expect(onAsk).toHaveBeenCalledTimes(1);
+  });
+});

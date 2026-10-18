@@ -12,6 +12,7 @@ import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, proposalVerb, type ProposalStatus } from '../../../components/ActionProposalCard';
+import { itemRemoves } from '../../../components/bruno/autoApply';
 import { useProposalContext, useTaskIndex } from '../../../services/proposalContext';
 import { extractNotebookOps, extractStickyOps } from '../../../services/notebookProposals';
 import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
@@ -180,7 +181,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   const stickyOps = useMemo(() => (text ? extractStickyOps(text) : []), [text]);
   const status = proposal?.status || 'pending';
   // Auto-apply: confirm once, and only cards that don't delete or remove anything.
-  const removes = proposals.some((p) => KIND_META[p.kind]?.destructive || (p.items ?? []).some((it: any) => it && (it.delete === true || it.remove === true || it.op === 'delete' || it.action === 'delete')));
+  const removes = proposals.some((p) => KIND_META[p.kind]?.destructive || (p.items ?? []).some(itemRemoves));
   const autoDone = useRef(false);
   useEffect(() => {
     if (!autoApply || autoDone.current || busy || !proposals.length || removes || status !== 'pending') return;
@@ -196,8 +197,8 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} links={proposal?.links} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
-        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} auto={autoApply && !busy} onAsk={onAsk} />}
-        {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} auto={autoApply && !busy} onAsk={onAsk} />}
+        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} auto={autoApply && !busy} onAsk={onAsk} askDisabled={busy} />}
+        {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} auto={autoApply && !busy} onAsk={onAsk} askDisabled={busy} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

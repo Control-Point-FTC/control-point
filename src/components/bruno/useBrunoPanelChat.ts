@@ -18,6 +18,7 @@ import { resultLinks, type ResultLink } from './resultLinks';
 import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
 import type { ScoutingContextRequest } from '../../types/ftcScout';
 import type { BrunoChat, BrunoChatMessage } from '../../types/bruno';
+import { readAutoApply } from './autoApply';
 import { notify } from '../dialog';
 import { starterPoolForPath, nextStarters } from '../brunoStarters';
 import { thinkingSteps, type ThinkingStep } from './BrunoThinking';
@@ -320,7 +321,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
       // "Turn on light mode": a finished reply's appearance block switches the theme here.
       applyAppearanceFromReply(agg);
-      if (agg.trim()) put<number | null>('bruno-panel:fresh', replyIndex);
+      // Eligible for Auto-apply only if the switch was on when it finished; turning it on later never applies it.
+      put<number | null>('bruno-panel:fresh', agg.trim() && readAutoApply() ? replyIndex : null);
     } catch (e: any) {
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       if (e?.name === 'AbortError') {

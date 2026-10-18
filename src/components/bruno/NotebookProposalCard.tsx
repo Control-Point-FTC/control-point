@@ -28,12 +28,14 @@ function cardMemory(identity: string) {
 /** `scope` identifies the reply this card belongs to (its position and text).
  *  The receipt and outcome are kept per reply for the tab's session, so
  *  closing and reopening the chat never confirms the same change twice. */
-export function NotebookProposalCard({ ops, scope, auto = false, onAsk }: {
+export function NotebookProposalCard({ ops, scope, auto = false, onAsk, askDisabled = false }: {
   ops: Record<string, unknown>[]; scope: string;
   /** Auto-apply is on and this reply just finished: apply without the click (never a deletion). */
   auto?: boolean;
   /** Sends a message in this chat (the redo button when the page moved under the card). */
   onAsk?: (text: string) => void;
+  /** Bruno is still answering: the redo message would be dropped, so wait. */
+  askDisabled?: boolean;
 }) {
   const opsKey = JSON.stringify(ops);
   // A card is either page changes or the member's own sticky notes.
@@ -60,7 +62,8 @@ export function NotebookProposalCard({ ops, scope, auto = false, onAsk }: {
   const blocked = !!previews?.some(p => p.error);
   const destructive = !!previews?.some(p => p.destructive);
   // The page changed after Bruno read it (its block ids are stale): Bruno can read it again and redo it.
-  const moved = !!previews?.some(p => /changed or was removed/.test(p.error ?? ''));
+  // Found at preview, or only when applying (a teammate edited the page in between).
+  const moved = /changed or was removed/.test(state.error ?? '') || !!previews?.some(p => /changed or was removed/.test(p.error ?? ''));
   const [autoTried, setAutoTried] = useState(false);
   useEffect(() => {
     if (!auto || autoTried || state.status !== 'pending' || !previews || blocked || destructive) return;
@@ -108,7 +111,7 @@ export function NotebookProposalCard({ ops, scope, auto = false, onAsk }: {
           </div>
         ))}
         {moved && onAsk && (
-          <Button size="sm" variant="outline" onClick={() => { setState({ status: 'dismissed' }); onAsk('That part of the page changed since you read it. Read the page again and redo that change.'); }}>Ask Bruno to redo it</Button>
+          <Button size="sm" variant="outline" disabled={askDisabled} title={askDisabled ? 'Wait for Bruno to finish answering' : undefined} onClick={() => { setState({ status: 'dismissed' }); onAsk('That part of the page changed since you read it. Read the page again and redo that change.'); }}>Ask Bruno to redo it</Button>
         )}
         {destructive && !blocked && (
           <label className="flex items-center gap-2 text-sm">
