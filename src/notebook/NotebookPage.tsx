@@ -101,7 +101,6 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<(NotebookPageItem & { snippet: string })[]>([]);
   const [searching, setSearching] = useState(false);
-  const [filter, setFilter] = useState('all');
   const starKey = `cp-notebook-stars:${memberId}:${teamId}`;
   const collapsedKey = `cp-notebook-open:${memberId}:${teamId}`;
   const [stars, setStars] = useState(() => readPreference(starKey));
@@ -275,7 +274,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
           openKeys.add(`notebook:${target.notebookId}`);
         }
         const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
-        setFilter('all'); setQuery(''); // filtered/search views do not render inline rename
+        setQuery(''); // search results do not render inline rename
         if (writingFocus) { skipFocusReturn.current = true; setWritingFocus(false); }
         if (kind === 'page') {
           setParams({ page: String(created) });
@@ -602,7 +601,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile && <div className="nb-navigation-row"><button ref={focusEntry} aria-label="Expand writing space" title="Hide sections and pages" aria-expanded={!writingFocus} onClick={() => setWritingFocus(true)}><PanelLeft size={18} /></button><span>Notebooks</span>{navigationLayout !== 'tabs' && <NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} />}</div>}
     <div className="nb-search"><Search size={16} /><input aria-label="Search notebook titles and typed text" placeholder="Search notes…" value={query} onChange={e => setQuery(e.target.value)} /></div>
     <div className="nb-tree-scroll">
-      {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : filter !== 'all' ? <>{(filter === 'starred' ? tree?.pages.filter(p => stars.includes(p.id)) : [...(tree?.pages ?? [])].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30))?.map(p => <div key={p.id} className="nb-tree-row" data-cm-row-root=""><button className="nb-tree-label" onClick={() => { void pick(p.id); }}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} />}</button>{options('page', p)}</div>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
+      {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
         <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
         {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
           <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{(tabRename ? null : renameInput('section', section)) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span className={tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) ? 'nb-unread' : undefined}>{section.title}</span>{tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) && <span className="nb-unread-dot" title="Has unread changes"><span className="sr-only">Has unread changes</span></span>}{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
