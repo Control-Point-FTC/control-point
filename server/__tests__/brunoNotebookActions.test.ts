@@ -196,7 +196,7 @@ describe("confirmed Bruno notebook writes", () => {
     const previews = await previewNotebookOps(store, me(admin), parseNotebookOps([{ op: "rename", page: secret.id, title: "x" }, { op: "replace", page: open.id, block: "p2", markdown: "New second" }]));
     expect(JSON.stringify(previews)).not.toContain("Hidden roadmap");
     expect(previews[0].error).toBeTruthy();
-    expect(previews[1]).toMatchObject({ summary: 'Rewrite part of "Visible"', before: "[#p2] Second line", after: expect.stringContaining("New second") });
+    expect(previews[1]).toMatchObject({ summary: 'Rewrite part of "Visible"', before: "Second line", after: expect.stringContaining("New second") });
   });
 
   it("honours protection added after the preview", async () => {

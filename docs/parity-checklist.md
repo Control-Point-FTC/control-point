@@ -141,10 +141,10 @@ Source: the owner's private competitor teardown (2026-10-15/16, built from the c
 
 ### PR 3.2: Journal and Board views
 - [x] Book/section/page tree
-- [ ] Journal view: entries grouped by week ("This week", "Last week"), cards with excerpt, photos, chips, authors
+- [~] Journal view: entries grouped by week ("This week", "Last week"), cards with excerpt, photos, chips, authors (all but photos)
 - [ ] Board view: kanban by subsystem, drag to retag, "New entry in X" per column, Alt+arrow move
-- [ ] Awards view: entries grouped by award
-- [ ] Filters by type/stage/subsystem/author/season
+- [x] Awards view: entries grouped by award
+- [~] Filters by type/stage/subsystem/author/season (all but season)
 
 ### PR 3.3: Templates
 - [x] Blank, meeting, to-do, engineering log, design review

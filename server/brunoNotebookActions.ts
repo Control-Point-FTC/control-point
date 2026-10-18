@@ -21,13 +21,17 @@ export type NotebookOp =
   | { op: "rename"; page: number; title: string }
   | { op: "move"; page: number; section?: number; parent?: number | null }
   | { op: "delete"; page: number }
+  /** Rows added to the end of an existing table ("table": its block id; omitted = the page's only table). */
+  | { op: "add_rows"; page: number; table?: string; rows: string[][] }
   /** Entry metadata: only the fields given change (null clears one). */
   | { op: "tag"; page: number; meta: Record<string, unknown> };
 
 export const MAX_NOTEBOOK_OPS = 10;
 /** Most blocks one rewrite may replace. */
 export const MAX_RUN = 40;
-const OPS = ["create", "append", "replace", "rename", "move", "delete", "tag"] as const;
+const OPS = ["create", "append", "replace", "rename", "move", "delete", "tag", "add_rows"] as const;
+/** Most rows, columns and characters per cell one add_rows may write. */
+export const MAX_ROWS = 50, MAX_COLUMNS = 20, MAX_CELL = 2000;
 const META_KEYS: Record<string, string> = { workDate: "workDate", work_date: "workDate", type: "type", stage: "stage", subsystems: "subsystems", awards: "awards" };
 const bad = (msg: string) => new NotebookError(msg, 400);
 const posInt = (v: unknown) => { const n = Number(v); return Number.isSafeInteger(n) && n > 0 ? n : undefined; };
@@ -41,6 +45,26 @@ const markdownOf = (v: unknown, required: boolean) => {
   try { markdownToNotebookBlocks(v); } catch (e) { if (e instanceof MarkdownTooLargeError) throw bad(e.message); throw e; }
   return v;
 };
+
+/** Markdown that is only table rows ("| a | b |" lines, no header separator): rows meant for an
+ *  existing table. Appended as text they'd become a stray "| a | b |" paragraph. */
+export function pipeRowsOnly(markdown: string): string[][] | null {
+  const lines = markdown.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length || lines.some(l => !/^\|.*\|$/.test(l) || l.length < 3)) return null;
+  if (lines.some(l => /^\|(\s*:?-+:?\s*\|)+$/.test(l))) return null; // a whole new table, header and all (any GFM separator)
+  return lines.map(l => l.slice(1, -1).split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, "|")));
+}
+function rowsOf(raw: unknown): string[][] {
+  if (!Array.isArray(raw) || !raw.length || raw.length > MAX_ROWS) throw bad(`Add 1–${MAX_ROWS} table rows at a time`);
+  return raw.map(row => {
+    if (!Array.isArray(row) || !row.length || row.length > MAX_COLUMNS) throw bad(`A table row has 1–${MAX_COLUMNS} cells`);
+    return row.map(c => {
+      const cell = typeof c === "number" ? String(c) : c;
+      if (typeof cell !== "string" || cell.length > MAX_CELL) throw bad(`A table cell is text up to ${MAX_CELL.toLocaleString()} characters`);
+      return cell.replace(/\s*\n\s*/g, " ").trim();
+    });
+  });
+}
 
 /** Validate a proposal's operations. Anything malformed rejects the whole card. */
 export function parseNotebookOps(items: unknown): NotebookOp[] {
@@ -58,10 +82,17 @@ export function parseNotebookOps(items: unknown): NotebookOp[] {
         return { op: "create", title, ...(posInt(raw.section) ? { section: posInt(raw.section) } : {}), ...(posInt(raw.parent) ? { parent: posInt(raw.parent) } : {}),
           ...(raw.template ? { template: raw.template } : {}), ...(raw.markdown ? { markdown: markdownOf(raw.markdown, false) } : {}) };
       }
+      case "add_rows": {
+        if (raw.table !== undefined && !blockId(raw.table)) throw bad("Invalid table block id");
+        return { op: "add_rows", page: page!, ...(raw.table ? { table: raw.table } : {}), rows: rowsOf(raw.rows) };
+      }
       case "append": {
         const markdown = markdownOf(raw.markdown, true);
         if (!markdown.trim()) throw bad("Nothing to add");
         if (raw.after !== undefined && !blockId(raw.after)) throw bad("Invalid block id");
+        // "| motor | 2 | $79.98 |" on its own is a row for a table on the page, not a paragraph.
+        const rows = pipeRowsOnly(markdown);
+        if (rows) return { op: "add_rows", page: page!, ...(raw.after ? { table: raw.after } : {}), rows: rowsOf(rows) };
         return { op: "append", page: page!, markdown, ...(raw.after ? { after: raw.after } : {}) };
       }
       case "replace": {
@@ -144,6 +175,42 @@ export function locateRange(doc: PMNode, block: string, blocks?: string[]) {
   return { siblings: at.siblings, index: at.index, count: ids.length };
 }
 
+/** Every table on the page, however deep (inside a quote or a list item too). */
+function allTables(node: PMNode, out: PMNode[] = []): PMNode[] {
+  for (const n of node.content ?? []) { if (n.type === "table") out.push(n); else allTables(n, out); }
+  return out;
+}
+/** The table rows go into: the named table (or the table holding the named block), else the page's only table. */
+export function findTable(doc: PMNode, table?: string): PMNode {
+  const tables = allTables(doc);
+  if (table) {
+    const hit = tables.find(t => t.attrs?.id === table || !!locate(t, table));
+    if (hit) return hit;
+    if (!locate(doc, table)) throw changed();
+    throw bad("That block isn't a table. Ask Bruno to read the page again and pick the table.");
+  }
+  if (tables.length === 1) return tables[0];
+  throw bad(tables.length ? `This page has ${tables.length} tables. Ask Bruno which one to add the rows to.` : "This page has no table to add rows to.");
+}
+const escapeCell = (c: string) => c.replace(/\|/g, "\\|");
+/** How many columns a table has: the widest row, counting what merged cells span. */
+export function tableWidth(table: PMNode): number {
+  return Math.max(1, ...(table.content ?? []).map(r => (r.content ?? []).reduce((n, c) => n + Math.max(1, Number(c.attrs?.colspan) || 1), 0)));
+}
+/** Notebook table rows (fresh ids) for cells written as Markdown, padded to the table's width. */
+export function tableRows(width: number, rows: string[][]): PMNode[] {
+  if (rows.some(r => r.length > width)) throw bad(`That table has ${width} column${width === 1 ? "" : "s"}; a row has more cells than that.`);
+  const md = [`|${" x |".repeat(width)}`, `|${" --- |".repeat(width)}`, ...rows.map(r => `| ${Array.from({ length: width }, (_, i) => escapeCell(r[i] ?? "")).join(" | ")} |`)].join("\n");
+  const [built] = markdownToNotebookBlocks(md);
+  return (built?.content ?? []).slice(1);
+}
+export function addTableRows(doc: PMNode, rows: string[][], table?: string): PMNode {
+  const node = findTable(doc, table);
+  node.content = node.content ?? [];
+  node.content.push(...tableRows(tableWidth(node), rows));
+  return doc;
+}
+
 export function replaceBlock(doc: PMNode, block: string, markdown: string, run?: string[]): PMNode {
   const at = locateRange(doc, block, run);
   if (!at) throw changed();
@@ -158,6 +225,8 @@ export function replaceBlock(doc: PMNode, block: string, markdown: string, run?:
 
 const bruno = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno" });
 const confirmed = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno_confirmed" });
+/** Card text: what members read, without the [#block-id] markers Bruno reads pages with. */
+const NO_IDS = { ids: false };
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 // The card shows everything a change writes (bounded by the input limit).
@@ -191,7 +260,7 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       const where = destination(tree, op);
       const target = section(where.sectionId) ?? (where.error ? undefined : tree.sections[0]);
       if (!target) { out.push({ op: "create", summary: `New page "${clip(op.title, 80)}"`, error: where.error ?? "There is no notebook section to add a page to." }); continue; }
-      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
+      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT, NO_IDS).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
       out.push({ op: "create", summary: `New page "${clip(op.title, 80)}" in ${clip(target.title, 60)}${op.parent ? ` under "${clip(pageTitle(op.parent), 60)}"` : ""}`, ...(body ? { after: body } : {}) });
       continue;
     }
@@ -206,6 +275,17 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       out.push("error" in c ? { op: "tag", summary: `Tag ${name}`, error: c.error } : { op: "tag", summary: `Tag ${name}: ${entryMetaSummary(c.patch)}` });
     }
     else if (op.op === "delete") out.push({ op: "delete", summary: `Move ${name} and its subpages to the trash (restorable from Trash)`, destructive: true });
+    else if (op.op === "add_rows") {
+      const summary = `Add ${op.rows.length} row${op.rows.length === 1 ? "" : "s"} to the table in ${name}`;
+      try {
+        const page = await store.page(bruno(ctx), op.page);
+        const node = findTable(page.content as PMNode, op.table);
+        const rows = tableRows(tableWidth(node), op.rows).map(r => (r.content ?? []).map(c => renderNotebookText({ type: "doc", content: c.content ?? [] }, {}, MAX_CELL + 50, NO_IDS).text.replace(/\s+/g, " ").trim()).join(" | "));
+        out.push({ op: "add_rows", summary, after: rows.join("\n") });
+      } catch (e) {
+        out.push({ op: "add_rows", summary, error: e instanceof NotebookError && e.status !== 404 && e.status !== 403 ? e.message : "This page isn't available to Bruno." });
+      }
+    }
     else if (op.op === "move") {
       const where = destination(tree, op);
       const to = op.parent ? pageTitle(op.parent) : where.sectionId ? section(where.sectionId)?.title : undefined;
@@ -214,13 +294,13 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
     } else {
       let page;
       try { page = await store.page(bruno(ctx), op.page); } catch { out.push(unavailable(op.op)); continue; }
-      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text;
+      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT, NO_IDS).text;
       if (op.op === "append") out.push({ op: "append", summary: `Add to ${name}`, after: added });
       else {
         const at = locateRange(page.content as PMNode, op.block, op.blocks);
         if (!at) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part of the page changed or was removed." }); continue; }
         // Everything removed must be reviewable on the card.
-        const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT);
+        const before = renderNotebookText({ type: "doc", content: at.siblings.slice(at.index, at.index + at.count) }, {}, PREVIEW_LIMIT, NO_IDS);
         if (before.truncated) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part is too long to review in one card. Ask Bruno to rewrite it in smaller parts." }); continue; }
         out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: before.text, ...(added ? { after: added } : {}), destructive: !added });
       }
@@ -251,6 +331,9 @@ export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContex
       } else if (op.op === "append" || op.op === "replace") {
         const page = await store.mergeEdit(as, op.page, { transform: doc => op.op === "append" ? appendBlocks(doc, op.markdown, op.after) : replaceBlock(doc, op.block, op.markdown, op.blocks) });
         results.push({ op: op.op, pageId: page.id, title: page.title });
+      } else if (op.op === "add_rows") {
+        const page = await store.mergeEdit(as, op.page, { transform: doc => addTableRows(doc, op.rows, op.table) });
+        results.push({ op: "add_rows", pageId: page.id, title: page.title });
       } else if (op.op === "tag") {
         await store.saveEntryMeta(as, op.page, op.meta);
         const page = await store.page(as, op.page);

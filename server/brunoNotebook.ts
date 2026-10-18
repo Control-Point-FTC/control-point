@@ -59,13 +59,14 @@ function block(node: PMNode, depth: number, out: string[]) {
 
 /** Typed page text as Markdown-ish lines, each top-level block prefixed with
  *  its stable id so a later confirmed edit can target it. */
-export function renderNotebookText(content: unknown, canvas: unknown, limit = PAGE_TEXT_LIMIT): { text: string; truncated: boolean } {
+/** `ids: false` leaves out the [#block-id] markers (for text a member reads, like a confirm card). */
+export function renderNotebookText(content: unknown, canvas: unknown, limit = PAGE_TEXT_LIMIT, opts: { ids?: boolean } = {}): { text: string; truncated: boolean } {
   const lines: string[] = [];
   const doc = content as PMNode;
   for (const node of (doc && Array.isArray(doc.content) ? doc.content : [])) {
     const body: string[] = [];
     block(node, 0, body);
-    const id = node.attrs?.id ? `[#${String(node.attrs.id).slice(0, 40)}] ` : "";
+    const id = node.attrs?.id && opts.ids !== false ? `[#${String(node.attrs.id).slice(0, 40)}] ` : "";
     if (body.length) lines.push(id + body[0], ...body.slice(1));
   }
   const objects = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects : [];
@@ -75,8 +76,9 @@ export function renderNotebookText(content: unknown, canvas: unknown, limit = PA
   return text.length > limit ? { text: `${text.slice(0, limit)}\n… (page continues; the rest is not shown)`, truncated: true } : { text, truncated: false };
 }
 
-export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_reviews";
-export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number }
+export type NotebookLookupKind = "notebook" | "notebook_page" | "notebook_outline" | "notebook_journal" | "notebook_reviews";
+export interface NotebookLookup { kind: NotebookLookupKind; query?: string; page?: number; from?: string; to?: string }
+const JOURNAL_LIMIT = 60;
 
 const clip = (s: unknown, n: number) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -100,6 +102,18 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
       ? `page #${r.page_id} ${JSON.stringify(clip(r.title, 120))}: waiting for review since ${day(r.requested_at)} (asked by ${clip(r.requested_by_name ?? "a member", 60)}${r.note ? `: ${JSON.stringify(clip(r.note, 200))}` : ""})`
       : `page #${r.page_id} ${JSON.stringify(clip(r.title, 120))}: ${r.status === "approved" ? "approved" : "changes requested"} by ${clip(r.reviewer_name ?? "a reviewer", 60)} on ${day(r.reviewed_at)}${r.comment ? `: ${JSON.stringify(clip(r.comment, 200))}` : ""}`);
     return { lines, more: rows.length > 60, ids: rows.slice(0, 60).map((r: any) => `page:${r.page_id}`) };
+  }
+  if (q.kind === "notebook_journal") {
+    // Entries newest first by when the work happened, with their details and authors.
+    // Dates and words are matched in the database against the full page text.
+    const { entries: shown, more } = await store.journal(bruno(ctx), { from: q.from, to: q.to, query: q.query, limit: JOURNAL_LIMIT });
+    const lines = shown.map(e => {
+      const details = entryMetaSummary(Object.fromEntries(Object.entries({ type: e.type, stage: e.stage, subsystems: e.subsystems, awards: e.awards })
+        .filter(([, v]) => v !== null && !(Array.isArray(v) && !v.length))));
+      return `page #${e.id} ${JSON.stringify(clip(e.title, 120))} ${e.date}${e.workDate ? " (work date)" : ""}${details ? ` · ${details}` : ""}${e.authors.length ? ` · by ${e.authors.slice(0, 6).join(", ")}` : ""}: ${JSON.stringify(clip(e.excerpt, 140))}`;
+    });
+    // No matches is no rows, so the lookup reads as "none found", never "1 found".
+    return { lines, more, ids: shown.map(e => `page:${e.id}`) };
   }
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
