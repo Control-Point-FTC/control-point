@@ -89,10 +89,11 @@ describe('notebook hierarchy controls', () => {
       const label = (await screen.findAllByText(name))[0];
       expect(rowMenuTrigger(label)?.getAttribute('aria-label')).toBe(`Actions for ${name}`);
     }
-    // Recent and Pinned list pages without the tree around them; same menu.
-    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
-    const recent = (await screen.findAllByText('Drive'))[0];
-    expect(rowMenuTrigger(recent)?.getAttribute('aria-label')).toBe('Actions for Drive');
+  });
+  it('the explorer has no Notebooks/Recent/Pinned switch or Expand all/Collapse all row', async () => {
+    mount(); await screen.findByRole('button', { name: 'Build' });
+    for (const name of ['Recent', 'Pinned', 'Expand all', 'Collapse all']) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Notebook page filter' })).toBeNull();
   });
   it('falls back to a surviving section after the selected empty section disappears', async () => {
     const tree = mount('/notebook', true);
@@ -116,15 +117,13 @@ describe('notebook hierarchy controls', () => {
     expect(document.activeElement).toBe(input);
     expect(screen.getByRole('complementary', { name: 'Pages in selected section' })).toBeTruthy();
   });
-  it('creates from the header in the chosen empty section and leaves filtered views for naming', async () => {
+  it('creates from the header in the chosen empty section', async () => {
     mount('/notebook', true); fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Drive' })).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
     fireEvent.click(screen.getByRole('button', { name: 'New page' }));
     await screen.findByRole('textbox', { name: 'Rename page' });
     const post = vi.mocked(apiJson).mock.calls.find(([p, o]) => p === '/api/notebook/pages' && o?.method === 'POST')!;
     expect(JSON.parse(String(post[1]?.body)).sectionId).toBe(4);
-    expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true');
   });
   it('retains the mobile rename and draft after failure, then closes it after retry', async () => {
     const user = userEvent.setup();
@@ -307,7 +306,10 @@ describe('notebook hierarchy controls', () => {
     expect(JSON.parse(localStorage.getItem('cp-notebook-open:10:20')!)).toEqual(['section:1']);
     fireEvent.click(screen.getByRole('button', { name: 'Robot notes' }));
     expect(JSON.parse(localStorage.getItem('cp-notebook-open:10:20')!)).toEqual(['section:1', 'notebook:1']);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand all' }));
+    // Each row reopens on its own (there is no Expand all).
+    fireEvent.click(screen.getByRole('button', { name: 'Robot notes' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Build' }), { key: 'ArrowRight' });
+    expect(JSON.parse(localStorage.getItem('cp-notebook-open:10:20')!)).toEqual([]);
     expect(screen.getByRole('button', { name: 'Motor tests' })).toBeTruthy();
   });
   it('renames inline with F2 and Enter without clearing the section color', async () => {
