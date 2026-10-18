@@ -82,6 +82,15 @@ describe("block edits", () => {
     expect(() => replaceBlock(d, "h", "x", ["h", "gone"])).toThrow(/changed or was removed/);
     expect(() => replaceBlock(d, "tail", "x", ["tail", "h"])).toThrow(/changed or was removed/);
   });
+  it("a run spans the blank lines between its blocks (Bruno never sees their ids) and replaces them too", () => {
+    const blank = (id: string) => ({ type: "paragraph", attrs: { id } });
+    const d: any = doc(para("h", "Bill of Materials"), blank("e1"), para("t", "| Item | Qty |"), blank("e2"), { type: "paragraph", attrs: { id: "e3" }, content: [{ type: "hardBreak" }] }, para("s", "Subtotal $5"), para("tail", "Keep me"));
+    replaceBlock(d, "h", "New table", ["h", "t", "s"]);
+    expect(d.content.map((b: any) => b.attrs?.id)).toEqual(["h", "tail"]);
+    // A real block in between still means the page changed.
+    const d2: any = doc(para("a", "A"), blank("e"), para("x", "Teammate's line"), para("b", "B"));
+    expect(() => replaceBlock(d2, "a", "x", ["a", "b"])).toThrow(/changed or was removed/);
+  });
   it("refuses a run that gained a block after it was reviewed", () => {
     const d: any = doc(para("a", "A"), para("new", "Added by a teammate"), para("b", "B"));
     expect(() => replaceBlock(d, "a", "x", ["a", "b"])).toThrow(/changed or was removed/);

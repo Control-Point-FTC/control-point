@@ -28,7 +28,15 @@ function cardMemory(identity: string) {
 /** `scope` identifies the reply this card belongs to (its position and text).
  *  The receipt and outcome are kept per reply for the tab's session, so
  *  closing and reopening the chat never confirms the same change twice. */
-export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unknown>[]; scope: string }) {
+export function NotebookProposalCard({ ops, scope, auto = false, onAsk, askDisabled = false }: {
+  ops: Record<string, unknown>[]; scope: string;
+  /** Auto-apply is on and this reply just finished: apply without the click (never a deletion). */
+  auto?: boolean;
+  /** Sends a message in this chat (the redo button when the page moved under the card). */
+  onAsk?: (text: string) => void;
+  /** Bruno is still answering: the redo message would be dropped, so wait. */
+  askDisabled?: boolean;
+}) {
   const opsKey = JSON.stringify(ops);
   // A card is either page changes or the member's own sticky notes.
   const sticky = ops.length > 0 && ops.every(isStickyOp);
@@ -51,9 +59,18 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
     return () => abort.abort();
   }, [opsKey]);
 
-  if (state.status === 'dismissed') return null;
   const blocked = !!previews?.some(p => p.error);
   const destructive = !!previews?.some(p => p.destructive);
+  // The page changed after Bruno read it (its block ids are stale): Bruno can read it again and redo it.
+  // Found at preview, or only when applying (a teammate edited the page in between).
+  const moved = /changed or was removed/.test(state.error ?? '') || !!previews?.some(p => /changed or was removed/.test(p.error ?? ''));
+  const [autoTried, setAutoTried] = useState(false);
+  useEffect(() => {
+    if (!auto || autoTried || state.status !== 'pending' || !previews || blocked || destructive) return;
+    setAutoTried(true);
+    void confirm();
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+  if (state.status === 'dismissed') return null;
   const confirm = async () => {
     setState({ status: 'confirming' });
     try {
@@ -70,7 +87,7 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
     const pages = [...new Map(results.filter(r => r.op !== 'delete' && r.pageId).map(r => [r.pageId, r])).values()];
     return (
       <div className="mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success" role="status">
-        <p className="flex items-center gap-2"><Check className="size-4" /> {sticky ? 'Sticky notes' : 'Notebook'} updated ({results.length} {results.length === 1 ? 'change' : 'changes'}).</p>
+        <p className="flex items-center gap-2"><Check className="size-4" /> {sticky ? 'Sticky notes' : 'Notebook'} updated ({results.length} {results.length === 1 ? 'change' : 'changes'}){autoTried ? ' automatically' : ''}.</p>
         {pages.length > 0 && <p className="mt-1 flex flex-wrap gap-x-3">{pages.map(r => <Link key={r.pageId} className="underline" to={`/notebook/p/${r.pageId}`}>Open “{r.title}”</Link>)}</p>}
         {sticky && results.some(r => r.op !== 'sticky_delete') && <p className="mt-1"><button type="button" className="underline" onClick={() => setStickyNotesOpen(true)}>Open sticky notes</button></p>}
       </div>
@@ -93,6 +110,9 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
             {p.after && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted px-2 py-1 text-xs">{p.after}</pre>}
           </div>
         ))}
+        {moved && onAsk && (
+          <Button size="sm" variant="outline" disabled={askDisabled} title={askDisabled ? 'Wait for Bruno to finish answering' : undefined} onClick={() => { setState({ status: 'dismissed' }); onAsk('That part of the page changed since you read it. Read the page again and redo that change.'); }}>Ask Bruno to redo it</Button>
+        )}
         {destructive && !blocked && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={deleteOk} onChange={e => setDeleteOk(e.target.checked)} />

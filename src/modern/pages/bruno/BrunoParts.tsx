@@ -12,6 +12,7 @@ import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, proposalVerb, type ProposalStatus } from '../../../components/ActionProposalCard';
+import { itemRemoves } from '../../../components/bruno/autoApply';
 import { useProposalContext, useTaskIndex } from '../../../services/proposalContext';
 import { extractNotebookOps, extractStickyOps } from '../../../services/notebookProposals';
 import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
@@ -160,7 +161,11 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, l
 }
 
 /** One complete Bruno reply. Memoized: parsing runs once per distinct text. */
-export const BrunoReply = memo(function BrunoReply({ conversation, text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch, think }: {
+export const BrunoReply = memo(function BrunoReply({ conversation, text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch, think, autoApply = false, onAsk }: {
+  /** Auto-apply is on and this reply just finished here: apply its changes without the click (never deletions). */
+  autoApply?: boolean;
+  /** Send a message in this chat (used by a card's "Ask Bruno to redo it"). */
+  onAsk?: (text: string) => void;
   /** Conversation identity for notebook proposal cards (see conversationScope). */
   conversation: string;
   text: string; index: number; isLastModel: boolean; busy: boolean;
@@ -175,6 +180,14 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   const notebookOps = useMemo(() => (text ? extractNotebookOps(text) : []), [text]);
   const stickyOps = useMemo(() => (text ? extractStickyOps(text) : []), [text]);
   const status = proposal?.status || 'pending';
+  // Auto-apply: confirm once, and only cards that don't delete or remove anything.
+  const removes = proposals.some((p) => KIND_META[p.kind]?.destructive || (p.items ?? []).some(itemRemoves));
+  const autoDone = useRef(false);
+  useEffect(() => {
+    if (!autoApply || autoDone.current || busy || !proposals.length || removes || status !== 'pending') return;
+    autoDone.current = true;
+    onConfirmProposals(index, proposals);
+  }, [autoApply, busy, proposals, removes, status, index, onConfirmProposals]);
   return (
     <div className="flex gap-3">
       <BrunoAvatar className="mt-0.5" />
@@ -184,8 +197,8 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} links={proposal?.links} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
-        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} />}
-        {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} />}
+        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} auto={autoApply && !busy} onAsk={onAsk} askDisabled={busy} />}
+        {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} auto={autoApply && !busy} onAsk={onAsk} askDisabled={busy} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

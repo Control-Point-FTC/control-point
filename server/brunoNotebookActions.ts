@@ -171,8 +171,21 @@ export function locateRange(doc: PMNode, block: string, blocks?: string[]) {
   const at = locate(doc, block);
   if (!at) return null;
   const ids = blocks ?? [block];
-  if (ids[0] !== block || ids.some((id, i) => at.siblings[at.index + i]?.attrs?.id !== id)) return null;
-  return { siblings: at.siblings, index: at.index, count: ids.length };
+  if (ids[0] !== block) return null;
+  // Blank lines between the listed blocks never appear in what Bruno reads (they have no
+  // text, so no [#id]); they belong to the run and go with it. Any other block in between
+  // still means the page changed.
+  let j = at.index;
+  for (let i = 1; i < ids.length; i++) {
+    j++;
+    while (j < at.siblings.length && at.siblings[j]?.attrs?.id !== ids[i] && isBlankLine(at.siblings[j])) j++;
+    if (at.siblings[j]?.attrs?.id !== ids[i]) return null;
+  }
+  return { siblings: at.siblings, index: at.index, count: j - at.index + 1 };
+}
+/** A paragraph with no visible text (what an empty line in the editor is). */
+function isBlankLine(n?: PMNode): boolean {
+  return !!n && n.type === "paragraph" && !(n.content ?? []).some(c => c.type !== "hardBreak" && (c.type !== "text" || !!String(c.text ?? "").trim()));
 }
 
 /** Every table on the page, however deep (inside a quote or a list item too). */

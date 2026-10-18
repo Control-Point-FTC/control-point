@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowUpRight, BookOpen, Check, ChevronDown, ExternalLink, History, Lightbulb, Maximize2, Plus, RefreshCw, X } from 'lucide-react';
 import { chatTimeAgo } from '../components/bruno/chatTime';
+import { useBrunoAutoApply } from '../components/bruno/autoApply';
 import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui-kit';
 import BrunoPanel from '../components/BrunoPanel';
 import { BRUNO_TITLE } from '../components/brunoStarters';
@@ -85,7 +86,8 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
   const firstName = String(currentUser?.name || '').trim().split(/\s+/)[0];
   const empty = c.messages.length === 0;
 
-  const lengthPicker = (
+  const [autoApply, setAutoApply] = useBrunoAutoApply();
+  const lengthPicker = (<>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-1 rounded-full px-2.5 text-muted-foreground max-sm:h-11" aria-label="Bruno output length">
@@ -102,7 +104,12 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
+    {/* Auto-apply: Bruno's changes happen without the confirm click (deletions still ask). */}
+    <Button variant="ghost" size="sm" role="switch" aria-checked={autoApply} title={autoApply ? 'Bruno applies its changes without asking (deletions still ask)' : 'Bruno asks before changing anything'}
+      className={`gap-1.5 rounded-full px-2.5 max-sm:h-11 ${autoApply ? 'bg-accent/15 text-foreground' : 'text-muted-foreground'}`} onClick={() => setAutoApply(!autoApply)}>
+      <span aria-hidden className={`inline-block size-2 rounded-full ${autoApply ? 'bg-accent' : 'bg-muted-foreground/40'}`} /> Auto-apply
+    </Button>
+  </>);
 
   // Rendered at the app root (outside the shell), so it brings its own provider.
   return (
@@ -219,6 +226,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                       proposal={c.proposalState[i]} switchDismissed
                       onConfirmProposals={c.confirmProposals} onDismissProposal={c.dismissProposal}
                       onSwitchToBruno={() => {}} onDismissSwitch={() => {}}
+                      autoApply={autoApply && i === c.freshIndex} onAsk={(t) => void c.send(t)}
                     />
                   );
                 })}
