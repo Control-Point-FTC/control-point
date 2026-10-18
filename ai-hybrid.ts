@@ -27,6 +27,8 @@ import {
   type ChatMessage,
 } from "./ai.js";
 import { anthropicSources, dedupeSources, type WebSource } from "./server/webSources.js";
+import { anthropicInputTokens, estimateTokens, fitToWindow, isInputTooLarge, type InlineAttachment } from "./server/brunoInput.js";
+import { typedText } from "./src/utils/brunoFiles.js";
 
 /** Claude's API root; ANTHROPIC_API_BASE points it elsewhere (tests only). */
 const anthropicApiBase = () => process.env.ANTHROPIC_API_BASE || "https://api.anthropic.com/v1";
@@ -149,14 +151,20 @@ export function routeChatRequest(opts: {
   /** Never search the web (system writing jobs that must use only the facts they are given). */
   offline?: boolean;
 }): RouteDecision {
-  // Vision requests stay on Gemini — that path is tested and working.
+  const web = opts.offline ? "" : opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
+  // Images and PDFs: Gemini reads them (the free primary); Claude does too,
+  // when the owner chose it or Gemini isn't set up. Only an explicit web
+  // check (a lookup pass) searches alongside the files.
   if (opts.hasImages) {
-    return { provider: "gemini", grounded: false, reason: "image input: Gemini vision path" };
+    const grounded = !opts.offline && opts.webSearch === true;
+    const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
+    return claude
+      ? { provider: "anthropic", grounded, reason: "file input: Claude" }
+      : { provider: "gemini", grounded, reason: "image input: Gemini vision path" };
   }
   // Web questions are grounded. Gemini's google_search is the free default;
   // Claude searches with its own web tools when the owner chose Anthropic or
   // Gemini isn't set up.
-  const web = opts.offline ? "" : opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
   if (web) {
     const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
     return claude
@@ -240,6 +248,8 @@ function isAnthropicFailoverable(err: any): boolean {
 }
 
 function isGeminiFailoverable(err: any): boolean {
+  // Too big for the window is too big for Claude's too: say so, don't retry.
+  if (isInputTooLarge(err)) return false;
   const msg = String(err?.message || err || "");
   return (
     /429/.test(msg) ||
@@ -272,6 +282,20 @@ export function extractAnthropicUsage(data: any): AiUsage | null {
   }
 }
 
+/** A file as a Claude content block: PDFs as documents, the rest as images. */
+export function anthropicBlock(a: InlineAttachment): any {
+  return a.mimeType === "application/pdf"
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: a.data }, ...(a.name ? { title: a.name } : {}) }
+    : { type: "image", source: { type: "base64", media_type: a.mimeType, data: a.data } };
+}
+
+/** A chat message for Claude: files first, then the text. */
+export function anthropicMessage(m: ChatMessage): { role: "user" | "assistant"; content: any } {
+  const role = m.role === "model" ? "assistant" : "user";
+  if (!m.attachments?.length) return { role, content: m.text || " " };
+  return { role, content: [...m.attachments.map(anthropicBlock), { type: "text", text: m.text || " " }] };
+}
+
 /**
  * Call Anthropic's Messages API (not OpenAI-compatible: system is a top-level
  * param, roles are user/assistant, response nests text in content blocks).
@@ -288,14 +312,17 @@ async function callAnthropicChat(opts: {
   webSearch?: boolean;
   onSources?: (s: WebSource[]) => void;
 }): Promise<string> {
+  // Nothing is cut from a message; the oldest turns go first only when the
+  // conversation outgrows Claude's input window (see server/brunoInput.ts).
+  const fitted = fitToWindow(
+    opts.messages.filter((m) => m && (m.text || m.attachments?.length)),
+    { inputTokens: anthropicInputTokens(), fixedTokens: estimateTokens(opts.system), outputTokens: opts.maxTokens },
+  );
   const body: any = {
     model: anthropicModel(),
     max_tokens: opts.maxTokens,
     system: opts.system,
-    messages: opts.messages.map((m) => ({
-      role: m.role === "model" ? "assistant" : "user",
-      content: m.text || " ",
-    })),
+    messages: fitted.map(anthropicMessage),
     // Without this the API answers with one JSON body, which the SSE reader
     // below finds no events in, so streamed fallback replies came back empty.
     stream: opts.stream,
@@ -536,6 +563,33 @@ async function callOpenAIChat(
 
 // --- Unified chat entry ------------------------------------------------------
 
+/** Where aiChat will send this conversation (owner setting + router), so a
+ *  caller can check the request against that provider before sending it. */
+export async function planChatRoute(opts: { messages: ChatMessage[]; webSearch?: boolean; offline?: boolean }): Promise<RouteDecision> {
+  // Routing looks at what the member typed, not the files they attached (a
+  // code file that mentions "price" is not a shopping question).
+  const latestUser = typedText([...opts.messages].reverse().find((m) => m.role === "user")?.text || "");
+  const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
+  const forceProvider =
+    chatProviderSetting === "gemini" ? "gemini"
+    : chatProviderSetting === "anthropic" ? "anthropic"
+    : undefined;
+  return routeChatRequest({
+    text: latestUser,
+    webSearch: opts.webSearch,
+    hasImages: opts.messages.some((m) => (m.attachments?.length || 0) > 0),
+    forceProvider,
+    offline: opts.offline,
+  });
+}
+
+/** The conversation with `files` added to its last user message. */
+export function withAttachments(messages: ChatMessage[], files: InlineAttachment[]): ChatMessage[] {
+  const at = messages.map((m) => m.role).lastIndexOf("user");
+  if (at < 0) return messages;
+  return messages.map((m, i) => (i === at ? { ...m, attachments: [...(m.attachments || []), ...files] } : m));
+}
+
 export interface AIChatResult {
   text: string;
   provider: AIProvider;
@@ -558,7 +612,8 @@ export async function aiChat(opts: {
   webSearch?: boolean;
   /** Never ground on the web, whatever the text looks like (see routeChatRequest). */
   offline?: boolean;
-  images?: { mimeType: string; data: string }[];
+  /** Images and PDFs for the current message (Gemini inline data, Claude blocks). */
+  images?: InlineAttachment[];
   onChunk?: (text: string) => void;
   onUsage?: (u: AiUsage) => void;
   signal?: AbortSignal;
@@ -568,19 +623,9 @@ export async function aiChat(opts: {
   if (!isGeminiConfigured() && !isAnthropicConfigured()) {
     throw new Error("AI not configured: set GEMINI_API_KEY or ANTHROPIC_API_KEY");
   }
-  const latestUser = [...opts.messages].reverse().find((m) => m.role === "user")?.text || "";
-  const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
-  const forceProvider =
-    chatProviderSetting === "gemini" ? "gemini"
-    : chatProviderSetting === "anthropic" ? "anthropic"
-    : undefined;
-  const route = routeChatRequest({
-    text: latestUser,
-    webSearch: opts.webSearch,
-    hasImages: (opts.images?.length || 0) > 0,
-    forceProvider,
-    offline: opts.offline,
-  });
+  // Images and PDFs ride on the member's current (last user) message.
+  const messages: ChatMessage[] = opts.images?.length ? withAttachments(opts.messages, opts.images) : opts.messages;
+  const route = await planChatRoute({ messages, webSearch: opts.webSearch, offline: opts.offline });
   const system = opts.extraSystem
     ? BUILD_HELPER_SYSTEM + "\n\n" + opts.extraSystem
     : BUILD_HELPER_SYSTEM;
@@ -595,7 +640,7 @@ export async function aiChat(opts: {
     try {
       const text = await callAnthropicChat({
         system,
-        messages: opts.messages,
+        messages,
         maxTokens: opts.maxTokens,
         stream: opts.stream,
         onChunk: opts.onChunk,
@@ -616,7 +661,7 @@ export async function aiChat(opts: {
   // (401/400) throw honestly — they indicate a bad key, not spent quota.
   try {
     const text = await buildHelperChat(
-      opts.messages,
+      messages,
       opts.maxTokens,
       opts.onChunk,
       opts.extraSystem,
@@ -637,7 +682,7 @@ export async function aiChat(opts: {
       try {
         const text = await callAnthropicChat({
           system,
-          messages: opts.messages,
+          messages,
           maxTokens: opts.maxTokens,
           stream: opts.stream,
           onChunk: opts.onChunk ? (c: string) => { if (c) shown = true; opts.onChunk!(c); } : undefined,
@@ -655,7 +700,7 @@ export async function aiChat(opts: {
         if (err?.groundingQuota && !shown && !opts.signal?.aborted) {
           console.warn("[AI] Anthropic fallback failed after a grounding 429; answering without web search");
           try {
-            const text = await buildHelperChat(opts.messages, opts.maxTokens, opts.onChunk, opts.extraSystem, opts.onUsage, opts.signal, false, onSources);
+            const text = await buildHelperChat(messages, opts.maxTokens, opts.onChunk, opts.extraSystem, opts.onUsage, opts.signal, false, onSources);
             return { text, provider: "gemini", grounded: false, sources: dedupeSources(sources) };
           } catch (plainErr: any) {
             fail("gemini", plainErr);

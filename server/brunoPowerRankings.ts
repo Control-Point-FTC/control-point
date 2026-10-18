@@ -137,7 +137,8 @@ export function validatePacket(body: any): Check<PowerRankingsPacket> {
   if (!notes.ok) return { ok: false, error: notes.error };
   teams.sort((a, b) => a.rank - b.rank);
   const value: PowerRankingsPacket = { season: body.season, week: body.week, teams, ...(notes.value ? { notes: notes.value } : {}) };
-  // Refused rather than cut off: Bruno's chat path keeps at most MAX_PROMPT_CHARS of a message.
+  // A packet is bounded so one internal request stays small (Bruno's chat
+  // path itself no longer cuts messages; see server/brunoInput.ts).
   if (buildPowerRankingsPrompt(value).length > MAX_PROMPT_CHARS) return { ok: false, error: "packet_too_large" };
   return { ok: true, value };
 }

@@ -11,6 +11,8 @@ export interface BrunoChatMessage {
   role: BrunoRole;
   text: string;
   created_at?: string;
+  /** Images and PDFs saved with the message (text files are in `text`). */
+  attachments?: { id: number; name: string; mimeType: string; size: number; url: string }[];
 }
 
 /** One row from GET /api/bruno/chats (chat columns + owner + count). */

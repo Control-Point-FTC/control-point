@@ -168,7 +168,7 @@ describe("input validation", () => {
     try {
       process.env.GEMINI_API_KEY = "test-key";
       delete process.env.ANTHROPIC_API_KEY;
-      await aiChat({ extraSystem: POWER_RANKINGS_SYSTEM, messages: [{ role: "user", text: prompt, maxChars: MAX_PROMPT_CHARS }], maxTokens: 100, stream: false, offline: true });
+      await aiChat({ extraSystem: POWER_RANKINGS_SYSTEM, messages: [{ role: "user", text: prompt }], maxTokens: 100, stream: false, offline: true });
       const sent = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
       const text = sent.contents.at(-1).parts[0].text as string;
       expect(text).toBe(prompt);

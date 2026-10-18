@@ -125,7 +125,7 @@ describe('when the new chat can’t be started', () => {
 });
 
 describe('giving files back', () => {
-  it('keeps the limits: the sent PDFs first, newer ones that do not fit are left out with a notice', async () => {
+  it('gives every file back (no count limit): the sent ones first, then any added meanwhile', async () => {
     const dialog = await import('../../dialog');
     const notifySpy = vi.spyOn(dialog, 'notify').mockImplementation(() => {});
     let refuse!: () => void;
@@ -134,14 +134,15 @@ describe('giving files back', () => {
       if (url === '/api/bruno/chats' && init?.method === 'POST') return new Promise((r) => { refuse = () => r({ ok: false, json: async () => ({}) }); });
       return ok({});
     });
-    const pdf = (n: number) => ({ name: `p${n}.pdf`, mimeType: 'application/pdf', data: 'x' }) as any;
+    const pdf = (n: number) => ({ kind: 'pdf', name: `p${n}.pdf`, mimeType: 'application/pdf', data: 'x', size: 1 }) as any;
+    const txt = (n: number) => ({ kind: 'text', name: `n${n}.md`, text: '# hi', size: 4 }) as any;
     const { result } = renderHook(() => useBrunoConversation({ currentUser: { id: 7 } }), { wrapper });
-    act(() => result.current.setAttachedPdfs([pdf(1), pdf(2), pdf(3)]));
+    act(() => result.current.setAttachedFiles([pdf(1), pdf(2), pdf(3), txt(1)]));
     let sending!: Promise<void>;
     act(() => { sending = result.current.send('Read these'); });
-    act(() => result.current.setAttachedPdfs([pdf(4), pdf(5), pdf(6), pdf(7)]));
+    act(() => result.current.setAttachedFiles([pdf(4), pdf(5), pdf(6), pdf(7)]));
     await act(async () => { refuse(); await sending; });
-    expect(result.current.attachedPdfs.map((p: any) => p.name)).toEqual(['p1.pdf', 'p2.pdf', 'p3.pdf', 'p4.pdf', 'p5.pdf']);
-    expect(notifySpy).toHaveBeenCalledWith(expect.stringMatching(/2 newer files didn't fit/), 'info');
+    expect(result.current.attachedFiles.map((p: any) => p.name)).toEqual(['p1.pdf', 'p2.pdf', 'p3.pdf', 'n1.md', 'p4.pdf', 'p5.pdf', 'p6.pdf', 'p7.pdf']);
+    expect(notifySpy).not.toHaveBeenCalled();
   });
 });

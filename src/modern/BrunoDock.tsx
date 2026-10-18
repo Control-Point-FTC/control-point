@@ -217,7 +217,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                     </div>
                   </div>
                 ) : c.messages.map((m, i) => {
-                  if (m.role === 'user') return <UserTurn key={i} text={m.text} images={(m as any).images?.length} pdfs={(m as any).pdfs?.length} />;
+                  if (m.role === 'user') return <UserTurn key={i} text={m.text} images={m.images} pdfs={m.pdfs} saved={m.saved} />;
                   const think = c.thinkMeta[i] ?? null;
                   if (c.busy && i === last) return <LiveReply key={i} text={m.text} liveThink={think} />;
                   return (
@@ -236,7 +236,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                 <div className="rounded-2xl shadow-lg shadow-black/5">
                   <BrunoComposer
                     compact value={c.input} onChange={c.setInput} onSend={() => void c.send()} onStop={c.stop} busy={c.busy}
-                    attached={c.attached} setAttached={c.setAttached} attachedPdfs={c.attachedPdfs} setAttachedPdfs={c.setAttachedPdfs}
+                    attached={c.attached} setAttached={c.setAttached} attachedFiles={c.attachedFiles} setAttachedFiles={c.setAttachedFiles}
                     placeholder={c.scoutCtx ? 'Ask about this scouting view…' : `Ask ${c.name}…`} autoFocus
                     tools={lengthPicker}
                   />

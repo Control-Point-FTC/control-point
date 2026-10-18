@@ -5,6 +5,7 @@
 import { apiFetch } from './api';
 import { getScreenContext } from './brunoContext';
 import type { ScoutingContextRequest } from '../types/ftcScout';
+import { attachedMarker, BRUNO_REQUEST_LIMIT_BYTES } from '../utils/brunoFiles';
 
 const CACHE_KEY = 'ftcNewsCache';
 const TS_KEY = 'ftcNewsTimestamp';
@@ -198,12 +199,44 @@ export function streamActivitySummary(
 
 export interface BuildHelperMessage {
   role: 'user' | 'model';
+  /** Never capped. Text and code files are part of it (src/utils/brunoFiles.ts). */
   text: string;
-  /** Screenshots attached to a user message: sent to the AI in-memory only,
-      never persisted (see /api/ai/build-helper). */
-  images?: { mimeType: string; data: string }[];
-  /** PDFs attached to a user message: same in-memory-only handling. */
+  /** Images attached to a user message in this session (sent with it once;
+      a saved chat keeps them on the server, see /api/ai/build-helper). */
+  images?: { mimeType: string; data: string; name?: string }[];
+  /** PDFs attached to a user message in this session: same handling. */
   pdfs?: { mimeType: string; data: string; name: string }[];
+  /** Images and PDFs saved with the message, from a loaded chat. */
+  saved?: { id: number; name: string; mimeType: string; size: number; url: string }[];
+}
+
+/** How many recent messages the server reads (it ignores older ones). */
+export const BRUNO_HISTORY_TURNS = 12;
+
+/** The conversation as the server takes it: role and text only, the turns
+ *  it reads, within the provider's request size (oldest dropped first, the
+ *  current message never). Earlier messages' images and PDFs aren't sent
+ *  again; their "📎 Attached:" line tells the model they were there (a
+ *  loaded chat's text already has it). */
+export function historyForServer(messages: BuildHelperMessage[], fileBytes = 0): { role: 'user' | 'model'; text: string }[] {
+  const last = messages.map((m) => m.role).lastIndexOf('user');
+  const all = messages.map((m, i) => {
+    const names = [...(m.images || []).map((im, k) => im.name || `image-${k + 1}.jpg`), ...(m.pdfs || []).map((p) => p.name)];
+    const marker = i !== last && names.length && !/📎 Attached: /.test(m.text) ? attachedMarker(names) : '';
+    return { role: m.role, text: marker ? `${m.text}\n\n${marker}` : m.text };
+  }).slice(-BRUNO_HISTORY_TURNS);
+  if (!all.length) return all;
+  const bytes = (t: string) => new TextEncoder().encode(t).length;
+  let budget = BRUNO_REQUEST_LIMIT_BYTES - fileBytes - bytes(all[all.length - 1].text);
+  const kept = [all[all.length - 1]];
+  for (let i = all.length - 2; i >= 0; i--) {
+    const b = bytes(all[i].text);
+    if (b > budget) break;
+    kept.unshift(all[i]);
+    budget -= b;
+  }
+  while (kept.length > 1 && kept[0].role !== 'user') kept.shift();
+  return kept;
 }
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
@@ -346,7 +379,8 @@ export function notifyBrunoDataChanged(types: string[]) {
 
 export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: number) {
   try {
-    const { result } = await postJSON('/api/ai/build-helper', chatId ? { messages, chatId } : { messages });
+    const history = historyForServer(messages);
+    const { result } = await postJSON('/api/ai/build-helper', chatId ? { messages: history, chatId } : { messages: history });
     return result || "Bruno hit a snag — please try again in a moment.";
   } catch (error) {
     console.error('Error calling build helper:', error);
@@ -360,27 +394,27 @@ export function streamBuildHelper(
   chatId?: number,
   opts?: { persona?: string; scouting?: ScoutingContextRequest; signal?: AbortSignal }
 ) {
-  const body: any = chatId ? { messages, chatId } : { messages };
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const fileBytes = [...(lastUser?.images || []), ...(lastUser?.pdfs || [])].reduce((n, f) => n + f.data.length, 0);
+  const history = historyForServer(messages, fileBytes);
+  const body: any = chatId ? { messages: history, chatId } : { messages: history };
   if (opts?.persona) body.persona = opts.persona;
   // Analyze mode: only identifiers travel; the server builds the scouting pack.
   if (opts?.scouting) body.scouting = opts.scouting;
   // What the user is looking at (page + open record) rides along with every message.
   const screen = getScreenContext();
   if (screen) body.screen = screen;
-  // Screenshots ride on the latest user message; the server validates them
-  // and routes the request to the Gemini vision path.
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  // Images and PDFs ride on the latest user message, whole: the server
+  // checks them against the provider's request size and sends them on.
   if (lastUser?.images?.length) {
     body.images = lastUser.images
       .filter((im) => im && typeof im.mimeType === 'string' && typeof im.data === 'string')
-      .slice(0, 5)
-      .map((im) => ({ mimeType: im.mimeType.slice(0, 64), data: im.data.slice(0, 6 * 1024 * 1024) }));
+      .map((im, i) => ({ mimeType: im.mimeType, data: im.data, name: im.name || `image-${i + 1}.jpg` }));
   }
   if (lastUser?.pdfs?.length) {
     body.pdfs = lastUser.pdfs
       .filter((p) => p && p.mimeType === 'application/pdf' && typeof p.data === 'string')
-      .slice(0, 5)
-      .map((p) => ({ mimeType: 'application/pdf', data: p.data.slice(0, 15 * 1024 * 1024), name: String(p.name || 'document.pdf').slice(0, 128) }));
+      .map((p) => ({ mimeType: 'application/pdf', data: p.data, name: String(p.name || 'document.pdf') }));
   }
   // `signal` lets the user stop a reply mid-stream (Modern "Stop" button).
   return postStream('/api/ai/build-helper', body, onChunk, opts?.signal);

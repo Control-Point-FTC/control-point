@@ -12,7 +12,8 @@ import { apiFetch } from '../../services/api';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
-import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
+import { type AttachedFile, type AttachedImage } from '../BrunoImageAttach';
+import { withTextFiles } from '../../utils/brunoFiles';
 import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
 import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
@@ -62,7 +63,7 @@ type ThinkMeta = Record<number, { steps: ThinkingStep[]; startedAt: number; thou
 const EMPTY_MSGS: BuildHelperMessage[] = [];
 const EMPTY_OBJ = {};
 const EMPTY_IMGS: AttachedImage[] = [];
-const EMPTY_PDFS: AttachedPdf[] = [];
+const EMPTY_FILES: AttachedFile[] = [];
 
 export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved }: {
   open: boolean;
@@ -141,12 +142,12 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   }, []);
   useEffect(() => { if (!scoutCtx) setGreeting(null); }, [scoutCtx]);
 
-  // Screenshots / PDFs for the next message — in memory only, never saved.
+  // Images, PDFs and text files for the next message (cleared on send).
   const [attached, setAttached] = useDraft<AttachedImage[]>('bruno-panel:attached', EMPTY_IMGS);
-  const [attachedPdfs, setAttachedPdfs] = useDraft<AttachedPdf[]>('bruno-panel:attached-pdfs', EMPTY_PDFS);
+  const [attachedFiles, setAttachedFiles] = useDraft<AttachedFile[]>('bruno-panel:attached-files', EMPTY_FILES);
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
-    setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
+    setAttached((prev) => [...prev, ...imgs]);
   };
 
   // Output length — the same member preference as Settings → Bruno AI.
@@ -190,7 +191,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     setFreshIndex(null);
     setInput('');
     setAttached([]);
-    setAttachedPdfs([]);
+    setAttachedFiles([]);
   };
 
   // Recent chats, so a past conversation can be picked up right here in the panel.
@@ -217,12 +218,12 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       if (draftEpoch() !== ep || choice !== panelChoice || getDraft('bruno-panel:busy', false)) return;
       setChatId(id);
       setFreshIndex(null);
-      setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
+      setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text, ...(m.attachments?.length ? { saved: m.attachments } : {}) })));
       setProposalState(EMPTY_OBJ);
       setThinkMeta(EMPTY_OBJ as ThinkMeta);
       setInput('');
       setAttached([]);
-      setAttachedPdfs([]);
+      setAttachedFiles([]);
     } catch {
       // The menu has closed by now, so say it where it's seen.
       if (choice === panelChoice) notify("Couldn't open that chat. Try again, or open it from All chats.", 'error');
@@ -257,7 +258,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
 
   const send = async (text?: string, scoutingOverride?: ScoutingContextRequest) => {
     const content = (text ?? input).trim();
-    if ((!content && !attached.length && !attachedPdfs.length) || getDraft('bruno-panel:busy', false)) return;
+    if ((!content && !attached.length && !attachedFiles.length) || getDraft('bruno-panel:busy', false)) return;
     panelChoice++;
     // Everything below writes only while the store is still this epoch: a
     // sign-out / workspace switch mid-reply aborts it and drops its writes,
@@ -270,14 +271,18 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     };
     setInput('');
     const outgoing = attached;
-    const outgoingPdfs = attachedPdfs;
+    const outgoingPdfs = attachedFiles.flatMap((f) => (f.kind === 'pdf' ? [{ mimeType: f.mimeType, data: f.data, name: f.name }] : []));
+    const outgoingTexts = attachedFiles.flatMap((f) => (f.kind === 'text' ? [{ name: f.name, text: f.text }] : []));
+    const fileCount = attachedFiles.length;
+    const sentFiles = attachedFiles;
     setAttached(EMPTY_IMGS);
-    setAttachedPdfs(EMPTY_PDFS);
+    setAttachedFiles(EMPTY_FILES);
     setBusy(true);
     // Stop works from the first moment, including while the chat is created.
     const ac = new AbortController();
     panelAbort = ac;
-    const userMsg: BuildHelperMessage = { role: 'user', text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?') };
+    // Text and code files go in the message itself (shown as chips).
+    const userMsg: BuildHelperMessage = { role: 'user', text: withTextFiles(content || (outgoing.length + fileCount > 1 ? 'Take a look at these files.' : fileCount ? 'Take a look at this file.' : 'What do you see in this screenshot?'), outgoingTexts) };
     if (outgoing.length) userMsg.images = outgoing;
     if (outgoingPdfs.length) userMsg.pdfs = outgoingPdfs;
     const next: BuildHelperMessage[] = [...getDraft<BuildHelperMessage[]>('bruno-panel:messages', EMPTY_MSGS), userMsg];
@@ -298,7 +303,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     put<ThinkMeta>('bruno-panel:think', (m) => ({
       ...m,
       [replyIndex]: {
-        steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: outgoing.length, pdfs: outgoingPdfs.length, scouting: !!(scoutingOverride ?? getScoutingContext()), history: next.length }),
+        steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: outgoing.length, pdfs: outgoingPdfs.length, files: outgoingTexts.length, scouting: !!(scoutingOverride ?? getScoutingContext()), history: next.length }),
         startedAt,
         thoughtMs: null,
       },
@@ -328,6 +333,15 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       if (e?.name === 'AbortError') {
         put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
         put<ThinkMeta>('bruno-panel:think', (m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m), EMPTY_OBJ as ThinkMeta);
+      } else if (e?.status === 413) {
+        // Too big to send (the server saved nothing): the message and its
+        // files go back in the composer so the member can trim and resend.
+        put<ThinkMeta>('bruno-panel:think', (m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; }, EMPTY_OBJ as ThinkMeta);
+        put('bruno-panel:messages', next.slice(0, -1));
+        put<string>('bruno-panel:input', (cur) => (cur.trim() ? cur : content), '');
+        put<AttachedImage[]>('bruno-panel:attached', (cur) => [...outgoing, ...cur], EMPTY_IMGS);
+        put<AttachedFile[]>('bruno-panel:attached-files', (cur) => [...sentFiles, ...cur], EMPTY_FILES);
+        if (live()) notify(e.serverError || "That message is too big to send. Remove some files and try again.", 'error');
       } else {
         put<ThinkMeta>('bruno-panel:think', (m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; }, EMPTY_OBJ as ThinkMeta);
         put('bruno-panel:messages', [...next, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);
@@ -353,7 +367,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     recentChats, recentError, loadRecentChats, openChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
-    attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
+    attached, setAttached, attachedFiles, setAttachedFiles, addAttached,
     outputLevel, changeOutputLevel, levelSaving,
   };
 }
