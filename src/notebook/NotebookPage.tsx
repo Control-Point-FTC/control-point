@@ -22,6 +22,7 @@ import {NotebookTrash} from './NotebookTrash';
 import {NotebookQuickNote} from './NotebookQuickNote';
 import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
 import { NotebookRibbonShell } from './NotebookToolbar';
+import { PAGE_BAR_LIMITS, useNarrow } from './ribbon/useNarrow';
 import { NotebookWorkspaceContext, type NavigationLayout, type TagSummaryView } from './workspaceContext';
 import { toggleStickyNotes, useStickyNotesOpen } from './stickyNotesState';
 import { NotebookBreadcrumbs, pageTrail, usePageHistory } from './NotebookBreadcrumbs';
@@ -113,6 +114,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   // The page bar's slot for the open page's status and actions (rendered by its editor).
   const [barHost, setBarHost] = useState<HTMLSpanElement | null>(null);
   const [quickNoteRequest, setQuickNoteRequest] = useState(0);
+  const pageBar = useRef<HTMLElement | null>(null);
+  useNarrow(pageBar, PAGE_BAR_LIMITS);
   const syncRef = useRef<NotebookSync | null>(null);
   // Pages that vanished because this tab moved them to trash: no "no longer
   // available" warnings for those, just one "Moved to trash" notice.
@@ -628,7 +631,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     {/* Row one: where you are and what you can do with the page. Row two (the ribbon host) holds the tools. */}
-    <header className="nb-page-bar"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile nb-bar-icon" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button>
+    <header ref={pageBar} className="nb-page-bar"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile nb-bar-icon" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button>
       <h1 className="sr-only">Team notebook</h1>
       {tree && selected && tree.pages.some(p => p.id === selected)
         ? <NotebookBreadcrumbs trail={pageTrail(tree, selected)} canBack={pageHistory.canBack} canForward={pageHistory.canForward} onBack={() => { void pageHistory.back(); }} onForward={() => { void pageHistory.forward(); }} onOpen={id => { void pick(id); }} />

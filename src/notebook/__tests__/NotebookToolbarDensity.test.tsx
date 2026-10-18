@@ -1,11 +1,12 @@
 import React from 'react';
 import { Editor } from '@tiptap/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { NotebookToolbar } from '../NotebookToolbar';
+import { NotebookRibbonShell, NotebookToolbar } from '../NotebookToolbar';
 import { notebookExtensions } from '../editorSchema';
 import { NotebookWorkspaceContext, type NotebookWorkspace } from '../workspaceContext';
 import { densityKey, resetDensityMemory } from '../ribbon/density';
+import { BRUNO_OPEN_EVENT } from '../../services/brunoContext';
 
 let editor: Editor;
 afterEach(() => { cleanup(); editor?.destroy(); localStorage.clear(); resetDensityMemory(); });
@@ -82,6 +83,45 @@ describe('toolbar density', () => {
     localStorage.setItem(densityKey(7), 'expanded');
     mount(undefined, workspace({ memberId: 8 }));
     expect(bar()).toHaveAttribute('data-density', 'compact');
+  });
+
+  it('stays compact when the Bruno panel opens and the notebook gets narrower: only the layout folds', () => {
+    // Bruno's panel takes ~450px from the right: the notebook's rows shrink while the window doesn't.
+    const observers: { cb: ResizeObserverCallback; els: Element[] }[] = [];
+    vi.stubGlobal('ResizeObserver', class { els: Element[] = []; constructor(public cb: ResizeObserverCallback) { observers.push(this); } observe(el: Element) { this.els.push(el); } unobserve() {} disconnect() {} });
+    const resize = (width: number) => act(() => { for (const o of observers) o.cb(o.els.filter(el => el.classList.contains('nb-command-bar')).map(target => ({ target, contentRect: { width } } as unknown as ResizeObserverEntry)), {} as ResizeObserver); });
+    try {
+      mount();
+      resize(1460);
+      expect(bar()).not.toHaveAttribute('data-narrow');
+      window.dispatchEvent(new CustomEvent(BRUNO_OPEN_EVENT, { detail: {} }));
+      resize(560);
+      expect(bar()).toHaveAttribute('data-narrow'); // tabs fold into "Home ▾"
+      expect(bar()).toHaveAttribute('data-density', 'compact');
+      expect(localStorage.getItem(densityKey(7))).toBeNull();
+      // Still the compact command set: icons only, Cut and Copy inside the Paste menu, no wrapping layout.
+      expect(screen.getByRole('button', { name: 'Paste' }).textContent).toBe('');
+      expect(screen.queryByRole('button', { name: 'Cut' })).toBeNull();
+      expect(document.querySelector('.nb-tool-scroll')).toHaveAttribute('data-compact');
+      resize(1460);
+      expect(bar()).not.toHaveAttribute('data-narrow');
+      expect(bar()).toHaveAttribute('data-density', 'compact');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('says how to get back when the chevron turns on the full toolbar', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Show the full toolbar' }));
+    expect(screen.getByRole('status').textContent).toMatch(/chevron at the right end brings back the compact row/);
+    fireEvent.click(screen.getByRole('button', { name: 'Use the compact toolbar' }));
+    expect(screen.queryByText(/brings back the compact row/)).toBeNull();
+    // The same before a page is open (empty notebook or still loading).
+    cleanup();
+    render(<NotebookWorkspaceContext.Provider value={workspace()}><NotebookRibbonShell loading={false} /></NotebookWorkspaceContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the full toolbar' }));
+    expect(screen.getByText(/chevron at the right end brings back the compact row/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use the compact toolbar' }));
+    expect(screen.queryByText(/brings back the compact row/)).toBeNull();
   });
 
   it('keeps Copy reachable on a read-only page, with the editing commands off', () => {

@@ -10,7 +10,7 @@
 .nb-page-bar-host { display: contents; }
 .nb-page-bar-inline { padding: 0 6px; border-bottom: 1px solid var(--color-line); }
 .nb-page-bar > .nb-breadcrumbs, .nb-page-bar-title { order: 0; }
-.nb-bar-status { order: 1; display: inline-flex; min-width: 0; }
+.nb-bar-status { order: 1; display: inline-flex; min-width: 0; flex-shrink: 0; }
 .nb-bar-spacer { order: 2; flex: 1 1 auto; min-width: 8px; }
 .nb-bar-page { order: 3; display: inline-flex; align-items: center; gap: 4px; }
 .nb-page-bar .nb-split-controls { order: 4; }
@@ -69,7 +69,8 @@
 .nb-command-tabs button[role=tab]:not([aria-selected=true]):hover { color: var(--color-text-base); background: color-mix(in srgb, var(--color-text-base) 6%, transparent); }
 .nb-command-tabs button[aria-selected=true] { color: var(--color-accent); font-weight: 600; background: color-mix(in srgb, var(--color-accent) 14%, transparent); box-shadow: none; }
 .nb-tab-picker { display: none; align-items: center; gap: 4px; height: 30px; padding: 0 8px 0 10px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); flex-shrink: 0; }
-.nb-density-toggle { display: inline-grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 7px; color: var(--color-text-muted); }
+.nb-density-toggle { display: inline-grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 7px; color: var(--color-text-muted); position: relative; margin-inline-start: 7px; }
+.nb-density-toggle::before { content: ''; position: absolute; inset-inline-start: -5px; top: 5px; bottom: 5px; width: 1px; background: var(--color-line); }
 .nb-tool-frame { flex: 1 1 auto; min-width: 0; position: relative; }
 .nb-tool-frame::before, .nb-tool-frame::after { content: ''; position: absolute; top: 0; bottom: 0; width: 28px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 1; }
 .nb-tool-frame::before { left: 0; background: linear-gradient(to right, var(--color-elevated), transparent); }
@@ -110,15 +111,18 @@
 .nb-command-bar[data-density=compact][data-collapsed=true] .nb-command-tabs { border-inline-end: 0; }
 
 /* Narrow computer windows: the tabs fold into one "Home ▾" button. */
-@media (max-width: 1180px) {
-  .nb-command-bar[data-density=compact] .nb-tab-picker { display: inline-flex; }
-  .nb-command-bar[data-density=compact] .nb-command-tabs { display: none; }
-  .nb-bar-btn > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .nb-bar-btn { padding: 0 8px; }
-  /* Visually hidden only: it is the live region that announces saving, offline and conflicts. */
-  .nb-page-bar .nb-status-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .nb-shell-actions button[aria-label="Search"] > span, .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
-}
+/* Narrow notebook (a small window, or a wide one with the Bruno panel open):
+   measured on the rows themselves (useNarrow), not the window. The tabs fold
+   into one "Home ▾" button and page actions drop their labels. */
+.nb-command-bar[data-narrow][data-density=compact] .nb-tab-picker { display: inline-flex; }
+.nb-command-bar[data-narrow][data-density=compact] .nb-command-tabs { display: none; }
+.nb-page-bar[data-narrow] .nb-bar-btn > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.nb-page-bar[data-narrow] .nb-bar-btn { padding: 0 8px; }
+/* Visually hidden only: it is the live region that announces saving, offline and conflicts. */
+.nb-page-bar[data-narrow] .nb-status-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.nb-page-bar[data-narrow] .nb-shell-actions button[aria-label="Search"] > span, .nb-page-bar[data-narrow] .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
+/* Tighter still: the notebook and section names (shown in the explorer) give way to the page title. */
+.nb-page-bar[data-tight] .nb-breadcrumbs ol > li:has(> span):not(:last-child) { display: none; }
 
 /* Phones: a 48px page bar (menu, location, status, Mentions, New page, More)
    and a full-width 44px tool row; touch targets stay at least 36px. */
