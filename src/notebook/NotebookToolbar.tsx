@@ -13,6 +13,7 @@ import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonItem, RibbonMenu } from './ribbon/RibbonParts';
 import { RibbonDensityContext, densityKey, useDensityPreference, type RibbonDensity } from './ribbon/density';
 import { ToolScroller } from './ribbon/ToolScroller';
+import { TOOL_ROW_LIMITS, useNarrow } from './ribbon/useNarrow';
 import { RecordLinkDialog } from './ribbon/RecordLinkDialog';
 import { TaskFromNote } from './ribbon/TaskFromNote';
 import { ViewControls } from './ribbon/ViewControls';
@@ -127,11 +128,16 @@ function PageBarSlot({ host, children }: { host?: HTMLElement | null; children: 
 }
 
 /** Compact (default) or expanded: the chevron at the right end, like OneNote. */
+/** Compact (default) or expanded: the chevron at the right end, like OneNote.
+ *  It sits after a divider so it doesn't read as another dropdown, and only
+ *  a click on it changes the saved choice (never the window or panel width). */
 function DensityToggle({ density, onChange }: { density: RibbonDensity; onChange: (value: RibbonDensity) => void }) {
   const compact = density === 'compact';
   const label = compact ? 'Show the full toolbar' : 'Use the compact toolbar';
   return <button type="button" className="nb-density-toggle" aria-label={label} title={label} aria-pressed={!compact} onMouseDown={e => e.preventDefault()} onClick={() => onChange(compact ? 'expanded' : 'compact')}>{compact ? <ChevronDown size={18} /> : <ChevronUp size={18} />}</button>;
 }
+
+const EXPANDED_NOTICE = 'Full toolbar on. The chevron at the right end brings back the compact row.';
 
 type ToolbarProps = {
   editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>; requestedGroup?: { group: string; key: number };
@@ -153,8 +159,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   useEffect(() => { if (disabled) { setRecordOpen(false); setTaskOpen(false); } }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
-  const [density, setDensity] = useDensityPreference(densityKey(workspace?.memberId));
+  const [density, saveDensity] = useDensityPreference(densityKey(workspace?.memberId));
   const compact = density === 'compact';
+  const bar = useRef<HTMLDivElement>(null);
+  useNarrow(bar, TOOL_ROW_LIMITS);
+  const setDensity = (value: RibbonDensity) => { saveDensity(value); setNotice(current => value === 'expanded' ? EXPANDED_NOTICE : current === EXPANDED_NOTICE ? '' : current); };
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
   const [localTags, setLocalTags] = useState(false);
   const tagsWorkspace = workspace;
@@ -263,7 +272,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     </>,
   };
 
-  return <RibbonDensityContext.Provider value={density}><div className="nb-command-bar" data-collapsed={collapsed} data-density={density}>
+  return <RibbonDensityContext.Provider value={density}><div ref={bar} className="nb-command-bar" data-collapsed={collapsed} data-density={density}>
     {active && <PageBarSlot host={barHost}><PageBarActions pageId={pageId} onNotice={setNotice} status={status} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} /></PageBarSlot>}
     <div className="nb-tool-row">
       <TabPicker tabs={tabs} group={shown} onSelect={select} />
@@ -306,11 +315,13 @@ export function NotebookRibbonShell({ loading, barHost }: { loading: boolean; ba
   const [group, setGroup] = useState<Tab>('home');
   const workspace = useNotebookWorkspace();
   const [density, setDensity] = useDensityPreference(densityKey(workspace?.memberId));
+  const bar = useRef<HTMLDivElement>(null);
+  useNarrow(bar, TOOL_ROW_LIMITS);
   const section = workspace?.currentSection ?? null;
   const canStart = !loading && !!workspace?.openTemplates && !!workspace.tree?.permissions.edit && section != null;
   const tabs: readonly Tab[] = mobile ? PHONE_TABS : ALL_TABS;
   const shown: Tab = tabs.includes(group) ? group : 'home';
-  return <RibbonDensityContext.Provider value={density}><div className="nb-command-bar nb-ribbon-shell" aria-busy={loading} data-density={density}>
+  return <RibbonDensityContext.Provider value={density}><div ref={bar} className="nb-command-bar nb-ribbon-shell" aria-busy={loading} data-density={density}>
     <PageBarSlot host={barHost}><PageBarActions collapsed={false} /></PageBarSlot>
     <div className="nb-tool-row">
       <TabPicker tabs={tabs} group={shown} onSelect={setGroup} />
