@@ -16482,7 +16482,9 @@ Rules:
   });
 
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    // The real port: with PORT=0 (test servers) the system picks a free one.
+    const bound = (server.address() as any)?.port ?? PORT;
+    console.log(`Server running on http://localhost:${bound}`);
     if (process.env.NODE_ENV === "production" && !isEmailConfigured()) {
       console.error("[email] RESEND_API_KEY is not set: signup codes will NOT be emailed (they are only logged here). Nobody new can verify.");
     }

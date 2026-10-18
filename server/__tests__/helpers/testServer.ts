@@ -1,25 +1,15 @@
 // Shared harness for integration tests that boot the real server against a
 // throwaway SQLite file. Each suite gets its own port, DB and process.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, openSync, closeSync } from "node:fs";
+import { mkdtempSync, rmSync, appendFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "node:net";
 import { createClient, type Client } from "@libsql/client";
 import { sessionDbId, withSession } from "./session";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-
-function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const s = createServer();
-    s.listen(0, () => {
-      const p = (s.address() as any).port;
-      s.close(() => resolve(p));
-    });
-  });
-}
 
 // `npx tsx server.ts` is three processes (npx → tsx → node). Killing only the
 // npx pid left the node server running after every suite, so each server
@@ -86,36 +76,63 @@ export interface TestServer {
   stop: () => Promise<void>;
 }
 
+/**
+ * Wait for a spawned server to print the port it bound ("Server running on
+ * http://localhost:<port>"). Rejects if the process exits first (a crash, or
+ * a port already in use) or after `timeoutMs`.
+ */
+export function waitForBoundPort(proc: ChildProcess, timeoutMs = 60_000): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let seen = "";
+    const done = (fn: () => void) => { clearTimeout(timer); proc.stdout?.off("data", onData); proc.off("exit", onExit); fn(); };
+    const onData = (chunk: Buffer) => {
+      seen = (seen + chunk.toString("utf8")).slice(-4000);
+      // Only a whole line: a chunk can end in the middle of the port number.
+      const m = seen.match(/Server running on http:\/\/localhost:(\d+)\r?\n/);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    const onExit = (code: number | null) => done(() => reject(new Error(`server exited before it was ready (code ${code})`)));
+    const timer = setTimeout(() => done(() => reject(new Error("server did not boot in time"))), timeoutMs);
+    proc.stdout?.on("data", onData);
+    proc.once("exit", onExit);
+  });
+}
+
 export async function startTestServer(prefix = "cp-test-", extraEnv: Record<string, string> = {}): Promise<TestServer> {
   const tmpDir = mkdtempSync(join(tmpdir(), prefix));
   const dbPath = join(tmpDir, "test.db");
-  const port = await freePort();
-  const base = `http://127.0.0.1:${port}`;
-  // CP_TEST_SERVER_LOG=<file> captures the server's output for debugging.
-  // The child gets its own copy of the descriptor, so ours is closed as soon
-  // as it has spawned (or failed to).
-  const logFd = process.env.CP_TEST_SERVER_LOG ? openSync(process.env.CP_TEST_SERVER_LOG, "a") : null;
-  let proc: ChildProcess;
-  try {
-    proc = spawnServerProcess(
-      { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off", ...extraEnv },
-      logFd != null ? ["ignore", logFd, logFd] : "ignore",
-    );
-  } finally {
-    if (logFd != null) closeSync(logFd);
-  }
+  // PORT=0: the server binds a port the system picks, at the moment it
+  // listens, and prints it. A port picked here first (and released) could be
+  // taken by another suite's server before this one bound it; this server
+  // then crashed on EADDRINUSE while the boot check, and every request after
+  // it, reached the other suite's server and database, so writes "succeeded"
+  // (shared test session tokens) but never showed up here.
+  const proc = spawnServerProcess(
+    { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: "0", RESEND_API_KEY: "", PREDICT_SYNC: "off", ...extraEnv },
+    ["ignore", "pipe", "pipe"],
+  );
+  // Keep the pipes drained (a full pipe would stall the server). Set
+  // CP_TEST_SERVER_LOG=<file> to keep the server's output for debugging.
+  const log = process.env.CP_TEST_SERVER_LOG;
+  const sink = (chunk: Buffer) => { if (log) { try { appendFileSync(log, chunk); } catch { /* best effort */ } } };
+  proc.stdout?.on("data", sink);
+  proc.stderr?.on("data", sink);
   const kill = async () => {
     await killServerProcess(proc);
     await new Promise((r) => setTimeout(r, 500));
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
   };
+  let port = 0;
+  let base = "";
   try {
+    port = await waitForBoundPort(proc);
+    base = `http://127.0.0.1:${port}`;
     for (let i = 0; ; i++) {
       try {
         const r = await fetch(`${base}/api/auth/config`);
         if (r.ok || r.status === 404) break;
       } catch { /* not up yet */ }
-      if (i > 200) throw new Error("server did not boot in time");
+      if (i > 200) throw new Error("server did not answer in time");
       await new Promise((r) => setTimeout(r, 250));
     }
   } catch (e) {
@@ -139,12 +156,15 @@ export async function startTestServer(prefix = "cp-test-", extraEnv: Record<stri
     return { status: res.status, body };
   };
   let n = 0;
+  // Session tokens are unique to this server, so a request that ever reached
+  // another suite's server would fail to sign in instead of passing there.
+  const nonce = randomBytes(4).toString("hex");
   return {
     base, port, db, api,
     post: (path, body, session) => api(path, { method: "POST", body: JSON.stringify(body), session }),
     patch: (path, body, session) => api(path, { method: "PATCH", body: JSON.stringify(body), session }),
     session: async (memberId) => {
-      const id = `cps_test-${memberId}-${++n}`;
+      const id = `cps_test-${memberId}-${nonce}-${++n}`;
       const now = new Date().toISOString();
       const far = new Date(Date.now() + 86400000).toISOString();
       await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [sessionDbId(id), memberId, now, far, now] });
