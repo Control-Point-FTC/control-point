@@ -4,9 +4,10 @@
 // on hover/focus. Buttons never take focus from the page on mouse down, so
 // the text selection a command acts on stays put.
 import React, { useRef } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui-kit';
+import { Check, ChevronDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../../components/ui-kit';
 import { notebookCommandGlyph } from '../NotebookIcons';
+import { useRibbonDensity } from './density';
 
 export function RibbonGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return <div role="group" aria-label={label} className="nb-rgroup">{children}</div>;
@@ -16,38 +17,57 @@ type ButtonProps = {
   label: string; icon?: string; accent?: string; showLabel?: boolean; active?: boolean; disabled?: boolean;
   shortcut?: string; onClick: () => void; className?: string;
 };
+/** Compact toolbars show icons only (the name is the tooltip and the
+ *  accessible name); expanded toolbars also show the labels asked for. */
+function useShowsLabel(showLabel: boolean | undefined, hasGlyph: boolean) {
+  const density = useRibbonDensity();
+  return !hasGlyph || (!!showLabel && density === 'expanded');
+}
+
 export function RibbonButton({ label, icon, accent, showLabel, active, disabled, shortcut, onClick, className }: ButtonProps) {
   const Glyph = notebookCommandGlyph(icon ?? label);
-  return <button type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''} ${active ? 'is-active' : ''} ${className ?? ''}`}
+  const labelled = useShowsLabel(showLabel, !!Glyph);
+  return <button type="button" className={`nb-rbtn ${labelled ? 'has-label' : ''} ${active ? 'is-active' : ''} ${className ?? ''}`}
     title={shortcut ? `${label} (${shortcut})` : label} aria-label={label} aria-pressed={active === undefined ? undefined : active}
     disabled={disabled} onMouseDown={e => e.preventDefault()} onClick={onClick}>
-    {Glyph && <Glyph size={18} accent={accent} />}{(showLabel || !Glyph) && <span>{label}</span>}
+    {Glyph && <Glyph size={18} accent={accent} />}{labelled && <span>{label}</span>}
   </button>;
 }
 
 /** A main action with a menu of related ones (OneNote's split buttons). */
-export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end' }) {
+/** `menuDisabled` lets the menu stay open-able when the main action is off (Copy on a read-only page). */
+export function RibbonSplit({ menuLabel, children, align = 'start', menuDisabled, ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end'; menuDisabled?: boolean }) {
   const menu = useMenuFocus();
   return <span className="nb-rsplit">
     <RibbonButton {...main} />
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={menuDisabled ?? main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
     </DropdownMenu>
   </span>;
 }
 
-/** A labelled dropdown (no main action), e.g. alignment or tags. */
-export function RibbonMenu({ label, icon, showLabel, disabled, children, open, onOpenChange }: { label: string; icon?: string; showLabel?: boolean; disabled?: boolean; children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+/** A labelled dropdown (no main action), e.g. alignment or tags. `active`
+ *  marks the button when a command inside it is on (e.g. a list type). */
+export function RibbonMenu({ label, icon, showLabel, active, disabled, children, open, onOpenChange }: { label: string; icon?: string; showLabel?: boolean; active?: boolean; disabled?: boolean; children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const Glyph = notebookCommandGlyph(icon ?? label);
+  const labelled = useShowsLabel(showLabel, !!Glyph);
   const menu = useMenuFocus();
   return <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
-    <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
+    <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className={`nb-rbtn nb-rmenu-btn ${labelled ? 'has-label' : ''} ${active ? 'is-active' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{labelled && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
     <DropdownMenuContent className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
   </DropdownMenu>;
 }
 
 export const RibbonItem = DropdownMenuItem;
+export const RibbonSeparator = DropdownMenuSeparator;
+
+/** An on/off command inside a menu (Strikethrough, a list type, Find tags). */
+export function RibbonCheckItem({ checked, onSelect, children, disabled }: { checked: boolean; onSelect: () => void; children: React.ReactNode; disabled?: boolean }) {
+  return <DropdownMenuItem role="menuitemcheckbox" aria-checked={checked} disabled={disabled} className="nb-rcheck" onSelect={onSelect}>
+    <span className="nb-rcheck-mark" aria-hidden="true">{checked ? <Check size={14} /> : null}</span>{children}
+  </DropdownMenuItem>;
+}
 
 /** Focus after a menu closes: Escape returns it to the menu's own button so
  *  keyboard users keep their place. A command keeps the page focused, and

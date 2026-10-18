@@ -35,7 +35,7 @@ import { entryDetailsLine, markdownFileName, notebookPageMarkdown } from './mark
 import { NotebookEntryMeta, entryMetaSettled } from './NotebookEntryMeta';
 import { NotebookReviewBar } from './NotebookReview';
 import { useNotebookMobile } from './useNotebookMobile';
-import { pasteNotebookText } from './NotebookMobileToolbar';
+import { pasteNotebookText } from './pasteText';
 import { createPortal } from 'react-dom';
 import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
 import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
@@ -47,6 +47,8 @@ import {NotebookPaperControls,paperViewStyle,useNotebookPaperView} from './Noteb
 const NotebookCanvas = lazy(() => import('./NotebookCanvas'));
 
 const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Local changes need recovery', unavailable: 'Page unavailable', error: 'Save needs attention' };
+/** Up to two initials for a presence avatar ("Dev Admin" → "DA"). */
+function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase() ?? '').join('') || '?'; }
 /** Saves text as a file in the browser. */
 export function downloadText(text: string, name: string, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
@@ -60,14 +62,14 @@ export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json'
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null; toolbarVisible?:boolean;blockTarget?:string|null;threadTarget?:number|null;onOpenOther?:(id:number,blockId?:string)=>void };
-export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost,...paneProps }: EditorProps) {
+export type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null; barHost?: HTMLElement | null; toolbarVisible?:boolean;blockTarget?:string|null;threadTarget?:number|null;onOpenOther?:(id:number,blockId?:string)=>void };
+export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost, barHost,...paneProps }: EditorProps) {
   const [, redraw] = useState(0);
   const [downloadError, setDownloadError] = useState('');
   useEffect(() => sync.subscribe(() => redraw(v => v + 1)), [sync]);
   if (!sync.data || sync.status === 'unavailable') return <div className="nb-empty" role={sync.error ? 'alert' : 'status'}>
     {/* The ribbon stays in place while a page opens or can't be opened. */}
-    {toolbarHost && paneProps.toolbarVisible !== false && createPortal(<NotebookRibbonShell loading={sync.status === 'joining'} />, toolbarHost)}
+    {toolbarHost && paneProps.toolbarVisible !== false && createPortal(<NotebookRibbonShell loading={sync.status === 'joining'} barHost={barHost} />, toolbarHost)}
     <h2>{sync.status === 'joining' ? 'Opening your team’s page…' : 'This page cannot be opened'}</h2><p>{sync.status==='offline'?'This page is not cached on this device. Reconnect to open it.':sync.error}</p>{sync.status==='offline'&&sync.error&&<p>{sync.error}</p>}
     {sync.status === 'error' && <Button variant="outline" onClick={async () => {
       try { const source = await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`, { cache: 'no-store' }); downloadNotebookJSON(source, 'notebook-original-page.json'); }
@@ -75,9 +77,9 @@ export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, t
     }}>Download original page</Button>}
     {downloadError && <p role="alert">{downloadError}</p>}
   </div>;
-  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} toolbarHost={toolbarHost} {...paneProps}/>;
+  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} toolbarHost={toolbarHost} barHost={barHost} {...paneProps}/>;
 }
-function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost,toolbarVisible=true,blockTarget,threadTarget,onOpenOther }: EditorProps) {
+function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost,barHost,toolbarVisible=true,blockTarget,threadTarget,onOpenOther }: EditorProps) {
   const [, redraw] = useState(0);
   const mobile = useNotebookMobile();
   const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
@@ -284,12 +286,6 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   }, [sync]);
   const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
   return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
-    <div className="nb-doc-status"><span role="status" aria-live="polite">{fileUpload.busy ? 'Uploading attachment · not saved yet' : sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
-      {sync.data?.protected && <span>Admin-only · Bruno excluded</span>}
-      {!sync.data?.editable && <span>Read only</span>}
-      <span>Revision {sync.data?.revision}</span>
-      <span aria-label="People on this page">{sync.data?.peers?.map(p => p.name).join(', ')}</span>
-    </div>
     {sync.storageError && <div className="nb-alert" role="alert">Offline recovery is unavailable: {sync.storageError}. Keep this page open until it saves.
       <Button variant="outline" onClick={() => downloadNotebookJSON({ title, content: yDocToProsemirrorJSON(sync.doc) }, 'notebook-unsaved-recovery.json')}>Download unsaved changes</Button>
     </div>}
@@ -309,7 +305,18 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
         view: <><ViewControls pageId={sync.pageId}/><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><NotebookPaperControls value={paperView} onChange={setPaperView}/><NotebookReader sync={sync} preferences={readerPreferences} onPreferencesChange={setReaderPreferences}/><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
-      const toolbar = <div className="nb-pane-ribbon" hidden={!toolbarVisible}><NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup}/></div>;
+      // Save state and who is here: a slim chip in the page bar (Google Docs' "Saved"), not a row of its own.
+      const statusText = fileUpload.busy ? 'Uploading attachment · not saved yet' : sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status];
+      const people = [...new Map((sync.data?.peers ?? []).map(p => [p.memberId, p])).values()];
+      const status = <span className="nb-doc-status" data-state={fileUpload.busy ? 'saving' : sync.status} title={`${statusText} · Revision ${sync.data?.revision ?? '–'}`}>
+        <span className="nb-status-dot" aria-hidden="true" />
+        <span role="status" aria-live="polite" className="nb-status-text">{statusText}</span>
+        {sync.data?.protected && <span className="nb-status-badge">Admin-only · Bruno excluded</span>}
+        {!sync.data?.editable && <span className="nb-status-badge">Read only</span>}
+        <span className="nb-status-revision">Revision {sync.data?.revision}</span>
+        <span className="nb-presence" aria-label="People on this page">{people.map(p => <span key={p.memberId} className="nb-avatar" title={p.name} style={{ background: p.color }}><span aria-hidden="true">{initials(p.name)}</span><span className="sr-only">{p.name}</span></span>)}</span>
+      </span>;
+      const toolbar = <div className="nb-pane-ribbon" hidden={!toolbarVisible}><NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup} barHost={barHost} active={toolbarVisible} status={status}/></div>;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}

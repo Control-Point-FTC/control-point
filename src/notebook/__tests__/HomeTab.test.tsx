@@ -132,7 +132,8 @@ describe('Home ribbon state and safety', () => {
     let release!: () => void;
     Object.assign(navigator, { clipboard: { writeText: vi.fn(() => new Promise<void>(r => { release = r; })) } });
     editor.commands.setTextSelection({ from: 7, to: 12 });
-    fireEvent.click(screen.getByRole('button', { name: 'Cut' }));
+    openMenu('Paste options'); // compact: Cut and Copy are in the Paste menu
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cut' }));
     act(() => { editor.commands.insertContentAt(1, 'Oh '); });
     await act(async () => { release(); });
     expect(editor.getText()).toBe('Oh Hello world');

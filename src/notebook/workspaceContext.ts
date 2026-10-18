@@ -8,6 +8,8 @@ export type TagSummaryView = { scope: 'page' | 'section' | 'all'; only: string; 
 export type NavigationLayout = 'panes' | 'tabs';
 export type NotebookWorkspace = {
   teamId: number | null;
+  /** The signed-in member (personal preferences such as toolbar density). */
+  memberId?: number | null;
   tree: NotebookTree | null;
   openPage: (id: number, blockId?: string) => void;
   refreshTree: () => void;
@@ -26,6 +28,8 @@ export type NotebookWorkspace = {
   currentSection?: number | null;
   navigationLayout?: NavigationLayout;
   setNavigationLayout?: (layout: NavigationLayout) => void;
+  /** Page bar → More page actions: less frequent notebook actions (quick note, export). */
+  pageActions?: { label: string; onSelect: () => void; disabled?: boolean }[];
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

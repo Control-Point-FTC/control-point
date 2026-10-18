@@ -1,15 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/react';
+import { ChevronDown, ChevronUp, MoreHorizontal, PanelTopClose, PanelTopOpen } from 'lucide-react';
 import type { NotebookPageItem } from './types';
 import { notebookPageLink, normalizeNotebookLink } from './pageLinks';
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../components/ui-kit';
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Input, Label } from '../components/ui-kit';
 import { NotebookFind } from './NotebookFind';
 import { useNotebookMobile } from './useNotebookMobile';
-import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
-import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
+import { RibbonButton, RibbonGroup, RibbonItem, RibbonMenu } from './ribbon/RibbonParts';
+import { RibbonDensityContext, densityKey, useDensityPreference, type RibbonDensity } from './ribbon/density';
+import { ToolScroller } from './ribbon/ToolScroller';
 import { RecordLinkDialog } from './ribbon/RecordLinkDialog';
 import { TaskFromNote } from './ribbon/TaskFromNote';
 import { ViewControls } from './ribbon/ViewControls';
@@ -32,35 +35,54 @@ const SHORTCUTS: [string, string][] = [
   ['Drawing: back to typing', 'Esc'], ['Drawing: nudge the selection', 'Arrow keys'],
 ];
 
-// OneNote's tab order. Every tab is always present; File, Draw, History and
-// View are filled by the open page (export/print, canvas tools, versions, zoom).
+// OneNote's tab order. Every tab is always present on a computer; File, Draw,
+// History and View are filled by the open page (export/print, canvas tools,
+// versions, zoom). Phones leave out Draw and View: drawing and page zoom are
+// computer-only.
 export const ribbonTabs = [['file','File'],['home','Home'],['insert','Insert'],['draw','Draw'],['history','History'],['review','Review'],['view','View'],['help','Help']] as const;
 type Tab = typeof ribbonTabs[number][0];
+const ALL_TABS: readonly Tab[] = ribbonTabs.map(([id]) => id);
+const PHONE_TABS: readonly Tab[] = ['file', 'home', 'insert', 'history', 'review', 'help'];
 const isTab = (value: unknown): value is Tab => ribbonTabs.some(([id]) => id === value);
+const tabLabel = (tab: Tab) => ribbonTabs.find(([id]) => id === tab)![1];
 
 function readPref(key: string | undefined) { try { return key ? localStorage.getItem(key) : null; } catch { return null; } }
 function writePref(key: string | undefined, value: string) { try { if (key) localStorage.setItem(key, value); } catch { /* optional device preference */ } }
 
-function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed, trailing }: { group: Tab; onSelect: (tab: Tab) => void; collapsed: boolean; onToggleCollapsed?: () => void; trailing?: React.ReactNode }) {
-  const Toggle = notebookCommandGlyph(collapsed ? 'Expand ribbon' : 'Collapse ribbon');
+type TabsProps = { tabs: readonly Tab[]; group: Tab; onSelect: (tab: Tab) => void };
+/** The tab strip (File, Home, Insert …); arrow keys move between tabs. */
+function RibbonTabs({ tabs, group, onSelect }: TabsProps) {
   return <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">
-    {ribbonTabs.map(([id, label]) => <button key={id} role="tab" aria-selected={group === id} tabIndex={group === id ? 0 : -1} onClick={() => onSelect(id)} onKeyDown={e => {
+    {tabs.map(id => <button key={id} type="button" role="tab" aria-selected={group === id} tabIndex={group === id ? 0 : -1} onClick={() => onSelect(id)} onKeyDown={e => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
       e.preventDefault();
-      const index = ribbonTabs.findIndex(([key]) => key === id), n = ribbonTabs.length;
+      const index = tabs.indexOf(id), n = tabs.length;
       const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (index + (e.key === 'ArrowRight' ? 1 : n - 1)) % n;
-      onSelect(ribbonTabs[next][0]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
-    }}>{label}</button>)}
-    {trailing && <span className="nb-topbar">{trailing}</span>}
-    {onToggleCollapsed && Toggle && <button type="button" className="nb-ribbon-toggle" aria-label={collapsed ? 'Show the ribbon' : 'Hide the ribbon'} title={collapsed ? 'Show the ribbon' : 'Hide the ribbon'} aria-expanded={!collapsed} onClick={onToggleCollapsed}><Toggle size={16} /></button>}
+      onSelect(tabs[next]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
+    }}>{tabLabel(id)}</button>)}
   </div>;
 }
 
-/** Top bar actions beside the tabs. Share needs an open page. */
-function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: string) => void }) {
+/** Narrow windows and phones: the same tabs as one menu button ("Home ▾"). */
+function TabPicker({ tabs, group, onSelect }: TabsProps) {
+  return <DropdownMenu modal={false}>
+    <DropdownMenuTrigger asChild><button type="button" className="nb-tab-picker" aria-label={`Commands: ${tabLabel(group)}`} title="Choose a command tab" onMouseDown={e => e.preventDefault()}><span>{tabLabel(group)}</span><ChevronDown size={14} aria-hidden="true" /></button></DropdownMenuTrigger>
+    <DropdownMenuContent align="start" className="nb-rmenu">
+      {tabs.map(id => <DropdownMenuItem key={id} role="menuitemradio" aria-checked={group === id} onSelect={() => onSelect(id)}>{tabLabel(id)}</DropdownMenuItem>)}
+    </DropdownMenuContent>
+  </DropdownMenu>;
+}
+
+function ShareGlyph() { const Glyph = notebookCommandGlyph('Share'); return Glyph ? <Glyph size={16} /> : null; }
+
+/** The page bar's right end for the open page: save status, the app's
+ *  controls (clock, sticky notes, Search, Bruno), Share, a menu for less
+ *  frequent page actions, and the button that hides the toolbar. */
+function PageBarActions({ pageId, onNotice, status, collapsed, onToggleCollapsed }: { pageId?: number; onNotice?: (message: string) => void; status?: React.ReactNode; collapsed: boolean; onToggleCollapsed?: () => void }) {
   const mobile = useNotebookMobile();
-  // Claim the shared controls while this toolbar is the visible one (split
-  // view hides the inactive pane's toolbar); release them only if held here.
+  const workspace = useNotebookWorkspace();
+  // Claim the shared controls while this is the visible toolbar (split view
+  // hides the inactive pane's); release them only if held here.
   const slotEl = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const el = slotEl.current;
@@ -76,14 +98,47 @@ function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: st
       onNotice('Page link copied. Anyone on your team who can open this page can follow it.');
     } catch { onNotice('Copying isn’t available here. Copy the address from the browser bar instead.'); }
   };
+  const canShare = !!pageId && !!onNotice;
+  const toggleLabel = collapsed ? 'Show the ribbon' : 'Hide the ribbon';
+  const menu = [
+    ...(mobile && canShare ? [{ label: 'Share', onSelect: () => { void share(); } }] : []),
+    ...(workspace?.pageActions ?? []),
+    ...(mobile && onToggleCollapsed ? [{ label: toggleLabel, onSelect: onToggleCollapsed }] : []),
+  ];
   return <>
-    {/* The app's clock and weather, sticky notes, Search and Bruno render here (the app top bar is hidden in the notebook). */}
-    {!mobile && <span ref={slotEl} className="nb-shell-actions" />}
-    {pageId && onNotice && <RibbonButton label="Share" icon="Share" showLabel onClick={() => { void share(); }} />}
+    {status && <span className="nb-bar-status">{status}</span>}
+    <span className="nb-bar-actions">
+      {/* The app's clock and weather, sticky notes, Search and Bruno render here (the app top bar is hidden in the notebook). */}
+      {!mobile && <span ref={slotEl} className="nb-shell-actions" />}
+      {!mobile && canShare && <button type="button" className="nb-bar-btn" aria-label="Share" title="Copy a link to this page" onClick={() => { void share(); }}><ShareGlyph /><span>Share</span></button>}
+      {menu.length > 0 && <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild><button type="button" className="nb-bar-icon" aria-label="More page actions" title="More page actions"><MoreHorizontal size={18} /></button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="nb-rmenu">{menu.map(item => <DropdownMenuItem key={item.label} disabled={item.disabled} onSelect={item.onSelect}>{item.label}</DropdownMenuItem>)}</DropdownMenuContent>
+      </DropdownMenu>}
+      {!mobile && onToggleCollapsed && <button type="button" className="nb-bar-icon nb-ribbon-toggle" aria-label={toggleLabel} title={toggleLabel} aria-expanded={!collapsed} onClick={onToggleCollapsed}>{collapsed ? <PanelTopOpen size={18} /> : <PanelTopClose size={18} />}</button>}
+    </span>
   </>;
 }
 
-export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {},requestedGroup }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>;requestedGroup?:{group:string;key:number} }) {
+/** Row one goes into the notebook's page bar when there is one; on its own
+ *  (tests, an editor outside the workspace) it stays at the top of the toolbar. */
+function PageBarSlot({ host, children }: { host?: HTMLElement | null; children: React.ReactNode }) {
+  return host ? createPortal(children, host) : <div className="nb-page-bar nb-page-bar-inline">{children}</div>;
+}
+
+/** Compact (default) or expanded: the chevron at the right end, like OneNote. */
+function DensityToggle({ density, onChange }: { density: RibbonDensity; onChange: (value: RibbonDensity) => void }) {
+  const compact = density === 'compact';
+  const label = compact ? 'Show the full toolbar' : 'Use the compact toolbar';
+  return <button type="button" className="nb-density-toggle" aria-label={label} title={label} aria-pressed={!compact} onMouseDown={e => e.preventDefault()} onClick={() => onChange(compact ? 'expanded' : 'compact')}>{compact ? <ChevronDown size={18} /> : <ChevronUp size={18} />}</button>;
+}
+
+type ToolbarProps = {
+  editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>; requestedGroup?: { group: string; key: number };
+  /** The page bar's slot for this page's status and actions, and whether this toolbar is the visible one. */
+  barHost?: HTMLElement | null; active?: boolean; status?: React.ReactNode;
+};
+export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {}, requestedGroup, barHost, active = true, status }: ToolbarProps) {
   const mobile = useNotebookMobile();
   const [group, setGroup] = useState<Tab>(() => { const saved = readPref(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved as Tab : 'home'; });
   const [collapsed, setCollapsed] = useState(() => readPref(preferenceKey && `${preferenceKey}:collapsed`) === '1');
@@ -98,6 +153,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   useEffect(() => { if (disabled) { setRecordOpen(false); setTaskOpen(false); } }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
+  const [density, setDensity] = useDensityPreference(densityKey(workspace?.memberId));
+  const compact = density === 'compact';
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
   const [localTags, setLocalTags] = useState(false);
   const tagsWorkspace = workspace;
@@ -132,7 +189,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   // Native spellcheck only (no AI); the choice is kept on this device.
   useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dom.setAttribute('spellcheck', spellcheck ? 'true' : 'false'); }, [editor, spellcheck]);
   if (!editor) return null;
-  if (mobile) return <NotebookMobileToolbar editor={editor} disabled={disabled} />;
+  const tabs: readonly Tab[] = mobile ? PHONE_TABS : ALL_TABS;
+  const shown: Tab = tabs.includes(group) ? group : 'home';
   const chain = () => editor.chain().focus();
   const select = (tab: Tab) => { setGroup(tab); setCollapsed(false); writePref(preferenceKey && `${preferenceKey}:collapsed`, '0'); if (['home','insert','review','help'].includes(tab)) writePref(preferenceKey, tab); };
   const toggleCollapsed = () => setCollapsed(value => { writePref(preferenceKey && `${preferenceKey}:collapsed`, value ? '0' : '1'); return !value; });
@@ -157,11 +215,13 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       </div>
     </React.Fragment>}
   </span>;
-  const tables = editor.isActive('table') && <RibbonGroup label="Table layout">
-    {([['Insert row above', () => chain().addRowBefore().run()], ['Insert row below', () => chain().addRowAfter().run()], ['Insert column left', () => chain().addColumnBefore().run()], ['Insert column right', () => chain().addColumnAfter().run()],
+  const tableActions = ([['Insert row above', () => chain().addRowBefore().run()], ['Insert row below', () => chain().addRowAfter().run()], ['Insert column left', () => chain().addColumnBefore().run()], ['Insert column right', () => chain().addColumnAfter().run()],
       ['Delete row', () => chain().deleteRow().run()], ['Delete column', () => chain().deleteColumn().run()], ['Merge cells', () => chain().mergeCells().run()], ['Split cell', () => chain().splitCell().run()],
-      ['Header row', () => chain().toggleHeaderRow().run()], ['Delete table', () => chain().deleteTable().run()], ['Reset cell fill', () => chain().setCellAttribute('backgroundColor', null).run()]] as [string, () => void][])
-      .map(([name, run]) => <RibbonButton key={name} label={name} showLabel disabled={disabled} onClick={run} />)}
+      ['Header row', () => chain().toggleHeaderRow().run()], ['Delete table', () => chain().deleteTable().run()], ['Reset cell fill', () => chain().setCellAttribute('backgroundColor', null).run()]] as [string, () => void][]);
+  const tables = editor.isActive('table') && <RibbonGroup label="Table layout">
+    {compact
+      ? <RibbonMenu label="Table layout" disabled={disabled}>{tableActions.map(([name, run]) => <RibbonItem key={name} onSelect={run}>{name}</RibbonItem>)}</RibbonMenu>
+      : tableActions.map(([name, run]) => <RibbonButton key={name} label={name} showLabel disabled={disabled} onClick={run} />)}
     <RibbonButton label="Sort ascending" icon="SortAsc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'asc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
     <RibbonButton label="Sort descending" icon="SortDesc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'desc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
     <label className="nb-rfield">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
@@ -203,11 +263,16 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     </>,
   };
 
-  return <div className="nb-command-bar" data-collapsed={collapsed}>
-    <RibbonTabs group={group} onSelect={select} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} trailing={<TopBar pageId={pageId} onNotice={setNotice} />} />
-    {!collapsed && <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label={`${ribbonTabs.find(([id]) => id === group)![1]} commands`} data-ribbon={group}>
-      {content[group]}
-    </div>}
+  return <RibbonDensityContext.Provider value={density}><div className="nb-command-bar" data-collapsed={collapsed} data-density={density}>
+    {active && <PageBarSlot host={barHost}><PageBarActions pageId={pageId} onNotice={setNotice} status={status} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} /></PageBarSlot>}
+    <div className="nb-tool-row">
+      <TabPicker tabs={tabs} group={shown} onSelect={select} />
+      <RibbonTabs tabs={tabs} group={shown} onSelect={select} />
+      {!collapsed && <ToolScroller compact={compact}><div className="nb-toolbar nb-ribbon" role="toolbar" aria-label={`${tabLabel(shown)} commands`} data-ribbon={shown}>
+        {content[shown]}
+      </div></ToolScroller>}
+      {!collapsed && <DensityToggle density={density} onChange={setDensity} />}
+    </div>
     {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
     {findingTags && <TagSummary pageId={pageId} sectionId={pages.find(p => p.id === pageId)?.sectionId} onClose={() => setFindingTags(false)} />}
@@ -231,23 +296,32 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     <Dialog open={shortcuts} onOpenChange={setShortcuts}><DialogContent><DialogHeader><DialogTitle>Keyboard shortcuts</DialogTitle><DialogDescription>Use Cmd instead of Ctrl on a Mac.</DialogDescription></DialogHeader>
       <table className="nb-shortcuts"><tbody>{SHORTCUTS.map(([what, keys]) => <tr key={what}><th scope="row">{what}</th><td><kbd>{keys}</kbd></td></tr>)}</tbody></table>
     </DialogContent></Dialog>
-  </div>;
+  </div></RibbonDensityContext.Provider>;
 }
 
 /** The ribbon before a page is open (loading, or an empty notebook): the
  *  same tabs in the same place, so the workspace never jumps or looks empty. */
-export function NotebookRibbonShell({ loading }: { loading: boolean }) {
+export function NotebookRibbonShell({ loading, barHost }: { loading: boolean; barHost?: HTMLElement | null }) {
+  const mobile = useNotebookMobile();
   const [group, setGroup] = useState<Tab>('home');
   const workspace = useNotebookWorkspace();
+  const [density, setDensity] = useDensityPreference(densityKey(workspace?.memberId));
   const section = workspace?.currentSection ?? null;
   const canStart = !loading && !!workspace?.openTemplates && !!workspace.tree?.permissions.edit && section != null;
-  return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
-    <RibbonTabs group={group} onSelect={setGroup} collapsed={false} trailing={<TopBar />} />
-    <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
-      {/* View's layout choice works without a page, so it's never a dead end. */}
-      {group === 'view' && <ViewControls />}
-      {canStart && group !== 'view' && <RibbonGroup label="Pages"><RibbonButton label="Start from a template" icon="Template" showLabel onClick={() => workspace!.openTemplates!(section!)} /></RibbonGroup>}
-      <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
+  const tabs: readonly Tab[] = mobile ? PHONE_TABS : ALL_TABS;
+  const shown: Tab = tabs.includes(group) ? group : 'home';
+  return <RibbonDensityContext.Provider value={density}><div className="nb-command-bar nb-ribbon-shell" aria-busy={loading} data-density={density}>
+    <PageBarSlot host={barHost}><PageBarActions collapsed={false} /></PageBarSlot>
+    <div className="nb-tool-row">
+      <TabPicker tabs={tabs} group={shown} onSelect={setGroup} />
+      <RibbonTabs tabs={tabs} group={shown} onSelect={setGroup} />
+      <ToolScroller compact={density === 'compact'}><div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
+        {/* View's layout choice works without a page, so it's never a dead end. */}
+        {shown === 'view' && <ViewControls />}
+        {canStart && shown !== 'view' && <RibbonGroup label="Pages"><RibbonButton label="Start from a template" icon="Template" showLabel onClick={() => workspace!.openTemplates!(section!)} /></RibbonGroup>}
+        <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
+      </div></ToolScroller>
+      <DensityToggle density={density} onChange={setDensity} />
     </div>
-  </div>;
+  </div></RibbonDensityContext.Provider>;
 }

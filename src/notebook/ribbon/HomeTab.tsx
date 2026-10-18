@@ -5,8 +5,9 @@ import React, { useEffect, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { NOTEBOOK_COLORS, NOTEBOOK_FONTS, NOTEBOOK_TAGS } from '../editorSchema';
 import { notebookIndent } from '../editorActions';
-import { pasteNotebookText } from '../NotebookMobileToolbar';
-import { ColorPalette, RibbonButton, RibbonGroup, RibbonItem, RibbonMenu, RibbonSplit } from './RibbonParts';
+import { pasteNotebookText } from '../pasteText';
+import { ColorPalette, RibbonButton, RibbonCheckItem, RibbonGroup, RibbonItem, RibbonMenu, RibbonSeparator, RibbonSplit } from './RibbonParts';
+import { useRibbonDensity } from './density';
 
 export const HIGHLIGHT_COLORS = ['#fde047', '#86efac', '#67e8f9', '#f9a8d4', '#fdba74', '#93c5fd', '#c4b5fd', '#d4d4d8'] as const;
 const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 96];
@@ -51,6 +52,9 @@ export type HomeRibbonState = ReturnType<typeof useHomeRibbonState>;
 export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTags, onCreateTask }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState; findingTags?: boolean; onFindTags?: () => void; onCreateTask?: () => void }) {
   const chain = () => editor.chain().focus();
   const { fontColor, setFontColor, highlight, setHighlight } = state;
+  // Compact: one slim row, with related commands gathered into menus. Every
+  // command stays available; expanded lays them all out with labels.
+  const compact = useRibbonDensity() === 'compact';
 
   const clipboard = async (kind: 'cut' | 'copy') => {
     const { from, to, empty } = editor.state.selection;
@@ -104,12 +108,14 @@ export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTa
       <RibbonButton label="Redo" shortcut="Ctrl+Y" disabled={disabled} onClick={() => chain().redo().run()} />
     </RibbonGroup>
     <RibbonGroup label="Clipboard">
-      <RibbonSplit label="Paste" showLabel menuLabel="Paste options" shortcut="Ctrl+V" disabled={disabled} onClick={() => { void paste(false); }}>
-        <RibbonItem onSelect={() => { void paste(false); }}>Keep formatting</RibbonItem>
-        <RibbonItem onSelect={() => { void paste(true); }}>Paste as plain text</RibbonItem>
+      {/* Compact: Copy lives in this menu, so the menu stays available on read-only pages. */}
+      <RibbonSplit label="Paste" showLabel menuLabel="Paste options" shortcut="Ctrl+V" disabled={disabled} menuDisabled={compact ? false : disabled} onClick={() => { void paste(false); }}>
+        <RibbonItem disabled={disabled} onSelect={() => { void paste(false); }}>Keep formatting</RibbonItem>
+        <RibbonItem disabled={disabled} onSelect={() => { void paste(true); }}>Paste as plain text</RibbonItem>
+        {compact && <><RibbonSeparator /><RibbonItem disabled={disabled} onSelect={() => { void clipboard('cut'); }}>Cut</RibbonItem><RibbonItem onSelect={() => { void clipboard('copy'); }}>Copy</RibbonItem></>}
       </RibbonSplit>
-      <RibbonButton label="Cut" shortcut="Ctrl+X" disabled={disabled} onClick={() => { void clipboard('cut'); }} />
-      <RibbonButton label="Copy" shortcut="Ctrl+C" onClick={() => { void clipboard('copy'); }} />
+      {!compact && <RibbonButton label="Cut" shortcut="Ctrl+X" disabled={disabled} onClick={() => { void clipboard('cut'); }} />}
+      {!compact && <RibbonButton label="Copy" shortcut="Ctrl+C" onClick={() => { void clipboard('copy'); }} />}
       <RibbonButton label="Format painter" active={state.painterOn} disabled={disabled} onClick={state.togglePainter} />
     </RibbonGroup>
     <RibbonGroup label="Basic text">
@@ -132,16 +138,29 @@ export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTa
         {/* Text fills from older pages or pasted HTML are a separate mark. */}
         <RibbonItem onSelect={() => chain().unsetBackgroundColor().run()}>Remove text fill</RibbonItem>
       </RibbonSplit>
-      <RibbonSplit label="Subscript" shortcut="Ctrl+=" menuLabel="Subscript and superscript" active={editor.isActive('subscript')} disabled={disabled} onClick={() => chain().toggleSubscript().run()}>
-        <RibbonItem onSelect={() => chain().toggleSubscript().run()}>Subscript</RibbonItem>
-        <RibbonItem onSelect={() => chain().toggleSuperscript().run()}>Superscript</RibbonItem>
-      </RibbonSplit>
-      <RibbonButton label="Clear formatting" disabled={disabled} onClick={() => chain().unsetAllMarks().clearNodes().run()} />
+      {compact ? <RibbonMenu label="More text formatting" active={editor.isActive('subscript') || editor.isActive('superscript')} disabled={disabled}>
+        <RibbonCheckItem checked={editor.isActive('subscript')} onSelect={() => chain().toggleSubscript().run()}>Subscript</RibbonCheckItem>
+        <RibbonCheckItem checked={editor.isActive('superscript')} onSelect={() => chain().toggleSuperscript().run()}>Superscript</RibbonCheckItem>
+        <RibbonSeparator />
+        <RibbonItem onSelect={() => chain().unsetAllMarks().clearNodes().run()}>Clear formatting</RibbonItem>
+      </RibbonMenu> : <>
+        <RibbonSplit label="Subscript" shortcut="Ctrl+=" menuLabel="Subscript and superscript" active={editor.isActive('subscript')} disabled={disabled} onClick={() => chain().toggleSubscript().run()}>
+          <RibbonItem onSelect={() => chain().toggleSubscript().run()}>Subscript</RibbonItem>
+          <RibbonItem onSelect={() => chain().toggleSuperscript().run()}>Superscript</RibbonItem>
+        </RibbonSplit>
+        <RibbonButton label="Clear formatting" disabled={disabled} onClick={() => chain().unsetAllMarks().clearNodes().run()} />
+      </>}
     </RibbonGroup>
     <RibbonGroup label="Paragraph">
-      <RibbonButton label="Bullets" active={editor.isActive('bulletList')} disabled={disabled} onClick={() => chain().toggleBulletList().run()} />
-      <RibbonButton label="Numbering" icon="Numbered" active={editor.isActive('orderedList')} disabled={disabled} onClick={() => chain().toggleOrderedList().run()} />
-      <RibbonButton label="Checklist" active={editor.isActive('taskList')} disabled={disabled} onClick={() => chain().toggleTaskList().run()} />
+      {compact ? <RibbonMenu label="Lists" icon={editor.isActive('orderedList') ? 'Numbered' : editor.isActive('taskList') ? 'Checklist' : 'Bullets'} active={editor.isActive('bulletList') || editor.isActive('orderedList') || editor.isActive('taskList')} disabled={disabled}>
+        <RibbonCheckItem checked={editor.isActive('bulletList')} onSelect={() => chain().toggleBulletList().run()}>Bullets</RibbonCheckItem>
+        <RibbonCheckItem checked={editor.isActive('orderedList')} onSelect={() => chain().toggleOrderedList().run()}>Numbering</RibbonCheckItem>
+        <RibbonCheckItem checked={editor.isActive('taskList')} onSelect={() => chain().toggleTaskList().run()}>Checklist</RibbonCheckItem>
+      </RibbonMenu> : <>
+        <RibbonButton label="Bullets" active={editor.isActive('bulletList')} disabled={disabled} onClick={() => chain().toggleBulletList().run()} />
+        <RibbonButton label="Numbering" icon="Numbered" active={editor.isActive('orderedList')} disabled={disabled} onClick={() => chain().toggleOrderedList().run()} />
+        <RibbonButton label="Checklist" active={editor.isActive('taskList')} disabled={disabled} onClick={() => chain().toggleTaskList().run()} />
+      </>}
       <RibbonButton label="Decrease indent" icon="Outdent" shortcut="Shift+Tab" disabled={disabled} onClick={() => { editor.commands.focus(); notebookIndent(editor, -1); }} />
       <RibbonButton label="Increase indent" icon="Indent" shortcut="Tab" disabled={disabled} onClick={() => { editor.commands.focus(); notebookIndent(editor, 1); }} />
       <RibbonMenu label="Alignment" icon={align} disabled={disabled}>
@@ -149,12 +168,15 @@ export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTa
       </RibbonMenu>
     </RibbonGroup>
     <RibbonGroup label="Tags">
-      <RibbonMenu label="Tag" showLabel disabled={disabled}>
-        {NOTEBOOK_TAGS.map(t => <RibbonItem key={t} onSelect={() => tag(t)}>{TAG_LABELS[t]}</RibbonItem>)}
-        <RibbonItem onSelect={() => tag(null)}>Remove tag</RibbonItem>
+      <RibbonMenu label="Tag" showLabel active={compact && findingTags} disabled={disabled && !(compact && onFindTags)}>
+        {NOTEBOOK_TAGS.map(t => <RibbonItem key={t} disabled={disabled} onSelect={() => tag(t)}>{TAG_LABELS[t]}</RibbonItem>)}
+        <RibbonItem disabled={disabled} onSelect={() => tag(null)}>Remove tag</RibbonItem>
+        {compact && (onFindTags || onCreateTask) && <RibbonSeparator />}
+        {compact && onFindTags && <RibbonCheckItem checked={!!findingTags} onSelect={onFindTags}>Find tags</RibbonCheckItem>}
+        {compact && onCreateTask && <RibbonItem disabled={disabled} onSelect={onCreateTask}>Create task</RibbonItem>}
       </RibbonMenu>
-      {onFindTags && <RibbonButton label="Find tags" icon="FindTags" showLabel active={findingTags} onClick={onFindTags} />}
-      {onCreateTask && <RibbonButton label="Create task" icon="Record" showLabel disabled={disabled} onClick={onCreateTask} />}
+      {!compact && onFindTags && <RibbonButton label="Find tags" icon="FindTags" showLabel active={findingTags} onClick={onFindTags} />}
+      {!compact && onCreateTask && <RibbonButton label="Create task" icon="Record" showLabel disabled={disabled} onClick={onCreateTask} />}
     </RibbonGroup>
     <RibbonGroup label="Styles">
       <select aria-label="Paragraph style" title="Styles" className="nb-rselect nb-rstyle" disabled={disabled} value={style} onChange={e => setStyle(e.target.value)}>
