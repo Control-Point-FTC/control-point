@@ -80,7 +80,8 @@ import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, l
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
-import { MAX_PROMPT_CHARS } from "./server/brunoPowerRankings.js";
+import { estimateTokens, fitToWindow, geminiInputTokens, anthropicInputTokens, providerTooLargeMessage, sanitizeBrunoAttachments } from "./server/brunoInput.js";
+import { BRUNO_REQUEST_LIMIT_BYTES, attachedMarker, splitBrunoMessage, tooLargeMessage, typedText } from "./src/utils/brunoFiles.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
@@ -113,6 +114,7 @@ import {
   buildAttendancePrompt,
   buildCoachPrompt,
   NAVGPT_SYSTEM,
+  BUILD_HELPER_SYSTEM,
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
   isQuotaError,
@@ -1801,49 +1803,6 @@ function getSessionId(req: any): string | null {
   return (req.cpSessionToken as string | undefined) || readCookie(req, SESSION_COOKIE) || null;
 }
 
-/**
- * Validate screenshot payloads for Bruno chat. Returns clean
- * { mimeType, data } pairs (base64, no data: prefix), capped at 5 images and
- * ~4MB each so the request stays under the JSON body limit. Anything
- * malformed is dropped rather than failing the whole message.
- */
-function sanitizeBrunoImages(input: any): { mimeType: string; data: string }[] {
-  if (!Array.isArray(input)) return [];
-  const out: { mimeType: string; data: string }[] = [];
-  for (const im of input.slice(0, 5)) {
-    try {
-      const mimeType = String(im?.mimeType || "");
-      let data = String(im?.data || "").replace(/^data:image\/\w+;base64,/, "");
-      if (!mimeType.startsWith("image/")) continue;
-      if (!/^[A-Za-z0-9+/=]+$/.test(data)) continue;
-      if (data.length > 4 * 1024 * 1024) continue;
-      if (data.length < 100) continue;
-      out.push({ mimeType: mimeType.slice(0, 64), data });
-    } catch { /* skip malformed entries */ }
-  }
-  return out;
-}
-
-/**
- * Sanitize attached PDFs for Bruno: { mimeType, data, name } tuples, capped at
- * 5 PDFs and ~14MB base64 each. Only application/pdf is accepted.
- */
-function sanitizeBrunoPdfs(input: any): { mimeType: string; data: string; name: string }[] {
-  if (!Array.isArray(input)) return [];
-  const out: { mimeType: string; data: string; name: string }[] = [];
-  for (const p of input.slice(0, 5)) {
-    try {
-      const mimeType = String(p?.mimeType || "");
-      let data = String(p?.data || "").replace(/^data:application\/pdf;base64,/, "");
-      if (mimeType !== "application/pdf") continue;
-      if (!/^[A-Za-z0-9+/=]+$/.test(data)) continue;
-      if (data.length > 14 * 1024 * 1024) continue;
-      if (data.length < 100) continue;
-      out.push({ mimeType: "application/pdf", data, name: String(p?.name || "document.pdf").slice(0, 128) });
-    } catch { /* skip malformed entries */ }
-  }
-  return out;
-}
 async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
   const sessionId = getSessionId(req);
   if (!sessionId) return null;
@@ -2398,7 +2357,7 @@ async function startServer() {
       try {
         const r = await aiChat({
           extraSystem: system,
-          messages: [{ role: "user", text: user, maxChars: MAX_PROMPT_CHARS }],
+          messages: [{ role: "user", text: user }],
           maxTokens,
           stream: false,
           offline: true,
@@ -2425,6 +2384,18 @@ async function startServer() {
   // A notebook save can contain 2 MB of text plus 4 MB of canvas JSON.
   // Keep the larger reader scoped to notebook routes; other APIs retain 5 MiB.
   app.use("/api/notebook", express.json({ limit: "7mb" }));
+  // Bruno takes files up to the AI provider's own request limit (20 MB, see
+  // src/utils/brunoFiles.ts); the route checks the exact size and says so.
+  // The reader allows a little more for the JSON around them, and a body past
+  // even that gets the same plain message instead of a bare 413.
+  app.use(
+    "/api/ai/build-helper",
+    express.json({ limit: Math.ceil(BRUNO_REQUEST_LIMIT_BYTES * 1.25) }),
+    (err: any, _req: any, res: any, next: any) => {
+      if (err?.type === "entity.too.large") return res.status(413).json({ error: tooLargeMessage(Number(err.length) || 0) });
+      next(err);
+    },
+  );
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
 
   // ---- Auth rate limits (registered before the routes they guard) ----
@@ -5312,6 +5283,8 @@ async function startServer() {
     const IMAGES_STMT = "DELETE FROM message_images WHERE message_id IN (SELECT id FROM messages WHERE team_id = ?) RETURNING id";
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
+      // Their bytes go with the team's stored_files rows (FILES_STMT).
+      { sql: "DELETE FROM bruno_message_files WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM bruno_chats WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM bruno_memories WHERE team_id = ?", args: [teamId] },
@@ -8287,6 +8260,31 @@ async function startServer() {
     }
     return id;
   }
+  /** Save the images and PDFs of a Bruno message beside it (stored_files,
+   *  kind "bruno", R2 when configured). Best effort: the reply still comes if
+   *  a file can't be saved; it just won't show in the chat later. */
+  async function saveBrunoAttachments(chatId: number, messageId: number, teamId: number | null, memberId: number, files: { mimeType: string; data: string; name?: string }[]): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      try {
+        const buffer = Buffer.from(f.data, "base64");
+        const fileId = await storeFile({ teamId, memberId, kind: "bruno", filename: f.name || null, mimeType: f.mimeType, buffer });
+        await dbRun(
+          "INSERT INTO bruno_message_files (chat_id, message_id, file_id, name, mime_type, size, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          chatId, messageId, fileId, f.name || "file", f.mimeType, buffer.length, i,
+        );
+      } catch (e) {
+        console.error("Saving a Bruno attachment failed:", (e as any)?.message || e);
+      }
+    }
+  }
+  /** Delete the files saved in a Bruno chat (before the chat goes). */
+  async function deleteBrunoChatFiles(chatId: number): Promise<void> {
+    const rows = (await dbAll("DELETE FROM bruno_message_files WHERE chat_id = ? RETURNING file_id", chatId)) as any[];
+    for (const r of rows) {
+      try { await deleteStoredRow(Number(r.file_id)); } catch (e) { console.error(`Deleting Bruno file #${r.file_id} failed:`, (e as any)?.message || e); }
+    }
+  }
   /** Delete an R2 object. One R2 refuses is queued in r2_pending_deletes
    *  (its row is already gone, so nothing else would find it) and retried. */
   async function deleteR2Object(key: string): Promise<void> {
@@ -8584,6 +8582,12 @@ async function startServer() {
         if (!f.team_id || f.team_id !== auth.teamId) return res.status(403).end();
         // A feedback screenshot is between its sender and the owner (V5 audit L1).
         if (f.kind === "feedback" && f.member_id !== auth.memberId) return res.status(403).end();
+        // A file attached in a Bruno chat is seen by whoever can see that chat.
+        if (f.kind === "bruno") {
+          const link = (await dbGet("SELECT chat_id FROM bruno_message_files WHERE file_id = ?", f.id)) as any;
+          const chat = link ? await getBrunoChat(Number(link.chat_id), auth.teamId) : null;
+          if (!chat || !canViewBrunoChat(chat, auth.memberId)) return res.status(403).end();
+        }
       }
       // Uploads are untrusted and their MIME type is whatever the uploader
       // sent. Since the files cookie makes these URLs openable directly in a
@@ -9695,6 +9699,7 @@ Rules:
     // Their private AI chats (public team chats stay for the team)
     const privChats = (await dbAll("SELECT id FROM bruno_chats WHERE member_id = ? AND COALESCE(is_public, 0) != 1", target.id)) as any[];
     for (const c of privChats) {
+      await deleteBrunoChatFiles(c.id);
       await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", c.id);
       await dbRun("DELETE FROM bruno_chats WHERE id = ?", c.id);
     }
@@ -13802,24 +13807,25 @@ Rules:
         .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
         .slice(-12)
         // Earlier replies' checked-references blocks are for the chat UI, not the model.
-        .map((m: any) => ({ role: m.role, text: (m.role === "model" ? m.text.replace(/```refs[\s\S]*?(```|$)/g, "").trimEnd() : m.text).slice(0, 2000) }));
+        // Never cut: a pasted message reaches the model whole (server/brunoInput.ts
+        // fits the conversation to the model's window, oldest turns first).
+        .map((m: any) => ({ role: m.role, text: m.role === "model" ? m.text.replace(/```refs[\s\S]*?(```|$)/g, "").trimEnd() : m.text }));
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
-      // Screenshots attached to the latest user message. Validated and used
-      // in-memory for this one request only: they are never written to disk
-      // and never persisted to the database (the stored chat row gets a
-      // "[screenshot attached]" marker instead). This keeps screenshots from
-      // accumulating and eating server space.
-      const images = sanitizeBrunoImages(req.body?.images);
-      const pdfs = sanitizeBrunoPdfs(req.body?.pdfs);
-      // Merge PDFs into the file list for the AI (Gemini inlineData handles both).
+      // Images and PDFs attached to the latest user message (text files are
+      // already in its text). Bounded only by the provider's request size; a
+      // saved chat keeps them beside the message (bruno_message_files).
+      const textBytes = messages.reduce((n: number, m: any) => n + Buffer.byteLength(m.text), 0);
+      const checked = sanitizeBrunoAttachments(req.body?.images, req.body?.pdfs, textBytes);
+      if (checked.error) return res.status(413).json({ error: checked.error, result: checked.error });
+      const attachments = checked.attachments;
       // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue.
       // The owner's own testing is never flagged — reviewing your own flags is noise.
       const reqChatId = parseInt(req.body?.chatId, 10) || null;
       const callerIsOwner = ownerEmails().includes(((auth.email) || "").toLowerCase());
       if (!callerIsOwner) {
-        flagMisuse(auth.memberId, auth.teamId, reqChatId, messages[messages.length - 1].text);
+        flagMisuse(auth.memberId, auth.teamId, reqChatId, typedText(messages[messages.length - 1].text));
       }
       const globalMax = await getMaxTokens("max_tokens_chat", 1024);
       const memberCap = (await dbGet("SELECT ai_max_tokens_reply, bruno_output_level FROM members WHERE id = ?", auth.memberId)) as any;
@@ -13902,7 +13908,8 @@ Rules:
       ].filter(Boolean).join("\n");
       // Store links in the member's message (an Amazon or goBILDA product): read those pages now.
       const latest = messages[messages.length - 1];
-      const linkedCtx = latest?.role === "user" ? await linkedPagesContext(String(latest.text ?? "")).catch((err: unknown) => {
+      // Only links the member typed: an attached file's URLs aren't a request to read them.
+      const linkedCtx = latest?.role === "user" ? await linkedPagesContext(typedText(String(latest.text ?? ""))).catch((err: unknown) => {
         console.error("[bruno] linked pages failed:", err);
         return "";
       }) : "";
@@ -13952,6 +13959,18 @@ Rules:
         t = t.replace(/```notebook\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```notebook[\s\S]*$/, "").trim();
         return t;
       };
+      // The member's own message must fit the model's input window whole: if it
+      // can't, say so now (before anything is saved) rather than cut it.
+      // Older turns that don't fit are dropped later, oldest first.
+      try {
+        const systemTokens = estimateTokens(BUILD_HELPER_SYSTEM) + estimateTokens(systemExtra);
+        const windowTokens = isGeminiConfigured() ? geminiInputTokens() : anthropicInputTokens();
+        fitToWindow([{ ...messages[messages.length - 1], attachments }], { inputTokens: windowTokens, fixedTokens: systemTokens, outputTokens: maxTokens });
+      } catch (e: any) {
+        const msg = providerTooLargeMessage(e);
+        if (!msg) throw e;
+        return res.status(413).json({ error: msg, result: msg });
+      }
       // Optional chat persistence: validate access, store the user message now
       const chatId = parseInt(req.body?.chatId, 10) || 0;
       let chat: any = null;
@@ -13960,18 +13979,26 @@ Rules:
         if (!chat || !canViewBrunoChat(chat, auth.memberId)) {
           return res.status(403).json({ error: "Chat not found" });
         }
-        const userText = messages[messages.length - 1].text + (images.length ? " 📷 [screenshot attached]" : "") + (pdfs.length ? ` 📄 [${pdfs.length} PDF${pdfs.length > 1 ? 's' : ''} attached: ${pdfs.map(p => p.name).join(', ')}]` : "");
+        // Saved whole. Images and PDFs are stored beside the message; the
+        // "📎 Attached:" line keeps later turns aware of them.
+        const typed = messages[messages.length - 1].text;
+        const marker = attachedMarker(attachments.map((a) => a.name || "file"));
+        const userText = marker ? `${typed}\n\n${marker}` : typed;
         const msgCount = (await dbGet("SELECT COUNT(*) AS n FROM bruno_messages WHERE chat_id = ?", chat.id)) as any;
         // The NavGPT -> Bruno handoff re-sends the same coding question under the
         // Bruno persona — don't persist a duplicate user message for it.
         const lastStored = (await dbGet("SELECT role, text FROM bruno_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1", chat.id)) as any;
-        const dupUser = lastStored?.role === "user" && String(lastStored.text).slice(0, 20000) === String(userText).slice(0, 20000);
+        const dupUser = lastStored?.role === "user" && String(lastStored.text) === String(userText);
         if (!dupUser) {
-          (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'user', ?)", chat.id, String(userText).slice(0, 20000)));
+          const info = await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'user', ?)", chat.id, String(userText));
+          await saveBrunoAttachments(chat.id, Number(info.lastInsertRowid), auth.teamId, auth.memberId, attachments);
         }
         if (!chat.title && (msgCount?.n || 0) === 0) {
-          const autoTitle = String(userText).slice(0, 45).trim();
-          (await dbRun("UPDATE bruno_chats SET title = ? WHERE id = ?", (autoTitle || "New chat") + (String(userText).length > 45 ? "…" : ""), chat.id));
+          // Named after what was typed, or else the files.
+          const parts = splitBrunoMessage(String(userText));
+          const named = parts.body || [...parts.textFiles.map((f) => f.name), ...parts.attachedNames].join(", ");
+          const autoTitle = named.slice(0, 45).trim();
+          (await dbRun("UPDATE bruno_chats SET title = ? WHERE id = ?", (autoTitle || "New chat") + (named.length > 45 ? "…" : ""), chat.id));
         }
         (await dbRun("UPDATE bruno_chats SET updated_at = datetime('now') WHERE id = ?", chat.id));
       }
@@ -14018,7 +14045,7 @@ Rules:
             extraSystem: systemExtra,
             // The cut reply goes back whole (16,000 chars at most), so the
             // second call can repeat every item it had proposed.
-            messages: [...messages, { role: "model", maxChars: 16000, text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
+            messages: [...messages, { role: "model", text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
             maxTokens: FINISH_BLOCK_TOKENS,
             stream: false,
             onUsage: (u) => { finishUsage = u; },
@@ -14053,7 +14080,7 @@ Rules:
           ...messages,
           { role: "model", text: firstText },
           // Rows (up to 12,000 chars) and their incomplete/failed notes must reach the model whole.
-          { role: "user", maxChars: 14000, text: followUpPrompt(rows, queries) },
+          { role: "user", text: followUpPrompt(rows, queries) },
         ];
         let secondUsage: any = null;
         const second = await aiChat({
@@ -14125,7 +14152,7 @@ Rules:
             maxTokens,
             stream: true,
             webSearch: req.body?.webSearch === true,
-            images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
+            images: attachments.length ? attachments : undefined,
             onChunk: (chunk) => { const out = hold.push(chunk); if (out) send(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
@@ -14227,7 +14254,7 @@ Rules:
           const savedText = stripActionBlocks(fullText);
           const finalText = savedText + appendix + (lastWord ? closeOpenFence(savedText) + lastWord : "");
           if (chat && String(finalText || "").trim()) {
-            (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
+            (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText)));
           }
           res.end();
         } catch (err: any) {
@@ -14238,7 +14265,8 @@ Rules:
           // Track the attempt even on failure so the owner dashboard reflects
           // real usage during an upstream outage (0 tokens — nothing was generated).
           logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (err as any)?.aiProvider || "unknown");
-          res.end(quota ? `\n\n(${quotaMsg})` : "\n\n(Something glitched — try asking again.)");
+          const tooLarge = providerTooLargeMessage(err);
+          res.end(quota ? `\n\n(${quotaMsg})` : tooLarge ? `\n\n(${tooLarge})` : "\n\n(Something glitched — try asking again.)");
         }
         return;
       }
@@ -14251,7 +14279,7 @@ Rules:
         maxTokens,
         stream: false,
         webSearch: req.body?.webSearch === true,
-        images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
+        images: attachments.length ? attachments : undefined,
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });
@@ -14298,7 +14326,7 @@ Rules:
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
-          (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, modelText.slice(0, 20000)));
+          (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, modelText));
         }
       }
       res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
@@ -14307,9 +14335,12 @@ Rules:
       const anthropicQuota = isAnthropicQuotaError(error);
       const quota = anthropicQuota || isQuotaError(error);
       if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (error as any)?.aiProvider || "unknown");
+      const tooLarge = providerTooLargeMessage(error);
       if (quota) {
         const quotaMsg = anthropicQuota ? ANTHROPIC_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
         res.status(429).json({ error: "AI quota exhausted", result: quotaMsg });
+      } else if (tooLarge) {
+        res.status(413).json({ error: tooLarge, result: tooLarge });
       } else {
         res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
       }
@@ -15080,7 +15111,18 @@ Rules:
       "SELECT id, role, text, created_at FROM bruno_messages WHERE chat_id = ? ORDER BY id ASC",
       chat.id
     )) as any[];
-    res.json({ ...chat, messages });
+    // Images and PDFs saved with each message, in the order they were attached.
+    const files = (await dbAll(
+      "SELECT message_id, file_id, name, mime_type, size FROM bruno_message_files WHERE chat_id = ? ORDER BY message_id, position",
+      chat.id
+    )) as any[];
+    const byMessage = new Map<number, any[]>();
+    for (const f of files) {
+      const list = byMessage.get(Number(f.message_id)) || [];
+      list.push({ id: Number(f.file_id), name: f.name, mimeType: f.mime_type, size: Number(f.size) || 0, url: `/api/files/${f.file_id}` });
+      byMessage.set(Number(f.message_id), list);
+    }
+    res.json({ ...chat, messages: messages.map((m) => (byMessage.has(m.id) ? { ...m, attachments: byMessage.get(m.id) } : m)) });
   });
 
   // Rename / share — owner only (any member, including students, can share)
@@ -15118,6 +15160,7 @@ Rules:
     if (chat.member_id !== auth.memberId && !isAdmin) {
       return res.status(403).json({ error: "Only the chat owner or an admin can delete this" });
     }
+    await deleteBrunoChatFiles(chat.id);
     (await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", chat.id));
     (await dbRun("DELETE FROM bruno_chats WHERE id = ?", chat.id));
     res.json({ success: true });

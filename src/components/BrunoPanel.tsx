@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText, RefreshCw, Square } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus, Paperclip, ChevronDown, RefreshCw, Square } from 'lucide-react';
 import { stripEventBlocks, extractActionProposals } from '../services/aiService';
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
 import ActionProposalCard from './ActionProposalCard';
 import { conversationScope, extractNotebookOps, extractStickyOps, useReceiptKey } from '../services/notebookProposals';
 import { NotebookProposalCard } from './bruno/NotebookProposalCard';
-import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS } from './BrunoImageAttach';
+import { AttachmentStrip, attachPicked, BRUNO_ACCEPT, dragHasFiles, filesFromPaste, SentAttachments, type AttachedFile, type AttachedImage } from './BrunoImageAttach';
+import { splitBrunoMessage } from '../utils/brunoFiles';
 import { cn } from './ui';
 import { BrunoThinking, StreamingCaret } from './bruno/BrunoThinking';
 import { useBrunoPanelChat, BRUNO_RESOURCES as RESOURCES } from './bruno/useBrunoPanelChat';
@@ -34,7 +35,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
-    attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
+    attached, setAttached, attachedFiles, setAttachedFiles,
     outputLevel, changeOutputLevel, levelSaving,
   } = useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved });
   const draftConversation = useReceiptKey();
@@ -42,7 +43,14 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   const modern = useInterfaceMode().mode === 'modern';
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // The latest attachments, for files that finish reading after more were added.
+  const latestFiles = useRef({ images: attached, files: attachedFiles });
+  latestFiles.current = { images: attached, files: attachedFiles };
+  const addFiles = (list: FileList | File[]) => attachPicked(list, () => latestFiles.current, inEpoch((imgs: AttachedImage[], files: AttachedFile[]) => {
+    if (imgs.length) setAttached((p) => [...p, ...imgs]);
+    if (files.length) setAttachedFiles((p) => [...p, ...files]);
+  }));
   const [outputMenuOpen, setOutputMenuOpen] = useState(false);
   const outputMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -217,19 +225,16 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 m.role === 'user' ? (
                   <div key={i} className="flex justify-end">
                     <div className="max-w-[85%] min-w-0 [overflow-wrap:anywhere] rounded-2xl rounded-br-md bg-accent text-accent-ink text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
-                      {m.images?.length ? (
-                        <div className="flex gap-1.5 mb-2">
-                          {m.images.map((img, j) => (
-                            <img
-                              key={j}
-                              src={`data:${img.mimeType};base64,${img.data}`}
-                              alt={`Screenshot ${j + 1}`}
-                              className="w-20 h-20 rounded-lg object-cover border border-black/10"
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                      {m.text}
+                      {(() => {
+                        // Text files travel inside the message: chips, not a wall of text.
+                        const parts = splitBrunoMessage(m.text);
+                        return (
+                          <>
+                            {parts.body && <span className="whitespace-pre-wrap">{parts.body}</span>}
+                            <SentAttachments images={m.images} pdfs={m.pdfs} saved={m.saved} textFiles={parts.textFiles} names={parts.attachedNames} />
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ) : (
@@ -287,59 +292,56 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 send();
               }}
               onPaste={(e) => {
-                // Screenshots paste straight into the composer.
-                imagesFromPaste(e).then(inEpoch((imgs) => {
-                  if (imgs.length) { e.preventDefault(); addAttached(imgs); }
-                }));
+                // Screenshots and copied files attach; pasted text goes in as typed.
+                const files = filesFromPaste(e);
+                if (files.length) { if (!e.clipboardData.getData('text/plain')) e.preventDefault(); void addFiles(files); }
               }}
-              className="p-3 border-t border-text-base/10 bg-text-base/[0.02] flex-shrink-0"
+              onDragEnter={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setDragging(true); } }}
+              onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+              onDrop={(e) => {
+                if (!dragHasFiles(e)) return;
+                e.preventDefault();
+                setDragging(false);
+                void addFiles(e.dataTransfer.files);
+              }}
+              className={cn('relative p-3 border-t border-text-base/10 bg-text-base/[0.02] flex-shrink-0', dragging && 'ring-2 ring-inset ring-accent/40')}
             >
-              <AttachedImageStrip images={attached} onRemove={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))} />
-              <AttachedPdfStrip pdfs={attachedPdfs} onRemove={(idx) => setAttachedPdfs((p) => p.filter((_, j) => j !== idx))} />
+              {dragging && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/90 text-sm font-medium text-accent">
+                  Drop files to attach them
+                </div>
+              )}
+              <AttachmentStrip
+                images={attached}
+                files={attachedFiles}
+                onRemoveImage={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))}
+                onRemoveFile={(idx) => setAttachedFiles((p) => p.filter((_, j) => j !== idx))}
+              />
               <div className="flex gap-2 items-end">
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="image/*"
+                  accept={BRUNO_ACCEPT}
                   multiple
                   className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
                   onChange={(e) => {
-                    filesToAttachedImages(e.target.files || []).then(inEpoch(addAttached));
+                    const list = Array.from(e.target.files || []);
                     e.target.value = '';
-                  }}
-                />
-                <input
-                  ref={pdfRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs) => {
-                      setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS));
-                    }));
-                    e.target.value = '';
+                    void addFiles(list);
                   }}
                 />
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  disabled={busy || attached.length >= MAX_BRUNO_IMAGES}
-                  aria-label="Attach a screenshot"
-                  title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} images` : "Attach a screenshot"}
+                  disabled={busy}
+                  aria-label="Attach files"
+                  title="Attach files: images, PDFs, text and code (or drop or paste them here)"
                   className="w-10 h-10 shrink-0 rounded-xl border border-text-base/10 text-text-muted hover:text-accent hover:border-accent/40 flex items-center justify-center transition disabled:opacity-40"
                 >
-                  <ImagePlus className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => pdfRef.current?.click()}
-                  disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS}
-                  aria-label="Attach a PDF"
-                  title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : "Attach a PDF"}
-                  className="w-10 h-10 shrink-0 rounded-xl border border-text-base/10 text-text-muted hover:text-accent hover:border-accent/40 flex items-center justify-center transition disabled:opacity-40"
-                >
-                  <FileText className="w-4 h-4" />
+                  <Paperclip className="w-4 h-4" />
                 </button>
                 <div className="flex-1 min-w-0">
                   <ChatInput
@@ -347,7 +349,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                     onChange={setInput}
                     onSend={() => send()}
                     disabled={busy}
-                    canSend={attached.length > 0 || attachedPdfs.length > 0}
+                    canSend={attached.length > 0 || attachedFiles.length > 0}
                     placeholder="Ask about mechanisms, code, strategy…"
                   />
                 </div>
@@ -364,7 +366,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 )}
               </div>
               <p className="text-[10px] text-text-muted/60 mt-1.5 px-1">
-                Grounded in GM0, FTC docs &amp; REV resources. Screenshots are read once and never saved.
+                Grounded in GM0, FTC docs &amp; REV resources. Attach images, PDFs, text or code files: pick several, drop or paste them.
               </p>
             </form>
             </div>

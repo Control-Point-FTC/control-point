@@ -13,11 +13,12 @@ import { cn } from '../cn';
 export interface ThinkingStep { id: string; label: string }
 
 /** Steps Bruno really performs for this request. */
-export function thinkingSteps(opts: { page?: string | null; images?: number; pdfs?: number; scouting?: boolean; history?: number }): ThinkingStep[] {
+export function thinkingSteps(opts: { page?: string | null; images?: number; pdfs?: number; files?: number; scouting?: boolean; history?: number }): ThinkingStep[] {
   const steps: ThinkingStep[] = [];
   if (opts.page) steps.push({ id: 'page', label: `Looking at ${opts.page}` });
-  if (opts.images) steps.push({ id: 'img', label: `Reading ${opts.images} screenshot${opts.images === 1 ? '' : 's'}` });
+  if (opts.images) steps.push({ id: 'img', label: `Looking at ${opts.images} image${opts.images === 1 ? '' : 's'}` });
   if (opts.pdfs) steps.push({ id: 'pdf', label: `Reading ${opts.pdfs} PDF${opts.pdfs === 1 ? '' : 's'}` });
+  if (opts.files) steps.push({ id: 'file', label: `Reading ${opts.files} file${opts.files === 1 ? '' : 's'}` });
   if (opts.scouting) steps.push({ id: 'scout', label: 'Pulling scouting data' });
   if ((opts.history ?? 0) > 1) steps.push({ id: 'hist', label: 'Recalling this conversation' });
   steps.push({ id: 'think', label: 'Thinking it through' });

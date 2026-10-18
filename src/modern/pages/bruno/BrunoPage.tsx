@@ -152,7 +152,7 @@ export function BrunoPage(props: any) {
               ) : (
                 <motion.div key={`chat-${c.activeId ?? 'new'}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
                   {c.messages.map((m, i) => (m.role === 'user'
-                    ? <UserTurn key={i} text={m.text} images={(m as any).images?.length} pdfs={(m as any).pdfs?.length} />
+                    ? <UserTurn key={i} text={m.text} images={m.images} pdfs={m.pdfs} saved={m.saved} />
                     : <BrunoReply
                         key={i} conversation={conversationScope(c.activeId, draftConversation)} text={m.text} index={i} isLastModel={i === c.lastModelIdx} busy={c.busy} think={c.thinkByIndex[i]}
                         proposal={c.proposalState[i]} switchDismissed={c.dismissedSwitch.includes(i)}
@@ -169,10 +169,10 @@ export function BrunoPage(props: any) {
         <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
           <BrunoComposer
             value={c.input} onChange={c.setInput} onSend={() => void c.send()} onStop={c.stop} busy={c.busy}
-            attached={c.attached} setAttached={c.setAttached} attachedPdfs={c.attachedPdfs} setAttachedPdfs={c.setAttachedPdfs}
+            attached={c.attached} setAttached={c.setAttached} attachedFiles={c.attachedFiles} setAttachedFiles={c.setAttachedFiles}
             placeholder={`Message ${c.name}…`}
           />
-          <p className="mt-1.5 text-center text-xs text-muted-foreground">Grounded in GM0, FTC docs and supplier resources. Screenshots and PDFs are read once and never saved.</p>
+          <p className="mt-1.5 text-center text-xs text-muted-foreground">Grounded in GM0, FTC docs and supplier resources. Attach images, PDFs, text or code files: pick several, drop or paste them.</p>
         </div>
       </section>
 

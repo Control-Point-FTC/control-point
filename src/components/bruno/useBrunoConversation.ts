@@ -10,7 +10,8 @@ import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
-import { MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
+import { type AttachedFile, type AttachedImage } from '../BrunoImageAttach';
+import { withTextFiles } from '../../utils/brunoFiles';
 import { type ProposalStatus } from '../ActionProposalCard';
 import { resultLinks, type ResultLink } from './resultLinks';
 import { useBatchedStream } from '../useBatchedStream';
@@ -59,17 +60,17 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   // answer can still show "Thought for Ns" and its steps.
   const [thinkByIndex, setThinkByIndex] = useState<Record<number, LiveThink>>({});
   const abortRef = useRef<AbortController | null>(null);
-  // Screenshots / PDFs attached to the next message — cleared on send, never saved.
+  // Images, PDFs and text files for the next message (cleared on send).
   const [attached, setAttached] = useState<AttachedImage[]>([]);
-  const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   // What's attached right now (send's closure is older than files added while it runs).
   const attachedRef = useRef(attached);
   attachedRef.current = attached;
-  const attachedPdfsRef = useRef(attachedPdfs);
-  attachedPdfsRef.current = attachedPdfs;
+  const attachedFilesRef = useRef(attachedFiles);
+  attachedFilesRef.current = attachedFiles;
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
-    setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
+    setAttached((prev) => [...prev, ...imgs]);
   };
   // NavGPT -> Bruno coding handoff: once accepted, this chat stays on the plain
   // Bruno persona. Dismissed offers are tracked by message index.
@@ -126,19 +127,19 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
         const res = await apiFetch(`/api/bruno/chats/${activeId}`);
         if (res.ok) {
           const data = await res.json();
-          setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
+          setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text, ...(m.attachments?.length ? { saved: m.attachments } : {}) })));
         }
       } catch { /* keep previous */ }
     })();
   }, [activeId]);
 
   /** Stream one reply for `next` (already ending in the user's turn). */
-  const streamReply = async (next: BuildHelperMessage[], chatId: number, opts: { persona?: string; images?: number; pdfs?: number }) => {
+  const streamReply = async (next: BuildHelperMessage[], chatId: number, opts: { persona?: string; images?: number; pdfs?: number; files?: number }) => {
     stream.start();
     let agg = '';
     const startedAt = Date.now();
     let gotFirst = false;
-    let think: LiveThink = { steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: opts.images ?? 0, pdfs: opts.pdfs ?? 0, history: next.length }), startedAt, thoughtMs: null };
+    let think: LiveThink = { steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: opts.images ?? 0, pdfs: opts.pdfs ?? 0, files: opts.files ?? 0, history: next.length }), startedAt, thoughtMs: null };
     setLiveThink(think);
     const ac = new AbortController();
     abortRef.current = ac;
@@ -179,13 +180,15 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
-    if ((!content && !attached.length && !attachedPdfs.length) || busyRef.current) return;
+    if ((!content && !attached.length && !attachedFiles.length) || busyRef.current) return;
     chose.current = true;
     setInput('');
     const outgoing = attached;
-    const outgoingPdfs = attachedPdfs;
+    const outgoingFiles = attachedFiles;
+    const outgoingPdfs = outgoingFiles.flatMap((f) => (f.kind === 'pdf' ? [{ mimeType: f.mimeType, data: f.data, name: f.name }] : []));
+    const outgoingTexts = outgoingFiles.flatMap((f) => (f.kind === 'text' ? [{ name: f.name, text: f.text }] : []));
     setAttached([]);
-    setAttachedPdfs([]);
+    setAttachedFiles([]);
     let chatId = activeId;
     // Busy from the start: opening the new chat below must not load its
     // (still empty) server copy over the message being sent. Stop works from
@@ -195,20 +198,12 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     const startAc = new AbortController();
     abortRef.current = startAc;
     // The message wasn't sent: give it back, keeping anything typed or
-    // attached since (the composer stays editable while busy).
-    // Files go back first and the limits still hold, so the composer only
-    // shows what a send will really include; newer files that don't fit are
-    // mentioned in a notice.
+    // attached since (the composer stays editable while busy). The sent
+    // files go back first, then any added meanwhile.
     const giveBack = () => {
       setInput((cur) => (cur.trim() ? cur : content));
-      const images = [...outgoing, ...attachedRef.current];
-      const pdfs = [...outgoingPdfs, ...attachedPdfsRef.current];
-      setAttached(images.slice(0, MAX_BRUNO_IMAGES));
-      setAttachedPdfs(pdfs.slice(0, MAX_BRUNO_PDFS));
-      const dropped = Math.max(0, images.length - MAX_BRUNO_IMAGES) + Math.max(0, pdfs.length - MAX_BRUNO_PDFS);
-      if (dropped) {
-        notify(`Your message is back in the box. ${dropped} newer file${dropped === 1 ? '' : 's'} didn't fit (up to ${MAX_BRUNO_IMAGES} images and ${MAX_BRUNO_PDFS} PDFs); add ${dropped === 1 ? 'it' : 'them'} again after sending.`, 'info');
-      }
+      setAttached([...outgoing, ...attachedRef.current]);
+      setAttachedFiles([...outgoingFiles, ...attachedFilesRef.current]);
     };
     try {
       if (!chatId) {
@@ -234,12 +229,13 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       if (startAc.signal.aborted) { giveBack(); return; }
       const next: BuildHelperMessage[] = [...messages, {
         role: 'user',
-        text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?'),
+        // Text and code files go in the message itself (shown as chips).
+        text: withTextFiles(content || (outgoing.length + outgoingFiles.length > 1 ? 'Take a look at these files.' : outgoingFiles.length ? 'Take a look at this file.' : 'What do you see in this screenshot?'), outgoingTexts),
         ...(outgoing.length ? { images: outgoing } : {}),
         ...(outgoingPdfs.length ? { pdfs: outgoingPdfs } : {}),
       }];
       setMessages(next);
-      await streamReply(next, chatId!, { persona: personaByChat[chatId!], images: outgoing.length, pdfs: outgoingPdfs.length });
+      await streamReply(next, chatId!, { persona: personaByChat[chatId!], images: outgoing.length, pdfs: outgoingPdfs.length, files: outgoingTexts.length });
       fetchChats(chatId);
     } catch (e: any) {
       stream.finish();
@@ -342,7 +338,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     name, chats, myChats, teamChats, chatsHasMore, loading, fetchChats,
     activeId, setActiveId, activeChat, isOwner, isAdmin, newChat,
     messages, lastModelIdx, input, setInput, busy, liveThink, thinkByIndex, stream, send, stop,
-    attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
+    attached, setAttached, attachedFiles, setAttachedFiles, addAttached,
     personaByChat, dismissedSwitch, proposalState, confirmProposals, dismissProposal, dismissSwitch, switchToBruno,
     renameChat, togglePublic, removeChat,
   };

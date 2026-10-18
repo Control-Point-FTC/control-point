@@ -7,7 +7,7 @@ afterEach(cleanup);
 describe('thinkingSteps', () => {
   it('only lists what Bruno is actually given', () => {
     const steps = thinkingSteps({ page: 'Predict', images: 2, pdfs: 0, scouting: true, history: 3 }).map((s) => s.label);
-    expect(steps).toEqual(['Looking at Predict', 'Reading 2 screenshots', 'Pulling scouting data', 'Recalling this conversation', 'Thinking it through']);
+    expect(steps).toEqual(['Looking at Predict', 'Looking at 2 images', 'Pulling scouting data', 'Recalling this conversation', 'Thinking it through']);
     expect(thinkingSteps({}).map((s) => s.label)).toEqual(['Thinking it through']);
   });
 });

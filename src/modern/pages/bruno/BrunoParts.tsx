@@ -1,9 +1,9 @@
 // Modern Bruno building blocks: the composer (attachments, Stop), a model
 // message (markdown, proposal card, NavGPT handoff), the proposal card and
 // the live reply (thinking steps → streaming text with a caret).
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { ArrowRight, ArrowUp, Check, FileText, ImagePlus, Loader2, Square, X } from 'lucide-react';
+import { ArrowRight, ArrowUp, Check, Loader2, Paperclip, Square, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ResultLink } from '../../../components/bruno/resultLinks';
 import { cn } from '../../../components/cn';
@@ -17,9 +17,10 @@ import { useProposalContext, useTaskIndex } from '../../../services/proposalCont
 import { extractNotebookOps, extractStickyOps } from '../../../services/notebookProposals';
 import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
 import {
-  AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste,
-  MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf,
+  AttachmentStrip, attachPicked, BRUNO_ACCEPT, dragHasFiles, filesFromPaste, SentAttachments,
+  type AttachedFile, type AttachedImage, type SavedAttachment,
 } from '../../../components/BrunoImageAttach';
+import { splitBrunoMessage } from '../../../utils/brunoFiles';
 import { BrunoThinking, StreamingCaret } from '../../../components/bruno/BrunoThinking';
 import { inEpoch } from '../../drafts';
 import type { LiveThink } from '../../../components/bruno/useBrunoConversation';
@@ -32,7 +33,7 @@ export function BrunoAvatar({ className }: { className?: string }) {
   );
 }
 
-export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached, setAttached, attachedPdfs, setAttachedPdfs, placeholder, autoFocus, compact, tools }: {
+export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached, setAttached, attachedFiles, setAttachedFiles, placeholder, autoFocus, compact, tools }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
@@ -40,8 +41,9 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
   busy: boolean;
   attached: AttachedImage[];
   setAttached: (fn: (p: AttachedImage[]) => AttachedImage[]) => void;
-  attachedPdfs: AttachedPdf[];
-  setAttachedPdfs: (fn: (p: AttachedPdf[]) => AttachedPdf[]) => void;
+  /** PDFs and text / code files. */
+  attachedFiles: AttachedFile[];
+  setAttachedFiles: (fn: (p: AttachedFile[]) => AttachedFile[]) => void;
   placeholder?: string;
   autoFocus?: boolean;
   compact?: boolean;
@@ -50,24 +52,49 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // The latest attachments, for files that finish reading after more were added.
+  const latest = useRef({ images: attached, files: attachedFiles });
+  latest.current = { images: attached, files: attachedFiles };
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, compact ? 140 : 220)}px`;
   }, [value, compact]);
-  const canSend = !busy && (!!value.trim() || attached.length > 0 || attachedPdfs.length > 0);
-  const addImages = (imgs: AttachedImage[]) => { if (imgs.length) setAttached((p) => [...p, ...imgs].slice(0, MAX_BRUNO_IMAGES)); };
+  const canSend = !busy && (!!value.trim() || attached.length > 0 || attachedFiles.length > 0);
+  // Picked, dropped or pasted: several at once, all kinds together.
+  const addFiles = (list: FileList | File[]) => attachPicked(list, () => latest.current, inEpoch((imgs: AttachedImage[], files: AttachedFile[]) => {
+    if (imgs.length) setAttached((p) => [...p, ...imgs]);
+    if (files.length) setAttachedFiles((p) => [...p, ...files]);
+  }));
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); if (canSend) onSend(); }}
-      className="rounded-2xl border border-border bg-card shadow-sm transition-colors focus-within:border-ring/60"
+      onDragEnter={(e) => { if (dragHasFiles(e)) { e.preventDefault(); setDragging(true); } }}
+      onDragOver={(e) => { if (dragHasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={(e) => {
+        if (!dragHasFiles(e)) return;
+        e.preventDefault();
+        setDragging(false);
+        void addFiles(e.dataTransfer.files);
+      }}
+      className={cn('relative rounded-2xl border border-border bg-card shadow-sm transition-colors focus-within:border-ring/60', dragging && 'border-accent ring-2 ring-accent/30')}
     >
-      {(attached.length > 0 || attachedPdfs.length > 0) && (
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/90 text-sm font-medium text-accent">
+          Drop files to attach them
+        </div>
+      )}
+      {(attached.length > 0 || attachedFiles.length > 0) && (
         <div className="px-3 pt-3">
-          <AttachedImageStrip images={attached} onRemove={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))} />
-          <AttachedPdfStrip pdfs={attachedPdfs} onRemove={(idx) => setAttachedPdfs((p) => p.filter((_, j) => j !== idx))} />
+          <AttachmentStrip
+            images={attached}
+            files={attachedFiles}
+            onRemoveImage={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))}
+            onRemoveFile={(idx) => setAttachedFiles((p) => p.filter((_, j) => j !== idx))}
+          />
         </div>
       )}
       <textarea
@@ -76,7 +103,11 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         value={value}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
-        onPaste={(e) => { void imagesFromPaste(e).then(inEpoch(addImages)); }}
+        onPaste={(e) => {
+          // Screenshots and copied files attach; pasted text goes in as typed.
+          const files = filesFromPaste(e);
+          if (files.length) { if (!e.clipboardData.getData('text/plain')) e.preventDefault(); void addFiles(files); }
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -88,10 +119,8 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
       />
       <div className="flex items-center gap-1 px-2 pb-2">
-        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void filesToAttachedImages(e.target.files || []).then(inEpoch(addImages)); e.target.value = ''; }} />
-        <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={(e) => { void filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs: AttachedPdf[]) => setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS)))); e.target.value = ''; }} />
-        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
-        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
+        <input ref={fileRef} type="file" accept={BRUNO_ACCEPT} multiple className="hidden" aria-hidden="true" tabIndex={-1} onChange={(e) => { const list = Array.from(e.target.files || []); e.target.value = ''; void addFiles(list); }} />
+        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach files" title="Attach files: images, PDFs, text and code (or drop or paste them here)" disabled={busy} onClick={() => fileRef.current?.click()}><Paperclip /></Button>
         {tools}
         {/* A spacer keeps Send at the right edge whether or not the hint shows;
             the side panel shows its own tip line, so compact hides the hint. */}
@@ -210,12 +239,14 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   );
 });
 
-export function UserTurn({ text, images, pdfs }: { text: string; images?: number; pdfs?: number }) {
+export function UserTurn({ text, images, pdfs, saved }: { text: string; images?: AttachedImage[]; pdfs?: { name: string }[]; saved?: SavedAttachment[] }) {
+  // Text files travel inside the message: show them as chips, not a wall of text.
+  const parts = useMemo(() => splitBrunoMessage(text), [text]);
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
-        <p className="whitespace-pre-wrap break-words">{text}</p>
-        {(images || pdfs) ? <p className="mt-1 text-xs text-muted-foreground">{[images ? `${images} screenshot${images === 1 ? '' : 's'}` : '', pdfs ? `${pdfs} PDF${pdfs === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</p> : null}
+        {parts.body && <p className="whitespace-pre-wrap break-words">{parts.body}</p>}
+        <SentAttachments images={images} pdfs={pdfs} saved={saved} textFiles={parts.textFiles} names={parts.attachedNames} />
       </div>
     </div>
   );
