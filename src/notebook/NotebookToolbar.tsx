@@ -138,6 +138,12 @@ function DensityToggle({ density, onChange }: { density: RibbonDensity; onChange
 }
 
 const EXPANDED_NOTICE = 'Full toolbar on. The chevron at the right end brings back the compact row.';
+/** The member's density, plus a notice when the chevron turns the full toolbar on (cleared on going back). */
+function useDensity(memberId: number | null | undefined, setNotice: React.Dispatch<React.SetStateAction<string>>) {
+  const [density, save] = useDensityPreference(densityKey(memberId));
+  const setDensity = (value: RibbonDensity) => { save(value); setNotice(current => value === 'expanded' ? EXPANDED_NOTICE : current === EXPANDED_NOTICE ? '' : current); };
+  return [density, setDensity] as const;
+}
 
 type ToolbarProps = {
   editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>; requestedGroup?: { group: string; key: number };
@@ -159,11 +165,10 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   useEffect(() => { if (disabled) { setRecordOpen(false); setTaskOpen(false); } }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
-  const [density, saveDensity] = useDensityPreference(densityKey(workspace?.memberId));
+  const [density, setDensity] = useDensity(workspace?.memberId, setNotice);
   const compact = density === 'compact';
   const bar = useRef<HTMLDivElement>(null);
   useNarrow(bar, TOOL_ROW_LIMITS);
-  const setDensity = (value: RibbonDensity) => { saveDensity(value); setNotice(current => value === 'expanded' ? EXPANDED_NOTICE : current === EXPANDED_NOTICE ? '' : current); };
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
   const [localTags, setLocalTags] = useState(false);
   const tagsWorkspace = workspace;
@@ -314,7 +319,8 @@ export function NotebookRibbonShell({ loading, barHost }: { loading: boolean; ba
   const mobile = useNotebookMobile();
   const [group, setGroup] = useState<Tab>('home');
   const workspace = useNotebookWorkspace();
-  const [density, setDensity] = useDensityPreference(densityKey(workspace?.memberId));
+  const [notice, setNotice] = useState('');
+  const [density, setDensity] = useDensity(workspace?.memberId, setNotice);
   const bar = useRef<HTMLDivElement>(null);
   useNarrow(bar, TOOL_ROW_LIMITS);
   const section = workspace?.currentSection ?? null;
@@ -334,5 +340,6 @@ export function NotebookRibbonShell({ loading, barHost }: { loading: boolean; ba
       </div></ToolScroller>
       <DensityToggle density={density} onChange={setDensity} />
     </div>
+    {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
   </div></RibbonDensityContext.Provider>;
 }

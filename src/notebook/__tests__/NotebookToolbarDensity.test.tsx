@@ -2,7 +2,7 @@ import React from 'react';
 import { Editor } from '@tiptap/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { NotebookToolbar } from '../NotebookToolbar';
+import { NotebookRibbonShell, NotebookToolbar } from '../NotebookToolbar';
 import { notebookExtensions } from '../editorSchema';
 import { NotebookWorkspaceContext, type NotebookWorkspace } from '../workspaceContext';
 import { densityKey, resetDensityMemory } from '../ribbon/density';
@@ -113,6 +113,13 @@ describe('toolbar density', () => {
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Show the full toolbar' }));
     expect(screen.getByRole('status').textContent).toMatch(/chevron at the right end brings back the compact row/);
+    fireEvent.click(screen.getByRole('button', { name: 'Use the compact toolbar' }));
+    expect(screen.queryByText(/brings back the compact row/)).toBeNull();
+    // The same before a page is open (empty notebook or still loading).
+    cleanup();
+    render(<NotebookWorkspaceContext.Provider value={workspace()}><NotebookRibbonShell loading={false} /></NotebookWorkspaceContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the full toolbar' }));
+    expect(screen.getByText(/chevron at the right end brings back the compact row/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Use the compact toolbar' }));
     expect(screen.queryByText(/brings back the compact row/)).toBeNull();
   });
