@@ -16,6 +16,7 @@ vi.setConfig({ testTimeout: 60_000 });
 /** A stand-in for Gemini that answers "ok" and records each request. */
 class FakeGemini {
   requests: any[] = [];
+  script: string[] = [];
   private server!: Server;
   base = "";
   async start() {
@@ -25,7 +26,8 @@ class FakeGemini {
       req.on("end", () => {
         try { this.requests.push(JSON.parse(raw)); } catch { this.requests.push(null); }
         res.writeHead(200, { "Content-Type": "text/event-stream" });
-        res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "Read them all." }] } }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 } })}\r\n\r\n`);
+        const text = this.script.shift() ?? "Read them all.";
+        res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 } })}\r\n\r\n`);
       });
     });
     await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", () => r()));
@@ -46,7 +48,7 @@ beforeAll(async () => {
   ben = await t.session(await seedMember(t.db, team, "Ben", "ben@files.test"));
 }, 120_000);
 afterAll(async () => { await t?.stop(); await gemini.stop(); });
-beforeEach(() => { gemini.requests = []; });
+beforeEach(() => { gemini.requests = []; gemini.script = []; });
 
 async function send(body: any, session = ada) {
   const chat = await t.post("/api/bruno/chats", {}, session);
@@ -68,7 +70,34 @@ describe("no paste limit", () => {
   });
 });
 
+describe("history and the provider's request size", () => {
+  it("an earlier long paste never blocks a message with files: the oldest turns go first", async () => {
+    const old = "y".repeat(2 * 1024 * 1024);
+    const pdf = b64(14 * 1024 * 1024); // ~18.7 MB as base64
+    const r = await send({
+      messages: [{ role: "user", text: old }, { role: "model", text: "ok" }, { role: "user", text: "Now read this" }],
+      pdfs: [{ mimeType: "application/pdf", data: pdf, name: "manual.pdf" }],
+    });
+    expect(r.status).toBe(200);
+    const contents = gemini.requests[0].contents;
+    expect(contents).toHaveLength(1); // the 2 MB paste no longer fits beside the PDF
+    expect(contents[0].parts.at(-1).text).toBe("Now read this");
+    expect(contents[0].parts[0].inlineData.mimeType).toBe("application/pdf");
+  });
+});
+
 describe("several files in one message", () => {
+  it("stay with the message for the lookup follow-up call", async () => {
+    gemini.script = ["Checking your tasks…\n```lookup\n{\"kind\":\"tasks\"}\n```", "Compared."];
+    const png = b64(3000);
+    const r = await send({ messages: [{ role: "user", text: "Compare this to our tasks" }], images: [{ mimeType: "image/png", data: png, name: "list.png" }] });
+    expect(r.status).toBe(200);
+    expect(gemini.requests).toHaveLength(2);
+    const withFile = (i: number) => gemini.requests[i].contents.some((c: any) => c.parts.some((p: any) => p.inlineData?.data === png));
+    expect(withFile(0)).toBe(true);
+    expect(withFile(1)).toBe(true);
+  });
+
   it("reach the model as inline parts, are saved with the message, and only the chat's viewers can open them", async () => {
     const png = b64(3000), jpg = b64(2000), pdf = b64(5000);
     const text = withTextFiles("What's wrong with our intake?", [{ name: "Intake.java", text: "class Intake {}" }, { name: "notes.md", text: "# notes" }]);

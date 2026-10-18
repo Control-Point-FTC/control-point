@@ -239,6 +239,14 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       fetchChats(chatId);
     } catch (e: any) {
       stream.finish();
+      if (e?.status === 413) {
+        // Too big to send (the server saved nothing): the message and its
+        // files go back in the composer so the member can trim and resend.
+        setMessages((prev) => prev.slice(0, -1));
+        giveBack();
+        notify(e.serverError || "That message is too big to send. Remove some files and try again.", 'error');
+        return;
+      }
       setMessages((prev) => [...prev, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);
     } finally {
       if (abortRef.current === startAc) abortRef.current = null;

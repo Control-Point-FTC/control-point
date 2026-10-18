@@ -108,5 +108,5 @@ export function formatBytes(n: number): string {
 
 /** What the member is told when the files are more than one request can carry. */
 export function tooLargeMessage(totalBytes: number): string {
-  return `These files come to ${formatBytes(totalBytes)}, more than the ${formatBytes(BRUNO_REQUEST_LIMIT_BYTES)} the AI provider accepts in one message. Send some of them now and the rest in your next message.`;
+  return `This message and its files come to ${formatBytes(totalBytes)}, more than the ${formatBytes(BRUNO_REQUEST_LIMIT_BYTES)} the AI provider accepts in one message. Send some of the files now and the rest in your next message.`;
 }

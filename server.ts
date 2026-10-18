@@ -80,7 +80,7 @@ import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, l
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
-import { estimateTokens, fitToWindow, geminiInputTokens, anthropicInputTokens, providerTooLargeMessage, sanitizeBrunoAttachments } from "./server/brunoInput.js";
+import { estimateTokens, fitToRequestBytes, fitToWindow, geminiInputTokens, anthropicInputTokens, providerTooLargeMessage, sanitizeBrunoAttachments } from "./server/brunoInput.js";
 import { BRUNO_REQUEST_LIMIT_BYTES, attachedMarker, splitBrunoMessage, tooLargeMessage, typedText } from "./src/utils/brunoFiles.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
@@ -123,6 +123,7 @@ import {
 import {
   aiChat,
   isGeminiConfigured,
+  planChatRoute,
   isAnthropicQuotaError,
   ANTHROPIC_QUOTA_EXHAUSTED_MSG,
 } from "./ai-hybrid.js";
@@ -8266,19 +8267,34 @@ async function startServer() {
   async function saveBrunoAttachments(chatId: number, messageId: number, teamId: number | null, memberId: number, files: { mimeType: string; data: string; name?: string }[]): Promise<void> {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
+      let fileId: number | null = null;
       try {
         const buffer = Buffer.from(f.data, "base64");
-        const fileId = await storeFile({ teamId, memberId, kind: "bruno", filename: f.name || null, mimeType: f.mimeType, buffer });
-        await dbRun(
-          "INSERT INTO bruno_message_files (chat_id, message_id, file_id, name, mime_type, size, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          chatId, messageId, fileId, f.name || "file", f.mimeType, buffer.length, i,
+        fileId = await storeFile({ teamId, memberId, kind: "bruno", filename: f.name || null, mimeType: f.mimeType, buffer });
+        // Linked only while the message still exists: a chat deleted during
+        // the upload deletes its messages before its files (deleteBrunoChat),
+        // so a link either lands first and goes with the chat, or not at all.
+        const linked = await dbRun(
+          `INSERT INTO bruno_message_files (chat_id, message_id, file_id, name, mime_type, size, position)
+           SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM bruno_messages WHERE id = ? AND chat_id = ?)`,
+          chatId, messageId, fileId, f.name || "file", f.mimeType, buffer.length, i, messageId, chatId,
         );
+        if (!linked.changes) { await deleteStoredRow(fileId); return; }
       } catch (e) {
         console.error("Saving a Bruno attachment failed:", (e as any)?.message || e);
+        // Never leave bytes no message points at.
+        if (fileId != null) await deleteStoredRow(fileId).catch((err: any) => console.error("Removing an unsaved Bruno file failed:", err?.message || err));
       }
     }
   }
-  /** Delete the files saved in a Bruno chat (before the chat goes). */
+  /** Delete a Bruno chat: its messages and the chat first, then its files
+   *  (see saveBrunoAttachments for why the order matters). */
+  async function deleteBrunoChat(chatId: number): Promise<void> {
+    await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", chatId);
+    await dbRun("DELETE FROM bruno_chats WHERE id = ?", chatId);
+    await deleteBrunoChatFiles(chatId);
+  }
+  /** Delete the files saved in a Bruno chat. */
   async function deleteBrunoChatFiles(chatId: number): Promise<void> {
     const rows = (await dbAll("DELETE FROM bruno_message_files WHERE chat_id = ? RETURNING file_id", chatId)) as any[];
     for (const r of rows) {
@@ -9699,9 +9715,7 @@ Rules:
     // Their private AI chats (public team chats stay for the team)
     const privChats = (await dbAll("SELECT id FROM bruno_chats WHERE member_id = ? AND COALESCE(is_public, 0) != 1", target.id)) as any[];
     for (const c of privChats) {
-      await deleteBrunoChatFiles(c.id);
-      await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", c.id);
-      await dbRun("DELETE FROM bruno_chats WHERE id = ?", c.id);
+      await deleteBrunoChat(c.id);
     }
     await dbRun("DELETE FROM ai_usage WHERE member_id = ?", target.id);
     // Bruno's personal facts about them (team facts stay with the team).
@@ -13816,10 +13830,18 @@ Rules:
       // Images and PDFs attached to the latest user message (text files are
       // already in its text). Bounded only by the provider's request size; a
       // saved chat keeps them beside the message (bruno_message_files).
-      const textBytes = messages.reduce((n: number, m: any) => n + Buffer.byteLength(m.text), 0);
-      const checked = sanitizeBrunoAttachments(req.body?.images, req.body?.pdfs, textBytes);
+      const checked = sanitizeBrunoAttachments(req.body?.images, req.body?.pdfs);
       if (checked.error) return res.status(413).json({ error: checked.error, result: checked.error });
       const attachments = checked.attachments;
+      // The whole request must fit the provider's size: older turns go first
+      // (a long paste earlier in the chat never blocks a new question); only
+      // a current message that can't fit by itself is refused.
+      const fittedBytes = fitToRequestBytes(messages, attachments, BRUNO_REQUEST_LIMIT_BYTES, Buffer.byteLength(BUILD_HELPER_SYSTEM));
+      if (fittedBytes.error) return res.status(413).json({ error: fittedBytes.error, result: fittedBytes.error });
+      messages.splice(0, messages.length, ...fittedBytes.messages);
+      // The files stay on the member's message for every call this request
+      // makes (lookup follow-ups, the retry, finishing a cut-off block).
+      if (attachments.length) messages[messages.length - 1] = { ...messages[messages.length - 1], attachments };
       // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue.
       // The owner's own testing is never flagged — reviewing your own flags is noise.
       const reqChatId = parseInt(req.body?.chatId, 10) || null;
@@ -13964,8 +13986,10 @@ Rules:
       // Older turns that don't fit are dropped later, oldest first.
       try {
         const systemTokens = estimateTokens(BUILD_HELPER_SYSTEM) + estimateTokens(systemExtra);
-        const windowTokens = isGeminiConfigured() ? geminiInputTokens() : anthropicInputTokens();
-        fitToWindow([{ ...messages[messages.length - 1], attachments }], { inputTokens: windowTokens, fixedTokens: systemTokens, outputTokens: maxTokens });
+        // The window of the provider this request will actually go to.
+        const planned = await planChatRoute({ messages, webSearch: req.body?.webSearch === true });
+        const windowTokens = planned.provider === "anthropic" ? anthropicInputTokens() : geminiInputTokens();
+        fitToWindow([messages[messages.length - 1]], { inputTokens: windowTokens, fixedTokens: systemTokens, outputTokens: maxTokens });
       } catch (e: any) {
         const msg = providerTooLargeMessage(e);
         if (!msg) throw e;
@@ -14152,7 +14176,6 @@ Rules:
             maxTokens,
             stream: true,
             webSearch: req.body?.webSearch === true,
-            images: attachments.length ? attachments : undefined,
             onChunk: (chunk) => { const out = hold.push(chunk); if (out) send(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
@@ -14279,7 +14302,6 @@ Rules:
         maxTokens,
         stream: false,
         webSearch: req.body?.webSearch === true,
-        images: attachments.length ? attachments : undefined,
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });
@@ -15160,9 +15182,7 @@ Rules:
     if (chat.member_id !== auth.memberId && !isAdmin) {
       return res.status(403).json({ error: "Only the chat owner or an admin can delete this" });
     }
-    await deleteBrunoChatFiles(chat.id);
-    (await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", chat.id));
-    (await dbRun("DELETE FROM bruno_chats WHERE id = ?", chat.id));
+    await deleteBrunoChat(chat.id);
     res.json({ success: true });
   });
 

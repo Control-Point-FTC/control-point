@@ -135,6 +135,29 @@ export function sanitizeBrunoAttachments(images: any, pdfs: any, textBytes = 0):
   return { attachments: out };
 }
 
+/**
+ * Fit a conversation into the provider's request size (UTF-8 text plus the
+ * current message's files, `reservedBytes` for the system prompt). Drops the
+ * oldest turns first and never touches the last message; if that message and
+ * its files alone are too big, returns `error` (shown to the member).
+ */
+export function fitToRequestBytes<T extends { role: string; text: string }>(messages: T[], files: InlineAttachment[], limit: number, reservedBytes = 0): { messages: T[]; error?: string } {
+  if (!messages.length) return { messages };
+  const size = (m: T) => Buffer.byteLength(m.text || "", "utf8");
+  const fileBytes = files.reduce((n, a) => n + a.data.length, 0);
+  let budget = limit - reservedBytes - fileBytes - size(messages[messages.length - 1]);
+  if (budget < 0) return { messages: [], error: tooLargeMessage(limit - budget) };
+  const kept: T[] = [messages[messages.length - 1]];
+  for (let i = messages.length - 2; i >= 0; i--) {
+    const s = size(messages[i]);
+    if (s > budget) break; // everything older goes too: history stays contiguous
+    kept.unshift(messages[i]);
+    budget -= s;
+  }
+  while (kept.length > 1 && kept[0].role !== "user") kept.shift();
+  return { messages: kept };
+}
+
 /** Decoded size of a base64 attachment, for display. */
 export function attachmentBytes(a: InlineAttachment): number {
   const pad = a.data.endsWith("==") ? 2 : a.data.endsWith("=") ? 1 : 0;

@@ -1,7 +1,7 @@
 import { FileCode2, FileText, X } from 'lucide-react';
 import { notify } from './dialog';
 import {
-  BRUNO_REQUEST_LIMIT_BYTES, fileExtension, formatBytes, isTextLikeFile, tooLargeMessage,
+  BRUNO_MAX_INLINE_FILES, BRUNO_REQUEST_LIMIT_BYTES, fileExtension, formatBytes, isTextLikeFile, tooLargeMessage,
 } from '../utils/brunoFiles';
 
 // Files for a Bruno message: pick several at once, drop them on the
@@ -132,6 +132,12 @@ export async function attachPicked(
   if (!read.images.length && !read.files.length) return;
   // What's attached once these are read (more may have been added meanwhile).
   const now = current();
+  const inline = now.images.length + now.files.filter((f) => f.kind === 'pdf').length
+    + read.images.length + read.files.filter((f) => f.kind === 'pdf').length;
+  if (inline > BRUNO_MAX_INLINE_FILES) {
+    notify(`Bruno can read up to ${BRUNO_MAX_INLINE_FILES} images and PDFs in one message (the AI provider's limit). Send some of them now and the rest in your next message.`, 'error');
+    return;
+  }
   const total = attachmentPayloadBytes([...now.images, ...read.images], [...now.files, ...read.files]);
   if (total > BRUNO_REQUEST_LIMIT_BYTES) {
     notify(tooLargeMessage(total), 'error');

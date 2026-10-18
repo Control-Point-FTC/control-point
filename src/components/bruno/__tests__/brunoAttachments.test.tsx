@@ -43,6 +43,17 @@ describe('reading attached files', () => {
   });
 });
 
+describe('the 100-file limit', () => {
+  it('says so and adds nothing past it, keeping what was attached', async () => {
+    const notify = vi.spyOn(dialog, 'notify').mockImplementation(() => {});
+    const add = vi.fn();
+    const pdfs = Array.from({ length: 100 }, (_, i) => ({ kind: 'pdf' as const, mimeType: 'application/pdf' as const, data: 'AAAA', name: `p${i}.pdf`, size: 3 }));
+    await attachPicked([new File(['%PDF'], 'one-more.pdf', { type: 'application/pdf' })], () => ({ images: [], files: pdfs }), add);
+    expect(add).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/up to 100 images and PDFs in one message/), 'error');
+  });
+});
+
 describe('chips', () => {
   it('shows each attached file with its own remove button', () => {
     const onRemoveFile = vi.fn();
@@ -67,6 +78,14 @@ describe('chips', () => {
 });
 
 describe('what goes to the server', () => {
+  it('sends only the turns the server reads, within the request size, never cutting the current message', () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ role: (i % 2 ? 'model' : 'user') as 'user' | 'model', text: `m${i}` }));
+    expect(historyForServer(many).map((m) => m.text)).toEqual(many.slice(-12).map((m) => m.text));
+    const big = 'b'.repeat(BRUNO_REQUEST_LIMIT_BYTES - 100);
+    const out = historyForServer([{ role: 'user', text: big }, { role: 'model', text: 'ok' }, { role: 'user', text: 'x'.repeat(5000) }]);
+    expect(out.map((m) => m.text.length)).toEqual([5000]); // the oversized old paste and the model turn after it go
+  });
+
   it("earlier images and PDFs aren't sent again; a marker says they were there", () => {
     const out = historyForServer([
       { role: 'user', text: 'look', images: [{ mimeType: 'image/jpeg', data: 'AAAA', name: 'a.jpg' }], pdfs: [{ mimeType: 'application/pdf', data: 'BBBB', name: 'b.pdf' }] },

@@ -11,7 +11,7 @@ vi.mock("../../ai", async (orig) => ({ ...(await orig<object>()), getAISetting: 
 
 import { buildHelperChat } from "../../ai";
 import { aiChat, anthropicMessage, routeChatRequest } from "../../ai-hybrid";
-import { BrunoInputTooLarge, fitToWindow, providerTooLargeMessage, sanitizeBrunoAttachments } from "../brunoInput";
+import { BrunoInputTooLarge, fitToRequestBytes, fitToWindow, providerTooLargeMessage, sanitizeBrunoAttachments } from "../brunoInput";
 import { BRUNO_MAX_INLINE_FILES, BRUNO_REQUEST_LIMIT_BYTES, splitBrunoMessage, withTextFiles } from "../../src/utils/brunoFiles";
 
 const env = { ...process.env };
@@ -170,6 +170,22 @@ describe("several files in one message", () => {
     expect(routeChatRequest({ text: "what is this", hasImages: true }).provider).toBe("anthropic");
   });
 
+  it("files on an earlier user turn (a lookup follow-up) still reach the model and keep the vision route", async () => {
+    process.env.GEMINI_API_KEY = "k";
+    delete process.env.ANTHROPIC_API_KEY;
+    fetchMock.mockResolvedValue(geminiOk());
+    await aiChat({ messages: [{ role: "user", text: "Compare", attachments: [png] }, { role: "model", text: "Checking…" }, { role: "user", text: "Rows: …" }], webSearch: true, maxTokens: 256, stream: false });
+    const body = sentBody();
+    expect(body.contents[0].parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: png.data } });
+    expect(body.tools).toEqual([{ google_search: {} }]); // an explicit web check still searches
+  });
+
+  it("the owner's Claude choice decides the window used", () => {
+    process.env.GEMINI_API_KEY = "k";
+    process.env.ANTHROPIC_API_KEY = "a";
+    expect(routeChatRequest({ text: "x", hasImages: true, forceProvider: "anthropic" }).provider).toBe("anthropic");
+  });
+
   it("a message without files stays a plain string for Claude", () => {
     expect(anthropicMessage({ role: "model", text: "hello" })).toEqual({ role: "assistant", content: "hello" });
   });
@@ -193,6 +209,17 @@ describe("the provider's size limit", () => {
   it("more images than Claude reads in one request: a clear message", () => {
     const many = Array.from({ length: BRUNO_MAX_INLINE_FILES + 1 }, () => png);
     expect(sanitizeBrunoAttachments(many, []).error).toMatch(/up to 100 in one message/);
+  });
+
+  it("the request size drops the oldest turns first, never the current message", () => {
+    const msgs = [
+      { role: "user", text: "a".repeat(900) }, { role: "model", text: "b".repeat(900) },
+      { role: "user", text: "c".repeat(900) }, { role: "model", text: "d".repeat(100) },
+      { role: "user", text: "now" },
+    ];
+    expect(fitToRequestBytes(msgs, [], 2100).messages.map((m) => m.text[0])).toEqual(["c", "d", "n"]);
+    const r = fitToRequestBytes([{ role: "user", text: "z".repeat(3000) }], [], 2100);
+    expect(r.error).toMatch(/more than the 20 MB|more than the/);
   });
 
   it("drops what isn't an image or PDF", () => {

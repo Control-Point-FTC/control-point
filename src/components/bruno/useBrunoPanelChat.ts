@@ -274,6 +274,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     const outgoingPdfs = attachedFiles.flatMap((f) => (f.kind === 'pdf' ? [{ mimeType: f.mimeType, data: f.data, name: f.name }] : []));
     const outgoingTexts = attachedFiles.flatMap((f) => (f.kind === 'text' ? [{ name: f.name, text: f.text }] : []));
     const fileCount = attachedFiles.length;
+    const sentFiles = attachedFiles;
     setAttached(EMPTY_IMGS);
     setAttachedFiles(EMPTY_FILES);
     setBusy(true);
@@ -332,6 +333,15 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       if (e?.name === 'AbortError') {
         put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
         put<ThinkMeta>('bruno-panel:think', (m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m), EMPTY_OBJ as ThinkMeta);
+      } else if (e?.status === 413) {
+        // Too big to send (the server saved nothing): the message and its
+        // files go back in the composer so the member can trim and resend.
+        put<ThinkMeta>('bruno-panel:think', (m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; }, EMPTY_OBJ as ThinkMeta);
+        put('bruno-panel:messages', next.slice(0, -1));
+        put<string>('bruno-panel:input', (cur) => (cur.trim() ? cur : content), '');
+        put<AttachedImage[]>('bruno-panel:attached', (cur) => [...outgoing, ...cur], EMPTY_IMGS);
+        put<AttachedFile[]>('bruno-panel:attached-files', (cur) => [...sentFiles, ...cur], EMPTY_FILES);
+        if (live()) notify(e.serverError || "That message is too big to send. Remove some files and try again.", 'error');
       } else {
         put<ThinkMeta>('bruno-panel:think', (m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; }, EMPTY_OBJ as ThinkMeta);
         put('bruno-panel:messages', [...next, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);

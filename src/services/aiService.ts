@@ -5,7 +5,7 @@
 import { apiFetch } from './api';
 import { getScreenContext } from './brunoContext';
 import type { ScoutingContextRequest } from '../types/ftcScout';
-import { attachedMarker } from '../utils/brunoFiles';
+import { attachedMarker, BRUNO_REQUEST_LIMIT_BYTES } from '../utils/brunoFiles';
 
 const CACHE_KEY = 'ftcNewsCache';
 const TS_KEY = 'ftcNewsTimestamp';
@@ -210,16 +210,33 @@ export interface BuildHelperMessage {
   saved?: { id: number; name: string; mimeType: string; size: number; url: string }[];
 }
 
-/** The conversation as the server takes it: role and text only. Earlier
- *  messages' images and PDFs aren't sent again; their "📎 Attached:" line
- *  tells the model they were there (a loaded chat's text already has it). */
-export function historyForServer(messages: BuildHelperMessage[]): { role: 'user' | 'model'; text: string }[] {
+/** How many recent messages the server reads (it ignores older ones). */
+export const BRUNO_HISTORY_TURNS = 12;
+
+/** The conversation as the server takes it: role and text only, the turns
+ *  it reads, within the provider's request size (oldest dropped first, the
+ *  current message never). Earlier messages' images and PDFs aren't sent
+ *  again; their "📎 Attached:" line tells the model they were there (a
+ *  loaded chat's text already has it). */
+export function historyForServer(messages: BuildHelperMessage[], fileBytes = 0): { role: 'user' | 'model'; text: string }[] {
   const last = messages.map((m) => m.role).lastIndexOf('user');
-  return messages.map((m, i) => {
+  const all = messages.map((m, i) => {
     const names = [...(m.images || []).map((im, k) => im.name || `image-${k + 1}.jpg`), ...(m.pdfs || []).map((p) => p.name)];
     const marker = i !== last && names.length && !/📎 Attached: /.test(m.text) ? attachedMarker(names) : '';
     return { role: m.role, text: marker ? `${m.text}\n\n${marker}` : m.text };
-  });
+  }).slice(-BRUNO_HISTORY_TURNS);
+  if (!all.length) return all;
+  const bytes = (t: string) => new TextEncoder().encode(t).length;
+  let budget = BRUNO_REQUEST_LIMIT_BYTES - fileBytes - bytes(all[all.length - 1].text);
+  const kept = [all[all.length - 1]];
+  for (let i = all.length - 2; i >= 0; i--) {
+    const b = bytes(all[i].text);
+    if (b > budget) break;
+    kept.unshift(all[i]);
+    budget -= b;
+  }
+  while (kept.length > 1 && kept[0].role !== 'user') kept.shift();
+  return kept;
 }
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
@@ -377,7 +394,9 @@ export function streamBuildHelper(
   chatId?: number,
   opts?: { persona?: string; scouting?: ScoutingContextRequest; signal?: AbortSignal }
 ) {
-  const history = historyForServer(messages);
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const fileBytes = [...(lastUser?.images || []), ...(lastUser?.pdfs || [])].reduce((n, f) => n + f.data.length, 0);
+  const history = historyForServer(messages, fileBytes);
   const body: any = chatId ? { messages: history, chatId } : { messages: history };
   if (opts?.persona) body.persona = opts.persona;
   // Analyze mode: only identifiers travel; the server builds the scouting pack.
@@ -387,7 +406,6 @@ export function streamBuildHelper(
   if (screen) body.screen = screen;
   // Images and PDFs ride on the latest user message, whole: the server
   // checks them against the provider's request size and sends them on.
-  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
   if (lastUser?.images?.length) {
     body.images = lastUser.images
       .filter((im) => im && typeof im.mimeType === 'string' && typeof im.data === 'string')

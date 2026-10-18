@@ -151,18 +151,20 @@ export function routeChatRequest(opts: {
   /** Never search the web (system writing jobs that must use only the facts they are given). */
   offline?: boolean;
 }): RouteDecision {
+  const web = opts.offline ? "" : opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
   // Images and PDFs: Gemini reads them (the free primary); Claude does too,
-  // when the owner chose it or Gemini isn't set up.
+  // when the owner chose it or Gemini isn't set up. Only an explicit web
+  // check (a lookup pass) searches alongside the files.
   if (opts.hasImages) {
+    const grounded = !opts.offline && opts.webSearch === true;
     const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
     return claude
-      ? { provider: "anthropic", grounded: false, reason: "file input: Claude" }
-      : { provider: "gemini", grounded: false, reason: "image input: Gemini vision path" };
+      ? { provider: "anthropic", grounded, reason: "file input: Claude" }
+      : { provider: "gemini", grounded, reason: "image input: Gemini vision path" };
   }
   // Web questions are grounded. Gemini's google_search is the free default;
   // Claude searches with its own web tools when the owner chose Anthropic or
   // Gemini isn't set up.
-  const web = opts.offline ? "" : opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
   if (web) {
     const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
     return claude
@@ -561,6 +563,26 @@ async function callOpenAIChat(
 
 // --- Unified chat entry ------------------------------------------------------
 
+/** Where aiChat will send this conversation (owner setting + router), so a
+ *  caller can check the request against that provider before sending it. */
+export async function planChatRoute(opts: { messages: ChatMessage[]; webSearch?: boolean; offline?: boolean }): Promise<RouteDecision> {
+  // Routing looks at what the member typed, not the files they attached (a
+  // code file that mentions "price" is not a shopping question).
+  const latestUser = typedText([...opts.messages].reverse().find((m) => m.role === "user")?.text || "");
+  const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
+  const forceProvider =
+    chatProviderSetting === "gemini" ? "gemini"
+    : chatProviderSetting === "anthropic" ? "anthropic"
+    : undefined;
+  return routeChatRequest({
+    text: latestUser,
+    webSearch: opts.webSearch,
+    hasImages: opts.messages.some((m) => (m.attachments?.length || 0) > 0),
+    forceProvider,
+    offline: opts.offline,
+  });
+}
+
 /** The conversation with `files` added to its last user message. */
 export function withAttachments(messages: ChatMessage[], files: InlineAttachment[]): ChatMessage[] {
   const at = messages.map((m) => m.role).lastIndexOf("user");
@@ -603,21 +625,7 @@ export async function aiChat(opts: {
   }
   // Images and PDFs ride on the member's current (last user) message.
   const messages: ChatMessage[] = opts.images?.length ? withAttachments(opts.messages, opts.images) : opts.messages;
-  // Routing looks at what the member typed, not the files they attached (a
-  // code file that mentions "price" is not a shopping question).
-  const latestUser = typedText([...messages].reverse().find((m) => m.role === "user")?.text || "");
-  const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
-  const forceProvider =
-    chatProviderSetting === "gemini" ? "gemini"
-    : chatProviderSetting === "anthropic" ? "anthropic"
-    : undefined;
-  const route = routeChatRequest({
-    text: latestUser,
-    webSearch: opts.webSearch,
-    hasImages: (opts.images?.length || 0) > 0,
-    forceProvider,
-    offline: opts.offline,
-  });
+  const route = await planChatRoute({ messages, webSearch: opts.webSearch, offline: opts.offline });
   const system = opts.extraSystem
     ? BUILD_HELPER_SYSTEM + "\n\n" + opts.extraSystem
     : BUILD_HELPER_SYSTEM;
