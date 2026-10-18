@@ -41,7 +41,7 @@ describe("test servers", () => {
     const [a, b] = started.map((r) => (r as PromiseFulfilledResult<TestServer>).value);
     expect(a.port).not.toBe(b.port);
     expect(a.port).toBeGreaterThan(0);
-    const sessions = await Promise.all(servers.map(async (s, i) => {
+    const sessions = await Promise.all([a, b].map(async (s, i) => {
       const team = await seedTeam(s.db, `Team ${i}`);
       // Same member id on both servers: tokens must still differ.
       return s.session(await seedMember(s.db, team, "Ada", `ada${i}@iso.test`, "admin"));
