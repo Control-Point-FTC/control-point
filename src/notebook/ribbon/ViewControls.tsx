@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { notebookPageLink } from '../pageLinks';
 import { useNotebookWorkspace } from '../workspaceContext';
 import { RibbonButton, RibbonGroup } from './RibbonParts';
+import { NotebookJournal } from '../NotebookJournal';
 
 export const DOCK_WIDTH = 440;
 
@@ -15,6 +16,7 @@ export function dockFeatures(screenInfo: { availWidth: number; availHeight: numb
 export function ViewControls({ pageId }: { pageId?: number }) {
   const workspace = useNotebookWorkspace();
   const [notice, notify] = useState('');
+  const [journal, setJournal] = useState(false);
   const layout = workspace?.navigationLayout ?? 'panes';
   const dock = () => {
     const s = window.screen as Screen & { availLeft?: number; availTop?: number };
@@ -24,6 +26,8 @@ export function ViewControls({ pageId }: { pageId?: number }) {
     else { opened.focus(); notify('Opened this page in a docked window on the right of your screen.'); }
   };
   return <>
+    {workspace?.openPage && <RibbonGroup label="Entries"><RibbonButton label="Journal" icon="Template" showLabel onClick={() => setJournal(true)} /></RibbonGroup>}
+    {journal && <NotebookJournal open onClose={() => setJournal(false)} onOpenPage={(id) => workspace?.openPage?.(id)} teamId={workspace?.teamId} />}
     {workspace?.setNavigationLayout && <RibbonGroup label="Navigation">
       <RibbonButton label="Navigation panes" icon="Panes" showLabel active={layout === 'panes'} onClick={() => workspace.setNavigationLayout?.('panes')} />
       <RibbonButton label="Tabs layout" icon="Tabs" showLabel active={layout === 'tabs'} onClick={() => workspace.setNavigationLayout?.('tabs')} />

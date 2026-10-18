@@ -595,6 +595,82 @@ export class NotebookStore {
     }
     return hits;
   }); }
+  /**
+   * Journal: the pages this member can see as entries, newest first by when
+   * the work happened (else when it was written), filtered on the server so
+   * filters cover the whole notebook. Type, stage, subsystem, award, author
+   * and dates are SQL; words are matched in JavaScript (Unicode-aware case)
+   * over batches of 200 pages, so memory stays bounded. `offset` pages on.
+   */
+  journal(ctx: NotebookContext, opts: { from?: unknown; to?: unknown; query?: unknown; type?: unknown; stage?: unknown; subsystem?: unknown; award?: unknown; author?: unknown; offset?: unknown; limit?: unknown } = {}) { return this.session(ctx, async s => {
+    const tree = await s.tree();
+    const visibleIds = tree.pages.map(p => p.id);
+    if (!visibleIds.length) return { entries: [], more: false, nextOffset: 0, facets: { authors: [], subsystems: [] } };
+    const visible = new Map(tree.pages.map(p => [p.id, p]));
+    const sectionTitle = new Map(tree.sections.map(x => [x.id, x.title]));
+    const str = (v: unknown, max = 80) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    const iso = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const limit = Math.min(500, Math.max(1, Number(opts.limit) || 200));
+    const offset = Math.max(0, Math.floor(Number(opts.offset) || 0));
+    const date = "COALESCE(m.work_date, substr(p.created_at, 1, 10))";
+    const where: string[] = ["p.team_id = ?", "p.deleted_at IS NULL", "p.id IN (SELECT value FROM json_each(?))"];
+    const args: unknown[] = [ctx.teamId, JSON.stringify(visibleIds)];
+    if (iso(opts.from)) { where.push(`${date} >= ?`); args.push(iso(opts.from)); }
+    if (iso(opts.to)) { where.push(`${date} <= ?`); args.push(iso(opts.to)); }
+    if (str(opts.type)) { where.push("m.entry_type = ?"); args.push(str(opts.type)); }
+    if (str(opts.stage)) { where.push("m.stage = ?"); args.push(str(opts.stage)); }
+    if (str(opts.subsystem)) { where.push("EXISTS (SELECT 1 FROM json_each(COALESCE(m.subsystems, '[]')) WHERE value = ?)"); args.push(str(opts.subsystem)); }
+    if (str(opts.award)) { where.push("EXISTS (SELECT 1 FROM json_each(COALESCE(m.awards, '[]')) WHERE value = ?)"); args.push(str(opts.award)); }
+    if (str(opts.author)) { where.push("EXISTS (SELECT 1 FROM notebook_contributors c JOIN members mm ON mm.id = c.member_id WHERE c.page_id = p.id AND c.team_id = p.team_id AND mm.name = ?)"); args.push(str(opts.author)); }
+    const words = String(opts.query ?? '').toLocaleLowerCase().split(/\s+/).filter(w => w.length > 1).slice(0, 5);
+    const matches = (r: Row) => {
+      if (!words.length) return true;
+      const hay = `${visible.get(Number(r.id))?.title ?? ''} ${r.plain ?? ''} ${r.subsystems ?? ''} ${r.awards ?? ''} ${r.entry_type ?? ''} ${r.stage ?? ''}`.toLocaleLowerCase();
+      return words.every(w => hay.includes(w));
+    };
+    // Walk the filtered pages in date order, a batch at a time, until the page of results is full.
+    const BATCH = 200;
+    const hits: Row[] = [];
+    let skipped = 0, scanned = 0, done = false;
+    while (!done && hits.length <= limit) {
+      const batch = await s.all(`SELECT p.id, p.created_at, p.plain, ${date} AS entry_date, m.work_date, m.entry_type, m.stage, m.subsystems, m.awards
+        FROM notebook_pages p LEFT JOIN notebook_page_meta m ON m.page_id = p.id
+        WHERE ${where.join(' AND ')} ORDER BY entry_date DESC, p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`, ...args, BATCH, scanned);
+      scanned += batch.length;
+      if (batch.length < BATCH) done = true;
+      for (const r of batch) {
+        if (!matches(r)) continue;
+        if (skipped < offset) { skipped++; continue; }
+        hits.push(r);
+        if (hits.length > limit) break;
+      }
+    }
+    const shown = hits.slice(0, limit);
+    const byPage = new Map<number, string[]>();
+    if (shown.length) {
+      const writers = await s.all(`SELECT c.page_id, m.name FROM notebook_contributors c JOIN members m ON m.id = c.member_id
+        WHERE c.team_id = ? AND c.page_id IN (SELECT value FROM json_each(?)) ORDER BY c.last_at ASC`, ctx.teamId, JSON.stringify(shown.map(r => Number(r.id))));
+      for (const w of writers) byPage.set(Number(w.page_id), [...(byPage.get(Number(w.page_id)) ?? []), String(w.name).slice(0, 80)]);
+    }
+    const entries = shown.map(r => {
+      const page = visible.get(Number(r.id))!;
+      const excerpt = String(r.plain ?? '').slice(0, 600).replace(/\s+/g, ' ').trim();
+      return {
+        id: page.id, title: page.title, sectionId: page.sectionId, sectionTitle: sectionTitle.get(page.sectionId) ?? '',
+        date: String(r.entry_date), workDate: r.work_date ?? null, createdAt: r.created_at, updatedAt: page.updatedAt,
+        excerpt: excerpt.length > 220 ? `${excerpt.slice(0, 219)}…` : excerpt, readMinutes: readMinutes(r.plain),
+        type: r.entry_type ?? null, stage: r.stage ?? null, subsystems: parseTagList(r.subsystems), awards: parseTagList(r.awards),
+        authors: byPage.get(Number(r.id)) ?? [],
+      };
+    });
+    // Filter choices come from the whole visible notebook, not just this page of results.
+    const vis = JSON.stringify(visibleIds);
+    const authors = (await s.all(`SELECT DISTINCT m.name FROM notebook_contributors c JOIN members m ON m.id = c.member_id
+      WHERE c.team_id = ? AND c.page_id IN (SELECT value FROM json_each(?)) ORDER BY m.name`, ctx.teamId, vis)).map(r => String(r.name).slice(0, 80));
+    const subsystems = (await s.all(`SELECT DISTINCT j.value AS name FROM notebook_page_meta m, json_each(COALESCE(m.subsystems, '[]')) j
+      WHERE m.team_id = ? AND m.page_id IN (SELECT value FROM json_each(?)) ORDER BY j.value`, ctx.teamId, vis)).map(r => String(r.name));
+    return { entries, more: hits.length > limit, nextOffset: offset + entries.length, facets: { authors, subsystems } };
+  }); }
   /** Home → Find Tags. Visibility is decided by the tree first, so protected
    *  pages are never read for someone who can't see them. */
   tags(ctx: NotebookContext, filter: { section?: unknown; page?: unknown }) { return this.session(ctx, async s => {
@@ -919,6 +995,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
   app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
   app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
+  app.get('/api/notebook/journal', handle((ctx, req) => store.journal(ctx, { from: req.query.from, to: req.query.to, query: req.query.q, type: req.query.type, stage: req.query.stage, subsystem: req.query.subsystem, award: req.query.award, author: req.query.author, offset: req.query.offset, limit: req.query.limit })));
   app.get('/api/notebook/tags', handle((ctx, req) => store.tags(ctx, { section: req.query.section, page: req.query.page })));
   // Review → Thesaurus (WordNet, on this server; no AI).
   app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));
