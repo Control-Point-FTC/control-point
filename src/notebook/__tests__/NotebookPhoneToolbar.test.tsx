@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { notebookExtensions } from '../editorSchema';
 import { NotebookToolbar } from '../NotebookToolbar';
-import { pasteNotebookText } from '../NotebookMobileToolbar';
+import { pasteNotebookText } from '../pasteText';
 
 let editor: Editor;
 afterEach(() => { cleanup(); editor?.destroy(); vi.unstubAllGlobals(); });
@@ -17,12 +17,18 @@ function mount() {
   ] } });
   render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1} />);
 }
-describe('mobile text-only notebook', () => {
-  it('exposes exactly undo, redo, cut, copy and paste without desktop formatting tools', () => {
-    mount(); expect(screen.getAllByRole('button').map(b => b.getAttribute('aria-label'))).toEqual(['Undo','Redo','Cut','Copy','Paste']);
-    expect(screen.queryByRole('tablist')).toBeNull(); expect(screen.queryByLabelText('Font')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-    expect(screen.getByRole('status').textContent).toContain('Select some text first');
+describe('phone notebook toolbar', () => {
+  it('is the compact ribbon: a tab menu and one row of tools, without the computer-only Draw and View tabs', () => {
+    mount();
+    expect(screen.getByRole('toolbar', { name: 'Home commands' })).toBeTruthy();
+    expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['File', 'Home', 'Insert', 'History', 'Review', 'Help']);
+    expect(screen.getByRole('button', { name: 'Commands: Home' })).toBeTruthy();
+    for (const name of ['Undo', 'Redo', 'Paste', 'Bold', 'Italic', 'Underline', 'Lists', 'Alignment']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    expect(screen.getByLabelText('Font')).toBeTruthy();
+    // Cut and copy live in the Paste menu; copying with nothing selected explains why.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Paste options' }), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
+    expect(screen.getByRole('status').textContent).toContain('Select something first');
   });
   it('pastes literal text while preserving existing desktop formatting and tables', () => {
     mount(); const original = editor.getJSON(); editor.commands.setTextSelection(editor.state.doc.content.size - 1);

@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
 import {Columns2,ArrowLeftRight,X} from 'lucide-react';
 import {NotebookEditor,type EditorProps} from './NotebookEditor';
 import {NotebookSync} from './NotebookSync';
@@ -52,10 +53,14 @@ export function NotebookSplitView(props:EditorProps&{mobile:boolean;onOtherChang
   const activePage=pages.find(page=>page.id===(split&&active==='other'?other!.pageId:sync.pageId));
   useBrunoNotebookPage(activePage?.id??null,!!activePage?.protected);
   const primary=<NotebookEditor key={sync.pageId} {...props} toolbarVisible={!split||active==='main'} onOpenOther={mobile?undefined:openOther}/>;
+  // Split view's controls sit in the notebook's page bar (no row of their own);
+  // which page the other pane shows is chosen in that pane's heading.
+  const controls=!mobile&&<span className="nb-split-controls">
+    <button type="button" className="nb-bar-btn" aria-pressed={!!other} title={other?'Close split view':'Show two pages side by side. Alt-click a page link to open it in the other pane.'} disabled={busy||(!other&&!pages.some(page=>page.id!==sync.pageId))} onClick={()=>other?void closeOther():void openOther(pages.find(page=>page.id!==sync.pageId)!.id)}><Columns2 size={16}/><span>{other?'Close split view':'Split view'}</span></button>
+    {other&&<button type="button" className="nb-bar-icon" aria-label="Swap panes" title="Swap panes" onClick={()=>setReversed(value=>!value)}><ArrowLeftRight size={16}/></button>}
+  </span>;
   return <div className="nb-split-workspace">
-    {!mobile&&<div className="nb-split-controls"><button disabled={busy||(!other&&!pages.some(page=>page.id!==sync.pageId))} onClick={()=>other?void closeOther():void openOther(pages.find(page=>page.id!==sync.pageId)!.id)}><Columns2 size={15}/>{other?'Close split view':'Split view'}</button>
-      {other&&<><label>Other page <select aria-label="Page in other pane" disabled={busy} value={other.pageId} onChange={event=>void openOther(Number(event.target.value))}>{pages.filter(page=>page.id!==sync.pageId).map(page=><option key={page.id} value={page.id}>{page.title}</option>)}</select></label><button onClick={()=>setReversed(value=>!value)}><ArrowLeftRight size={15}/> Swap panes</button><span>Alt-click a page link to open it in the other pane.</span></>}
-    </div>}
+    {controls&&(props.barHost?createPortal(controls,props.barHost):<div className="nb-page-bar nb-page-bar-inline">{controls}</div>)}
     {error&&<div role="alert" className="nb-alert">{error}</div>}
     <div ref={container} className={`nb-split-panes ${split?'is-split':''} ${reversed?'is-reversed':''}`}>
       <section ref={mainPane} tabIndex={-1} aria-label="Main notebook page" className={`nb-split-pane ${active==='main'?'is-active':''}`} style={split?{flexBasis:`${ratio}%`}:undefined} onFocusCapture={()=>setActive('main')} onPointerDownCapture={()=>setActive('main')}>
@@ -63,8 +68,8 @@ export function NotebookSplitView(props:EditorProps&{mobile:boolean;onOtherChang
       </section>
       {split&&<><div className="nb-pane-divider" role="separator" aria-label="Resize notebook panes" tabIndex={0} aria-orientation="vertical" aria-valuemin={25} aria-valuemax={75} aria-valuenow={ratio} onKeyDown={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();setRatio(value=>event.key==='Home'?25:event.key==='End'?75:Math.max(25,Math.min(75,value+(event.key==='ArrowRight'?5:-5)*(reversed?-1:1))));}}} onPointerDown={event=>{event.currentTarget.setPointerCapture(event.pointerId);}} onPointerMove={event=>{if(!event.currentTarget.hasPointerCapture(event.pointerId)||!container.current)return;const bounds=container.current.getBoundingClientRect();if(bounds.width>0){const position=(event.clientX-bounds.left)/bounds.width*100;setRatio(Math.max(25,Math.min(75,reversed?100-position:position)));}}} onPointerUp={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);}}/>
       <section tabIndex={-1} aria-label="Other notebook page" className={`nb-split-pane ${active==='other'?'is-active':''}`} onFocusCapture={()=>setActive('other')} onPointerDownCapture={()=>setActive('other')}>
-        <div className="nb-pane-heading"><button aria-pressed={active==='other'} onClick={()=>setActive('other')}>Other page · {pages.find(page=>page.id===other.pageId)?.title}</button><button aria-label="Close other page" disabled={busy} onClick={()=>void closeOther()}><X size={16}/></button></div>
-        <NotebookEditor key={other.pageId} sync={other} pages={pages} toolbarHost={props.toolbarHost} toolbarVisible={active==='other'} blockTarget={block} threadTarget={null} onOpenOther={(id,target)=>{setActive('main');props.onNavigate(id,target);}} onChanged={title=>props.onOtherChanged?.(other.pageId,title)} onNavigate={(id,target)=>void openOther(id,target)} onRejoin={()=>{const next=new NotebookSync(other.pageId,sync.scope);otherRef.current=next;setOther(next);void next.start();}}/>
+        <div className="nb-pane-heading"><button aria-pressed={active==='other'} onClick={()=>setActive('other')}>Other page</button><select aria-label="Page in other pane" disabled={busy} value={other.pageId} onChange={event=>void openOther(Number(event.target.value))}>{pages.filter(page=>page.id!==sync.pageId).map(page=><option key={page.id} value={page.id}>{page.title}</option>)}</select><button aria-label="Close other page" disabled={busy} onClick={()=>void closeOther()}><X size={16}/></button></div>
+        <NotebookEditor key={other.pageId} sync={other} pages={pages} toolbarHost={props.toolbarHost} barHost={props.barHost} toolbarVisible={active==='other'} blockTarget={block} threadTarget={null} onOpenOther={(id,target)=>{setActive('main');props.onNavigate(id,target);}} onChanged={title=>props.onOtherChanged?.(other.pageId,title)} onNavigate={(id,target)=>void openOther(id,target)} onRejoin={()=>{const next=new NotebookSync(other.pageId,sync.scope);otherRef.current=next;setOther(next);void next.start();}}/>
       </section></>}
     </div>
   </div>;

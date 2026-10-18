@@ -9,7 +9,8 @@ export function quickNoteDocument(text:string) {
 }
 
 /** A team-scoped, in-memory capture draft; never journal protected text. */
-export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen,hidden=false}:{tree:NotebookTree;teamId:number;sectionId:number|null;onSaved:()=>void;onOpen:(id:number)=>void;hidden?:boolean}) {
+/** `openRequest` (a counter) opens it from elsewhere, e.g. the page bar's More menu; `showTrigger={false}` then drops its own button. */
+export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen,hidden=false,showTrigger=true,openRequest=0}:{tree:NotebookTree;teamId:number;sectionId:number|null;onSaved:()=>void;onOpen:(id:number)=>void;hidden?:boolean;showTrigger?:boolean;openRequest?:number}) {
   const [open,setOpen]=useState(false),[destination,setDestination]=useState(''),[title,setTitle]=useState(''),[text,setText]=useState('');
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState<number|null>(null);
   const claimed=useRef(false),mounted=useRef(true),abort=useRef<AbortController|null>(null);
@@ -21,6 +22,8 @@ export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen,hidden=f
     }
   },[tree,destination]);
   const show=()=>{setDestination(value=>tree.sections.some(s=>String(s.id)===value)?value:String(sectionId??tree.sections[0]?.id??''));setOpen(true);};
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request opens it
+  useEffect(()=>{if(openRequest&&tree.permissions.edit&&tree.sections.length)show();},[openRequest]);
   const submit=async(event:React.FormEvent)=>{
     event.preventDefault();if(claimed.current||!text.trim()||!destination)return;
     claimed.current=true;setBusy(true);setError('');
@@ -36,9 +39,9 @@ export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen,hidden=f
     finally{claimed.current=false;if(mounted.current)setBusy(false);}
   };
   return <>
-    <Button ref={trigger} style={hidden?{display:'none'}:undefined} variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>
+    {showTrigger&&<Button ref={trigger} style={hidden?{display:'none'}:undefined} variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>}
     {saved!=null&&<span style={hidden?{display:'none'}:undefined} role="status">Quick note saved. <button className="nb-tool" onClick={()=>{onOpen(saved);setSaved(null);}}>Open saved note</button></span>}
-    <Dialog open={open&&!hidden} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onCloseAutoFocus={event=>{event.preventDefault();if(!hidden)trigger.current?.focus();}}><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
+    <Dialog open={open&&!hidden} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onCloseAutoFocus={event=>{if(!showTrigger)return;event.preventDefault();if(!hidden)trigger.current?.focus();}}><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={submit}>
         <Label htmlFor="nb-quick-section">Save to section</Label><select id="nb-quick-section" value={destination} disabled={busy} required onChange={e=>setDestination(e.target.value)}><option value="" disabled>Choose a section</option>{tree.sections.map(s=><option key={s.id} value={s.id}>{tree.notebooks.find(n=>n.id===s.notebookId)?.title} / {s.title}{s.protected?' · Admin only':''}</option>)}</select>
         <p className="nb-small">{tree.sections.find(s=>String(s.id)===destination)?.protected?'Only team admins can access this note.':'Everyone with notebook access on your team can read this note.'}</p>

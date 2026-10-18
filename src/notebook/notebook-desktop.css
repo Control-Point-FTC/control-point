@@ -1,13 +1,6 @@
 /* Immersive desktop notebook: ribbon, sections, pages, and uninterrupted paper. */
 @media (min-width:768px) {
   .nb-shell {background:#111113;color:#eee;--color-text-base:#eee;--color-text-muted:#aaa;--color-primary:#111113;--color-elevated:#1c1c1f;--color-line:#34343a;--color-accent:#ffc700}
-  .nb-header {display:none}
-  .nb-command-tabs {padding:6px 14px;gap:5px;background:#111113;border:0;min-height:44px;align-items:center}
-  .nb-command-tabs::before {content:'NOTEBOOK';font-size:10px;font-weight:700;letter-spacing:1.5px;color:#ffc700;margin-right:16px}
-  .nb-command-tabs button[role=tab] {padding:6px 12px;font-size:13px;color:#d6e0e5;border:0;border-radius:6px}
-  .nb-command-tabs button[aria-selected=true] {background:#ffc7001c;color:#ffd84d;box-shadow:inset 0 0 0 1px #ffc70044}
-  .nb-command-bar {border-bottom:1px solid #2c2c31;background:#111113;padding:0 10px 9px}
-  .nb-command-bar .nb-toolbar {min-height:60px;padding:10px 14px;border-radius:6px;background:#1c1c1f;gap:9px}
   .nb-command-bar select {height:36px;font-size:13px;background:#1c1c1f;border-color:#4a4a52;border-radius:5px}
   .nb-command-bar .nb-icon-tool {height:38px;width:36px;border-radius:4px}
   .nb-command-bar .nb-icon-tool svg {width:21px;height:21px}
@@ -51,7 +44,6 @@
   .nb-export-link {padding:8px;text-align:left;color:#aaa;font-size:11px}
   .nb-main {background:#fff;color:#151515;border-top:0}
   .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#8a6100;color:#151515}
-  .nb-doc-status {background:#fff;padding:5px 22px;border:0;font-size:10px;gap:10px}
   .nb-paper-scroll {background:#fff}
   .nb-paper {padding:18px clamp(30px,3.2vw,64px) 60px;background:#fff;max-width:none;min-height:100%}
   .nb-title {display:block;font-size:29px;font-weight:400;color:#111;width:auto;field-sizing:content;min-width:min(100%,360px);max-width:100%;resize:none;overflow:hidden;line-height:1.25;font-family:inherit;border-bottom:1px solid #999;padding:0 16px 5px;margin-bottom:12px}
@@ -69,12 +61,6 @@
   /* Light theme: the notebook chrome (ribbon, tabs, explorer, pages) follows
      the app's light palette instead of staying dark. The paper is already light. */
   html.light .nb-shell {background:#fafaf9;color:#18181b;--color-text-base:#18181b;--color-text-muted:#52525b;--color-primary:#f4f4f5;--color-elevated:#ffffff;--color-line:#e4e4e7;--color-accent:#a16207}
-  html.light .nb-command-tabs {background:#fafaf9}
-  html.light .nb-command-tabs::before {color:#a16207}
-  html.light .nb-command-tabs button[role=tab] {color:#3f3f46}
-  html.light .nb-command-tabs button[aria-selected=true] {background:#eab3081f;color:#854d0e;box-shadow:inset 0 0 0 1px #eab30866}
-  html.light .nb-command-bar {border-bottom-color:#e4e4e7;background:#fafaf9}
-  html.light .nb-command-bar .nb-toolbar {background:#ffffff;box-shadow:0 0 0 1px #e4e4e7}
   html.light .nb-command-bar select {background:#ffffff;border-color:#d4d4d8;color:#18181b}
   html.light .nb-explorer {background:#fafaf9}
   html.light .nb-navigation-row {color:#52525b}

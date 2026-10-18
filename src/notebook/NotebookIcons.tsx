@@ -75,6 +75,12 @@ const commandPaths: Record<string, string> = {
   Author: 'M9 4a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM3 20c1-4 4-6 6-6s5 2 6 6m2-9h4m-2-2v4',
   Read: 'M4 5h10l4 4v10H4V5Zm10 0v4h4M7 14l2 2 5-5',
   Thesaurus: 'M4 4h7a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4V4Zm16 0h-5a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h5V4ZM6 8h4m-4 3h4m6-3h2m-2 3h2',
+  'Auto-capitalize': 'M3 18 7.5 6 12 18M4.7 14h5.6M18 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm3 0v7',
+  'More text formatting': 'M5 19 10 5l5 14M7 14h6M17 8h4m-2-2v4',
+  'Table layout': 'M3 4h18v16H3V4Zm0 6h18M9 4v16m8-6v4m-2-2h4',
+  'Show full toolbar': 'm6 9 6 6 6-6',
+  'Use compact toolbar': 'm6 15 6-6 6 6',
+  Commands: 'M4 6h16M4 12h10M4 18h7',
 };
 /** `accent` paints the swatch bar under color commands (current text color / highlight). */
 export function notebookCommandGlyph(command: string): React.ComponentType<{ size?: number; accent?: string }> | undefined {

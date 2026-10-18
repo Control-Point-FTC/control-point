@@ -1,12 +1,151 @@
-/* Notebook ribbon: graphite surfaces, accent (volt) for active state.
-   Groups sit on one line and wrap rather than hiding commands (nothing is
-   reachable only by resizing the window). */
-.nb-command-tabs { align-items: center; }
-.nb-ribbon-toggle { margin-inline-start: auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; color: var(--color-text-muted); }
-.nb-ribbon-toggle:hover { background: var(--color-primary); color: var(--color-text-base); }
-.nb-command-bar[data-collapsed=true] .nb-command-tabs { border-bottom: 0; }
+/* Notebook top chrome: two slim rows.
+   Row one, the page bar: where you are (back/forward and the page's path),
+   save status and who is here, then page actions (New page, split view, the
+   app's controls, Share, More, hide the toolbar).
+   Row two, the tool row: tabs and that tab's commands. Compact (the default)
+   keeps everything on one line that scrolls sideways; expanded puts the tabs
+   on their own line and shows labels, wrapping rather than hiding commands.
+   Graphite surfaces, accent (volt) for active state; theme tokens only. */
+.nb-page-bar { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 10px 0 8px; flex-shrink: 0; min-width: 0; color: var(--color-text-base); }
+.nb-page-bar-host { display: contents; }
+.nb-page-bar-inline { padding: 0 6px; border-bottom: 1px solid var(--color-line); }
+.nb-page-bar > .nb-breadcrumbs, .nb-page-bar-title { order: 0; }
+.nb-bar-status { order: 1; display: inline-flex; min-width: 0; }
+.nb-bar-spacer { order: 2; flex: 1 1 auto; min-width: 8px; }
+.nb-bar-page { order: 3; display: inline-flex; align-items: center; gap: 4px; }
+.nb-page-bar .nb-split-controls { order: 4; }
+.nb-bar-actions { order: 5; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.nb-page-bar-title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
 
-.nb-command-bar .nb-ribbon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; min-height: 50px; padding: 7px 8px; }
+/* Location: back, forward, notebook › section › parent pages › page. */
+.nb-page-bar .nb-breadcrumbs { flex: 0 1 auto; min-height: 0; padding: 0; border: 0; background: none; color: var(--color-text-muted); font-size: 13px; }
+.nb-page-bar .nb-breadcrumbs ol { margin-inline-start: 6px; }
+.nb-page-bar .nb-breadcrumbs [aria-current] { color: var(--color-text-base); font-size: 14px; font-weight: 600; }
+.nb-page-bar .nb-breadcrumbs li > button:hover { color: var(--color-accent); }
+.nb-page-bar .nb-crumb-sep { color: var(--color-text-muted); opacity: .7; }
+.nb-page-bar .nb-crumb-nav { width: 28px; height: 28px; color: var(--color-text-muted); }
+.nb-page-bar .nb-crumb-nav:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text-base) 8%, transparent); color: var(--color-text-base); }
+.nb-page-bar .nb-breadcrumbs li > button:focus-visible, .nb-page-bar .nb-crumb-nav:focus-visible { outline-color: var(--color-accent); }
+
+/* Save status and presence: one quiet chip, details in the tooltip. */
+.nb-page-bar .nb-doc-status { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px; min-width: 0; padding: 0 4px 0 10px; border: 0; background: none; font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
+.nb-page-bar .nb-doc-status span:last-child { margin-inline-start: 0; }
+.nb-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #22c55e; }
+.nb-doc-status[data-state=saving] .nb-status-dot, .nb-doc-status[data-state=joining] .nb-status-dot { background: #eab308; }
+.nb-doc-status[data-state=offline] .nb-status-dot { background: #f97316; }
+.nb-doc-status[data-state=conflict] .nb-status-dot, .nb-doc-status[data-state=error] .nb-status-dot, .nb-doc-status[data-state=unavailable] .nb-status-dot { background: #ef4444; }
+.nb-status-text { overflow: hidden; text-overflow: ellipsis; }
+.nb-status-badge { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--color-line); font-size: 11px; color: var(--color-text-base); }
+.nb-status-revision { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.nb-presence { display: inline-flex; align-items: center; }
+.nb-presence:empty { display: none; }
+.nb-avatar { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 600; box-shadow: 0 0 0 2px var(--color-elevated); }
+.nb-avatar + .nb-avatar { margin-inline-start: -6px; }
+
+/* Page bar buttons: one height, one radius, one icon size. */
+.nb-bar-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--color-line); color: var(--color-text-base); font-size: 13px; white-space: nowrap; background: transparent; }
+.nb-bar-btn:hover:not(:disabled), .nb-bar-icon:hover:not(:disabled), .nb-density-toggle:hover, .nb-tab-picker:hover { background: color-mix(in srgb, var(--color-text-base) 8%, transparent); color: var(--color-text-base); }
+.nb-bar-btn:disabled { opacity: .45; }
+.nb-bar-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nb-bar-btn[aria-pressed=true] { background: color-mix(in srgb, var(--color-accent) 14%, transparent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); color: var(--color-accent); }
+.nb-bar-primary { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); }
+.nb-bar-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 22%, transparent); color: var(--color-accent); }
+.nb-bar-icon { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; color: var(--color-text-muted); flex-shrink: 0; }
+.nb-page-bar .nb-split-controls { display: inline-flex; align-items: center; gap: 2px; padding: 0; border: 0; background: none; flex-wrap: nowrap; }
+.nb-bar-actions::before { content: ''; width: 1px; height: 20px; margin: 0 4px; background: var(--color-line); }
+.nb-page-bar .nb-shell-actions { margin-inline-end: 2px; }
+.nb-bar-btn:focus-visible, .nb-bar-icon:focus-visible, .nb-density-toggle:focus-visible, .nb-tab-picker:focus-visible, .nb-command-tabs button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+/* The app's controls in the page bar match its 18px icons. */
+.nb-shell-actions button[aria-label="Sticky notes"] svg, .nb-shell-actions button[aria-label="Ask Bruno"] svg { width: 18px; height: 18px; }
+.nb-shell-actions button[aria-label="Search"] svg { width: 16px; height: 16px; }
+
+/* Row two: tabs, then the tab's commands, then the density chevron. */
+/* Above the page, so panels lifted out of the row paint over the paper. */
+.nb-ribbon-host, .nb-ribbon-shell { position: relative; z-index: 30; }
+.nb-command-bar { flex-shrink: 0; }
+.nb-tool-row { display: flex; align-items: center; gap: 4px; min-height: 40px; margin: 0 8px 6px; padding: 0 4px 0 6px; border-radius: 9px; background: var(--color-elevated); box-shadow: 0 0 0 1px var(--color-line); min-width: 0; }
+.nb-command-tabs { display: flex; align-items: center; gap: 2px; flex-shrink: 0; padding: 0 6px 0 0; margin: 0; border: 0; border-inline-end: 1px solid var(--color-line); }
+.nb-command-tabs button[role=tab] { height: 30px; padding: 0 9px; border: 0; border-radius: 6px; font-size: 13px; color: var(--color-text-muted); white-space: nowrap; }
+.nb-command-tabs button[role=tab]:not([aria-selected=true]):hover { color: var(--color-text-base); background: color-mix(in srgb, var(--color-text-base) 6%, transparent); }
+.nb-command-tabs button[aria-selected=true] { color: var(--color-accent); font-weight: 600; background: color-mix(in srgb, var(--color-accent) 14%, transparent); box-shadow: none; }
+.nb-tab-picker { display: none; align-items: center; gap: 4px; height: 30px; padding: 0 8px 0 10px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); flex-shrink: 0; }
+.nb-density-toggle { display: inline-grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 7px; color: var(--color-text-muted); }
+.nb-tool-frame { flex: 1 1 auto; min-width: 0; position: relative; }
+.nb-tool-frame::before, .nb-tool-frame::after { content: ''; position: absolute; top: 0; bottom: 0; width: 28px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 1; }
+.nb-tool-frame::before { left: 0; background: linear-gradient(to right, var(--color-elevated), transparent); }
+.nb-tool-frame::after { right: 0; background: linear-gradient(to left, var(--color-elevated), transparent); }
+.nb-tool-frame[data-more-start]::before, .nb-tool-frame[data-more-end]::after { opacity: 1; }
+
+/* Compact: one line, scrolls sideways, no visible scrollbar, edge fades. */
+.nb-tool-scroll[data-compact] { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.nb-tool-scroll[data-compact]::-webkit-scrollbar { display: none; }
+.nb-command-bar[data-density=compact] .nb-ribbon { display: flex; flex-wrap: nowrap; align-items: center; width: max-content; min-width: 100%; min-height: 40px; padding: 0; gap: 0; border: 0; background: none; box-shadow: none; }
+.nb-command-bar[data-density=compact] .nb-ribbon > *, .nb-command-bar[data-density=compact] .nb-rgroup, .nb-command-bar[data-density=compact] .nb-ribbon-panel, .nb-command-bar[data-density=compact] .nb-history-list, .nb-command-bar[data-density=compact] .nb-draw-tools { flex-wrap: nowrap; flex-shrink: 0; white-space: nowrap; max-height: none; }
+.nb-command-bar[data-density=compact] .nb-rgroup { min-height: 28px; padding: 0 5px; max-width: none; }
+.nb-command-bar[data-density=compact] .nb-rbtn { height: 30px; min-width: 30px; padding: 0 5px; }
+.nb-command-bar[data-density=compact] .nb-rbtn.has-label { padding: 0 8px; }
+.nb-command-bar[data-density=compact] .nb-rmenu-btn { gap: 2px; padding: 0 3px 0 5px; }
+.nb-command-bar[data-density=compact] .nb-rsplit-arrow { height: 30px; width: 16px; }
+.nb-command-bar[data-density=compact] select, .nb-command-bar[data-density=compact] .nb-rselect { height: 28px; font-size: 12px; padding: 2px 6px; }
+.nb-command-bar[data-density=compact] .nb-rfont { width: 112px; }
+.nb-command-bar[data-density=compact] .nb-rsize { width: 46px; }
+.nb-command-bar[data-density=compact] .nb-rstyle { width: 96px; }
+.nb-command-bar[data-density=compact] .nb-tool { min-height: 30px; padding: 4px 8px; }
+.nb-command-bar[data-density=compact] .nb-ribbon .nb-small { white-space: nowrap; padding: 0 8px; }
+/* Drawing tools keep their names as tooltips and accessible names; the row shows icons. */
+.nb-command-bar[data-density=compact] .nb-draw-tools .nb-tool > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.nb-command-bar[data-density=compact] .nb-notebook-help { display: block; max-width: 520px; margin: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Panels opened from a tool are lifted out of the row (placed by ToolScroller). */
+.nb-command-bar[data-density=compact] .nb-picker, .nb-command-bar[data-density=compact] details[open] > .nb-popover-panel, .nb-command-bar[data-density=compact] details[open].nb-canvas-actions > div { position: fixed; z-index: 70; }
+.nb-command-bar[data-density=compact] details[open] > .nb-popover-panel { display: grid; gap: 6px; width: min(420px, calc(100vw - 16px)); max-height: 50vh; overflow: auto; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--color-line); background: var(--color-elevated); color: var(--color-text-base); white-space: normal; box-shadow: 0 12px 32px rgb(0 0 0 / .28); }
+.nb-command-bar[data-density=compact] details[open].nb-canvas-actions > div { max-height: 60vh; overflow: auto; }
+
+/* Expanded: the tab strip gets its own line and commands show labels. */
+.nb-command-bar[data-density=expanded] .nb-tool-row { flex-wrap: wrap; align-items: flex-start; padding: 4px 6px 4px; }
+.nb-command-bar[data-density=expanded] .nb-command-tabs { flex-basis: 100%; padding: 2px 0 4px; border-inline-end: 0; border-bottom: 1px solid var(--color-line); }
+.nb-command-bar[data-density=expanded][data-collapsed=true] .nb-command-tabs { border-bottom: 0; }
+.nb-command-bar[data-density=expanded] .nb-tool-frame { flex: 1 1 0; }
+.nb-command-bar[data-density=expanded] .nb-density-toggle { margin-top: 10px; }
+.nb-command-bar .nb-ribbon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; min-height: 50px; padding: 6px 2px; border: 0; background: none; }
+.nb-command-bar[data-density=compact][data-collapsed=true] .nb-command-tabs { border-inline-end: 0; }
+
+/* Narrow computer windows: the tabs fold into one "Home ▾" button. */
+@media (max-width: 1180px) {
+  .nb-command-bar[data-density=compact] .nb-tab-picker { display: inline-flex; }
+  .nb-command-bar[data-density=compact] .nb-command-tabs { display: none; }
+  .nb-bar-btn > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .nb-bar-btn { padding: 0 8px; }
+  .nb-page-bar .nb-status-text { display: none; }
+  .nb-shell-actions button[aria-label="Search"] > span, .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
+}
+
+/* Phones: a 48px page bar (menu, location, status, Mentions, New page, More)
+   and a full-width 44px tool row; touch targets stay at least 36px. */
+@media (max-width: 767px) {
+  .nb-page-bar { min-height: 48px; padding: 0 4px; gap: 2px; border-bottom: 1px solid var(--color-line); }
+  /* The notebook and section names are in the menu; parent pages stay as links, back and forward show when they can be used. */
+  .nb-page-bar .nb-breadcrumbs ol > li:has(> span):not(:last-child), .nb-page-bar .nb-crumb-nav:disabled { display: none; }
+  .nb-page-bar .nb-breadcrumbs ol { margin-inline-start: 2px; }
+  .nb-page-bar .nb-breadcrumbs li > span { max-width: 160px; }
+  .nb-page-bar .nb-crumb-nav, .nb-page-bar .nb-bar-icon, .nb-page-bar .nb-bar-btn { width: 40px; height: 40px; padding: 0; justify-content: center; border: 0; }
+  .nb-page-bar .nb-doc-status { padding-inline-start: 6px; }
+  .nb-page-bar .nb-status-badge { font-size: 10px; padding: 0 5px; }
+  .nb-page-bar .nb-mentions-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .nb-page-bar .nb-bar-page > button { min-width: 40px; height: 40px; padding: 0 8px; }
+  .nb-bar-actions::before { display: none; }
+  .nb-tool-row { margin: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--color-line); min-height: 46px; padding: 0 2px 0 6px; }
+  .nb-command-bar[data-density=compact] .nb-tab-picker { display: inline-flex; height: 36px; }
+  .nb-command-bar[data-density=compact] .nb-command-tabs { display: none; }
+  .nb-command-bar[data-density=expanded] .nb-command-tabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .nb-command-bar[data-density=compact] .nb-rbtn, .nb-command-bar[data-density=compact] .nb-rsplit-arrow { height: 36px; }
+  .nb-command-bar[data-density=compact] .nb-rbtn { min-width: 36px; }
+  .nb-command-bar[data-density=compact] select, .nb-command-bar[data-density=compact] .nb-rselect { height: 34px; }
+  .nb-command-bar[data-density=compact] .nb-ribbon { min-height: 46px; }
+  .nb-density-toggle { width: 36px; height: 36px; }
+  .nb-ribbon-shell .nb-tool-row { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .nb-tool-frame::before, .nb-tool-frame::after { transition: none; } }
+
 /* Groups wrap internally too, so a long group (table layout) never runs off a narrow window. */
 .nb-rgroup { display: inline-flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 1px; padding: 0 6px; min-height: 36px; border-inline-end: 1px solid var(--color-line); }
 .nb-rgroup:last-of-type { border-inline-end: 0; }
@@ -54,11 +193,6 @@
 .nb-edit-list button:hover, .nb-edit-list button:focus-visible { background: var(--color-primary); }
 .nb-edit-list span { font-size: 12px; color: var(--color-text-muted); }
 
-/* Top bar (right of the tabs): Sticky Notes and Share. */
-.nb-topbar { margin-inline-start: auto; display: inline-flex; gap: 6px; align-items: center; }
-.nb-topbar + .nb-ribbon-toggle { margin-inline-start: 6px; }
-.nb-topbar .nb-rbtn { height: 28px; border-color: var(--color-line); }
-
 
 /* Top bar messages (e.g. Share) stay visible when the ribbon is hidden. */
 .nb-command-bar > .nb-toolbar-shared[role=status] { display: block; padding: 6px 18px 8px; }
@@ -100,16 +234,3 @@
 /* The app top bar's controls (clock and weather, sticky notes, Search, Bruno) in the notebook's top row. */
 .nb-shell-actions { display: inline-flex; align-items: center; margin-inline-end: 6px; }
 .nb-shell-actions:empty { display: none; }
-/* Narrower desktop windows: the row wraps rather than running off-screen,
-   Search turns into an icon, and the tabs tighten up. */
-.nb-command-tabs { flex-wrap: wrap; row-gap: 4px; }
-@media (max-width: 1200px) {
-  .nb-shell-actions button[aria-label="Search"] > span, .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
-}
-@media (min-width: 768px) and (max-width: 1000px) {
-  .nb-command-tabs::before { display: none; }
-  .nb-shell .nb-command-tabs button[role=tab] { padding: 6px 8px; }
-}
-/* In the notebook row the shared controls match the ribbon's 18px icons (Share). */
-.nb-shell-actions button[aria-label="Sticky notes"] svg, .nb-shell-actions button[aria-label="Ask Bruno"] svg, .nb-ribbon-toggle svg { width: 18px; height: 18px; }
-.nb-shell-actions button[aria-label="Search"] svg { width: 16px; height: 16px; }
