@@ -223,4 +223,30 @@ describe('Bruno dock and the corner', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /Broken chat/ }));
     await waitFor(() => expect(dlg.notify).toHaveBeenCalledWith(expect.stringMatching(/Couldn't open that chat/), 'error'));
   });
+
+  it('Auto-apply: a reply that just finished applies its changes; a reopened chat never does', async () => {
+    const applied: string[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/bruno/chats' && init?.method === 'POST') return json({ id: 55 });
+      if (url === '/api/ai/apply-actions') { applied.push(init.body); return json({ ok: true, applied: { event: 1 }, created: { event: [9] } }); }
+      if (url.startsWith('/api/bruno/chats?')) return json([{ id: 9, title: 'Old chat', updated_at: new Date().toISOString() }]);
+      if (url === '/api/bruno/chats/9') return json({ messages: [{ role: 'user', text: 'old' }, { role: 'model', text: 'Old\n```event\n[{"title":"Old event","date":"2026-11-01"}]\n```' }] });
+      return json({});
+    });
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => { onChunk('Adding it.\n```event\n[{"title":"Build night","date":"2026-11-02"}]\n```'); });
+    render(wrap(<BrunoDock {...props()} />));
+    fireEvent.click(screen.getByRole('switch', { name: /Auto-apply/ }));
+    expect(screen.getByRole('switch', { name: /Auto-apply/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'Add build night' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(applied).toHaveLength(1));
+    expect(applied[0]).toContain('Build night');
+    // Reopening an older chat shows its card but applies nothing.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Recent chats' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Old chat/ }));
+    await screen.findByText(/Old event/);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(applied).toHaveLength(1);
+    fireEvent.click(screen.getByRole('switch', { name: /Auto-apply/ }));
+  });
 });

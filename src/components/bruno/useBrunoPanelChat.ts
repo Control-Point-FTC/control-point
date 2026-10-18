@@ -74,6 +74,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   const name = botName || 'Bruno';
   const [messages, setMessages] = useDraft<BuildHelperMessage[]>('bruno-panel:messages', EMPTY_MSGS);
   const [chatId, setChatId] = useDraft<number | null>('bruno-panel:chat', null);
+  // The reply that just finished streaming in this panel (auto-apply acts on it only, never on reopened history).
+  const [freshIndex, setFreshIndex] = useDraft<number | null>('bruno-panel:fresh', null);
   const [input, setInput] = useDraft<string>('bruno-panel:input', '');
   const [busy, setBusy] = useDraft<boolean>('bruno-panel:busy', false);
   const [thinkMeta, setThinkMeta] = useDraft<ThinkMeta>('bruno-panel:think', EMPTY_OBJ as ThinkMeta);
@@ -184,6 +186,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     setChatId(null);
     setMessages(EMPTY_MSGS);
     setProposalState(EMPTY_OBJ);
+    setFreshIndex(null);
     setInput('');
     setAttached([]);
     setAttachedPdfs([]);
@@ -212,6 +215,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       // Something else (another chat, a new chat, a send) was chosen while it loaded: keep that.
       if (draftEpoch() !== ep || choice !== panelChoice || getDraft('bruno-panel:busy', false)) return;
       setChatId(id);
+      setFreshIndex(null);
       setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
       setProposalState(EMPTY_OBJ);
       setThinkMeta(EMPTY_OBJ as ThinkMeta);
@@ -316,6 +320,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
       // "Turn on light mode": a finished reply's appearance block switches the theme here.
       applyAppearanceFromReply(agg);
+      if (agg.trim()) put<number | null>('bruno-panel:fresh', replyIndex);
     } catch (e: any) {
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       if (e?.name === 'AbortError') {
@@ -342,7 +347,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   }, [open, pendingPrompt, busy]);
 
   return {
-    name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat,
+    name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat, freshIndex,
     recentChats, recentError, loadRecentChats, openChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,

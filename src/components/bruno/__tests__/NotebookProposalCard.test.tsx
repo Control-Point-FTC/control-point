@@ -128,3 +128,36 @@ describe('receipt keys', () => {
     } finally { Object.defineProperty(globalThis.crypto, 'randomUUID', { value: original, configurable: true }); }
   });
 });
+
+describe('auto-apply and redo', () => {
+  beforeEach(() => apiJson.mockReset());
+  afterEach(cleanup);
+  const mountCard = (ops: Record<string, unknown>[], props: { auto?: boolean; onAsk?: (t: string) => void }) =>
+    render(<MemoryRouter><NotebookProposalCard ops={ops} scope={`auto-${++scopeN}`} {...props} /></MemoryRouter>);
+
+  it('with auto-apply on, a safe change is applied without the click', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'append', summary: 'Add to "BOM"', after: 'Motor' }] });
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'append', pageId: 3, title: 'BOM' }], replayed: false });
+    mountCard([{ op: 'append', page: 3, markdown: 'Motor' }], { auto: true });
+    expect(await screen.findByText(/Notebook updated \(1 change\) automatically\./)).toBeTruthy();
+    expect(apiJson.mock.calls.filter(([, o]) => o?.method === 'POST' && JSON.parse(o.body).receipt)).toHaveLength(1);
+  });
+
+  it('a removal still waits for the member, even with auto-apply on', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'replace', summary: 'Remove part of "BOM"', before: 'Old line', destructive: true }] });
+    mountCard([{ op: 'replace', page: 3, block: 'a', markdown: '' }], { auto: true });
+    expect(await screen.findByText('Remove part of "BOM"')).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(apiJson).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('when the page moved under the card, Bruno can be asked to redo it', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'replace', summary: 'Rewrite part of "BOM"', error: 'That part of the page changed or was removed.' }] });
+    const onAsk = vi.fn();
+    mountCard([{ op: 'replace', page: 3, block: 'a', markdown: 'x' }], { auto: true, onAsk });
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask Bruno to redo it' }));
+    expect(onAsk).toHaveBeenCalledWith(expect.stringMatching(/Read the page again and redo that change/));
+    expect(apiJson).toHaveBeenCalledTimes(1);
+  });
+});

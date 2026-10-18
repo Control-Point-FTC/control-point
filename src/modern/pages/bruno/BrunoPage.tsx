@@ -158,6 +158,7 @@ export function BrunoPage(props: any) {
                         proposal={c.proposalState[i]} switchDismissed={c.dismissedSwitch.includes(i)}
                         onConfirmProposals={c.confirmProposals} onDismissProposal={c.dismissProposal}
                         onSwitchToBruno={c.switchToBruno} onDismissSwitch={c.dismissSwitch}
+                        onAsk={(t) => void c.send(t)}
                       />))}
                   {c.stream.active && <LiveReply text={c.stream.text} liveThink={c.liveThink} />}
                 </motion.div>
