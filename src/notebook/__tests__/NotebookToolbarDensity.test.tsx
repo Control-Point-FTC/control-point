@@ -84,6 +84,17 @@ describe('toolbar density', () => {
     expect(bar()).toHaveAttribute('data-density', 'compact');
   });
 
+  it('keeps Copy reachable on a read-only page, with the editing commands off', () => {
+    editor = new Editor({ extensions: notebookExtensions(false, true), content: '<p>Hello</p>' });
+    render(<NotebookToolbar editor={editor} disabled pages={[]} pageId={1} />);
+    expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
+    const options = screen.getByRole('button', { name: 'Paste options' });
+    expect(options).not.toBeDisabled();
+    openMenu(options);
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).not.toHaveAttribute('data-disabled');
+    for (const name of ['Cut', 'Keep formatting', 'Paste as plain text']) expect(screen.getByRole('menuitem', { name })).toHaveAttribute('data-disabled');
+  });
+
   it('keeps the choice for the visit when the browser blocks storage', () => {
     mount(undefined, null);
     const setItem = Storage.prototype.setItem;

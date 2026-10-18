@@ -108,10 +108,11 @@ export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTa
       <RibbonButton label="Redo" shortcut="Ctrl+Y" disabled={disabled} onClick={() => chain().redo().run()} />
     </RibbonGroup>
     <RibbonGroup label="Clipboard">
-      <RibbonSplit label="Paste" showLabel menuLabel="Paste options" shortcut="Ctrl+V" disabled={disabled} onClick={() => { void paste(false); }}>
-        <RibbonItem onSelect={() => { void paste(false); }}>Keep formatting</RibbonItem>
-        <RibbonItem onSelect={() => { void paste(true); }}>Paste as plain text</RibbonItem>
-        {compact && <><RibbonSeparator /><RibbonItem onSelect={() => { void clipboard('cut'); }}>Cut</RibbonItem><RibbonItem onSelect={() => { void clipboard('copy'); }}>Copy</RibbonItem></>}
+      {/* Compact: Copy lives in this menu, so the menu stays available on read-only pages. */}
+      <RibbonSplit label="Paste" showLabel menuLabel="Paste options" shortcut="Ctrl+V" disabled={disabled} menuDisabled={compact ? false : disabled} onClick={() => { void paste(false); }}>
+        <RibbonItem disabled={disabled} onSelect={() => { void paste(false); }}>Keep formatting</RibbonItem>
+        <RibbonItem disabled={disabled} onSelect={() => { void paste(true); }}>Paste as plain text</RibbonItem>
+        {compact && <><RibbonSeparator /><RibbonItem disabled={disabled} onSelect={() => { void clipboard('cut'); }}>Cut</RibbonItem><RibbonItem onSelect={() => { void clipboard('copy'); }}>Copy</RibbonItem></>}
       </RibbonSplit>
       {!compact && <RibbonButton label="Cut" shortcut="Ctrl+X" disabled={disabled} onClick={() => { void clipboard('cut'); }} />}
       {!compact && <RibbonButton label="Copy" shortcut="Ctrl+C" onClick={() => { void clipboard('copy'); }} />}

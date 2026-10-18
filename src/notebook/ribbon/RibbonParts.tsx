@@ -35,12 +35,13 @@ export function RibbonButton({ label, icon, accent, showLabel, active, disabled,
 }
 
 /** A main action with a menu of related ones (OneNote's split buttons). */
-export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end' }) {
+/** `menuDisabled` lets the menu stay open-able when the main action is off (Copy on a read-only page). */
+export function RibbonSplit({ menuLabel, children, align = 'start', menuDisabled, ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end'; menuDisabled?: boolean }) {
   const menu = useMenuFocus();
   return <span className="nb-rsplit">
     <RibbonButton {...main} />
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={menuDisabled ?? main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
     </DropdownMenu>
   </span>;
