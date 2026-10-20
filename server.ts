@@ -10857,8 +10857,6 @@ Rules:
       if (proofReq === "none") return res.json({ verdict: "pass", required: "note", message: "No proof needed for this task.", check_id: null });
       const short = proofShortfall(proofReq, { notes, link, images });
       if (short) return res.status(400).json({ error: short });
-      // A manager's own finish is approved anyway; no need to ask Bruno.
-      if (canManage) return res.json({ verdict: "pass", required: "note", message: "Managers approve their own finishes.", check_id: null });
       if (!isGeminiConfigured()) return unavailable("Bruno isn't set up on this server.");
       // A budget per member, so a whole team on one school network doesn't share one.
       if (proofCheckLimiter.hit(`proof:${auth.memberId}`, { max: 20, windowMs: 10 * MIN })) {
@@ -10953,12 +10951,16 @@ Rules:
       // Unassigned task: the completer claims it.
       const assignee = task.assigned_to || auth.memberId;
       // Done isn't accepted yet: a manager reviews it (approve, or send it
-      // back). A manager finishing a task approves their own work; Bruno
-      // approves a finish he passed, unless it's code/digital work (a person
-      // signs that off) or the task needs no proof at all.
-      const start = canManage ? { status: "approved" as const, byBruno: false } : initialReview(proofReq, check);
+      // back). Bruno approves a finish he passed, unless it's code/digital
+      // work (a person signs that off). A manager finishing a task approves
+      // their own work, unless Bruno didn't pass it: then it waits for
+      // review like anyone's, with his note. (Managers could approve it
+      // themselves anyway, so a manager's finish with no check stays approved.)
+      const start = canManage
+        ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
+        : initialReview(proofReq, check);
       const review = start.status;
-      const reviewedBy = canManage ? auth.memberId : null;
+      const reviewedBy = canManage && review === "approved" ? auth.memberId : null;
       const reviewedAt = review === "approved" ? now : null;
       const reviewEntry = review === "approved" ? { status: "approved", by: reviewedBy, at: now, note: null, ...(start.byBruno ? { bruno: true } : {}) } : null;
       const closed: any = await dbRun(

@@ -220,11 +220,17 @@ describe("when Bruno can't check", () => {
     expect((await t.post(`/api/tasks/${mine}/verify-proof`, { notes: "Rewired the arm." }, ben)).status).toBe(200);
   });
 
-  it("a manager's own finish doesn't ask Bruno", async () => {
-    const id = await newTask();
-    script.push(verdict("flag"));
-    const v = await t.post(`/api/tasks/${id}/verify-proof`, { notes: "Rewired the arm." }, admin);
-    expect(v.body).toMatchObject({ verdict: "pass", check_id: null });
-    expect(script).toHaveLength(1); // never asked
+  it("a manager's finish Bruno flagged waits for review; one he passed is theirs to approve", async () => {
+    const flagged = await newTask();
+    script.push(verdict("flag", "note", "One letter isn't proof."));
+    const v = await t.post(`/api/tasks/${flagged}/verify-proof`, { notes: "d" }, admin);
+    expect(v.body.verdict).toBe("flag");
+    await complete(flagged, admin, { notes: "d", check_id: v.body.check_id });
+    expect((await row(flagged))).toMatchObject({ review_status: "pending", reviewed_by: null, completion_ai_note: "One letter isn't proof." });
+    const passed = await newTask();
+    script.push(verdict("pass"));
+    const v2 = await t.post(`/api/tasks/${passed}/verify-proof`, { notes: "Rewired the arm encoder." }, admin);
+    await complete(passed, admin, { notes: "Rewired the arm encoder.", check_id: v2.body.check_id });
+    expect((await row(passed)).review_status).toBe("approved");
   });
 });
