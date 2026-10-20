@@ -32,7 +32,7 @@ function setup(notes = '') {
     view.rerender(ui());
   });
   const ui = () => (
-    <CompletionDialog task={{ id: 1, title: 'Wire the hub' }} notes={notes} onNotesChange={() => {}} files={state.files}
+    <CompletionDialog task={{ id: 1, title: 'Wire the hub' }} notes={notes} onNotesChange={() => {}} link="" onLinkChange={() => {}} files={state.files}
       onFilesChange={onFilesChange} completing={false} onSubmit={() => {}} onClose={() => {}} />
   );
   const view = render(ui());
