@@ -24,7 +24,12 @@ function markedText(node: PMNode): string {
   const marks = node.marks ?? [];
   const has = (t: string) => marks.some(m => m.type === t);
   let t = String(node.text);
-  if (has("code")) t = `\`${t}\``;
+  if (has("code")) {
+    // A fence longer than any run of backticks inside, padded when the code starts or ends with one.
+    const fence = "`".repeat(Math.max(0, ...(t.match(/`+/g) ?? []).map(r => r.length)) + 1);
+    const pad = /^`|`$/.test(t) ? " " : "";
+    t = `${fence}${pad}${t}${pad}${fence}`;
+  }
   else {
     if (has("bold")) t = `**${t}**`;
     if (has("italic")) t = `*${t}*`;

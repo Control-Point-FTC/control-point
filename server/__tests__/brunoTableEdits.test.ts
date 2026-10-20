@@ -43,6 +43,7 @@ let t: TestServer, store: NotebookStore, team: number, member: number, section: 
 const ctx = (memberId = member): NotebookContext => ({ memberId, teamId: team, source: "human" });
 const newBom = async (title = "BOM") => (await t.post("/api/notebook/pages", { sectionId: section, title, content: { type: "doc", content: markdownToNotebookBlocks(BOM) } }, session)).body.id as number;
 const amazonTable = async (page: number) => (await store.page(ctx(), page)).content.content.filter((n: any) => n.type === "table")[1];
+const rev = async (page: number) => (await store.page(ctx(), page)).revision;
 const links = (node: any): string[] => [...(node.marks ?? []).filter((m: any) => m.type === "link").map((m: any) => m.attrs.href), ...(node.content ?? []).flatMap(links)];
 let receiptN = 0;
 const receipt = () => `receipt-table-edit-${String(++receiptN).padStart(4, "0")}`;
@@ -87,6 +88,14 @@ describe("how Bruno reads a table", () => {
     expect(text).toContain("| 105pcs M4 x 8mm Button Head Socket Cap Screws (Sutemribor) | $3. | 1 | Open in Amazon |");
   });
 
+  it("inline code with backticks in it reads back as the same code", () => {
+    for (const code of ["use `x` here", "`edge`", "a `` b"]) {
+      const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: code, marks: [{ type: "code" }] }] }] };
+      const read = renderNotebookText(doc, {}).text;
+      expect(markdownToNotebookBlocks(read)[0].content).toEqual([{ type: "text", text: code, marks: [{ type: "code" }] }]);
+    }
+  });
+
   it("rows with no header line get one, so they stay a table (not in code blocks)", () => {
     expect(withTableHeaderLines("| Part | Price |\n| Nut | $5.99 |")).toBe("| Part | Price |\n| --- | --- |\n| Nut | $5.99 |");
     expect(withTableHeaderLines("| A | B |\n|---|---|\n| 1 | 2 |")).toBe("| A | B |\n|---|---|\n| 1 | 2 |");
@@ -117,7 +126,11 @@ describe("a rewrite of the table the way it went wrong on production", () => {
     const [dropped] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "replace", page, block: table.attrs.id, markdown: plain }]));
     expect(dropped).toMatchObject({ destructive: true, summary: 'Rewrite part of "BOM" (removes 8 links)' });
     const [text] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "replace", page, block: table.attrs.id, markdown: `Prices: [nuts](${url(0)}) [12mm](${url(1)}) [8mm](${url(2)}) [16mm](${url(3)}) $5.99 $7.99 $3.99 $3.99` }]));
-    expect(text).toMatchObject({ destructive: true, summary: 'Rewrite part of "BOM" (turns a table into plain text)' });
+    expect(text).toMatchObject({ destructive: true, summary: 'Rewrite part of "BOM" (turns a table into plain text and removes 4 links)' });
+    // Links that share a URL with one that stays still count: here every "Open in Amazon".
+    const noOpen = ["| Part | Unit Price | Qty | Link |", "|---|---|---|---|", ...ROWS.map(([n, p], i) => `| [${n}](${url(i)}) | ${p} | 1 | Amazon |`)].join("\n");
+    const [shared] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "replace", page, block: table.attrs.id, markdown: noOpen }]));
+    expect(shared).toMatchObject({ destructive: true, summary: 'Rewrite part of "BOM" (removes 4 links)' });
     const [fine] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "replace", page, block: table.attrs.id, markdown: AMAZON.replace("| $3. |", "| $3.99 |") }]));
     expect(fine.destructive).toBe(false);
     expect(fine.summary).toBe('Rewrite part of "BOM"');
@@ -128,7 +141,7 @@ describe("one cell", () => {
   it("changes only that cell, keeps the rest of the table, its links and ids", async () => {
     const page = await newBom();
     const table = await amazonTable(page);
-    const ops = parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99" }]);
+    const ops = parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99", revision: await rev(page) }]);
     const [preview] = await previewNotebookOps(store, ctx(), ops);
     expect(preview).toEqual({ op: "cell", summary: 'Change one cell in the table in "BOM" (row 4, column 2)', before: "$3.", after: "$3.99" });
     const { result } = await applyNotebookOps(store, ctx(), ops, receipt());
@@ -144,21 +157,42 @@ describe("one cell", () => {
   it("a cell that changed since Bruno read it is never overwritten", async () => {
     const page = await newBom();
     const table = await amazonTable(page);
-    const ops = parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 3, column: 2, was: "$3.", markdown: "$3.99" }]);
+    const ops = parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 3, column: 2, was: "$3.", markdown: "$3.99", revision: await rev(page) }]);
     const [preview] = await previewNotebookOps(store, ctx(), ops);
     expect(preview.error).toMatch(/changed or was removed since Bruno read it \(it reads "\$7\.99"\)/);
     await expect(applyNotebookOps(store, ctx(), ops, receipt())).rejects.toMatchObject({ status: 409 });
     expect(links(await amazonTable(page))).toEqual(links(table));
   });
 
+  it("a page changed since Bruno read it (rows sorted) is never written by position, even when the cell matches", async () => {
+    const page = await newBom();
+    const table = await amazonTable(page);
+    const ops = parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 4, column: 3, was: "1", markdown: "2", revision: await rev(page) }]);
+    await store.mergeEdit(ctx(), page, { transform: doc => { const t = doc.content!.filter(n => n.type === "table")[1]; t.content!.splice(1, 4, ...t.content!.slice(1, 5).reverse()); return doc; } });
+    const [preview] = await previewNotebookOps(store, ctx(), ops);
+    expect(preview.error).toMatch(/changed or was removed since Bruno read it/);
+    await expect(applyNotebookOps(store, ctx(), ops, receipt())).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a cell change that drops a link is named and never auto-applied; a kept link is fine", async () => {
+    const page = await newBom();
+    const table = await amazonTable(page);
+    const name = ROWS[0][0];
+    const [dropped] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 1, was: name, markdown: "Hex nuts", revision: await rev(page) }]));
+    expect(dropped).toMatchObject({ destructive: true, summary: 'Change one cell in the table in "BOM" (row 2, column 1) (removes 1 link)' });
+    const [kept] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 1, was: `[${name}](${url(0)})`, markdown: `[Hex nuts](${url(0)})`, revision: await rev(page) }]));
+    expect(kept.destructive).toBeUndefined();
+  });
+
   it("is validated: row, column, the text it had, one line of text", async () => {
     expect(() => parseNotebookOps([{ op: "cell", page: 1, row: 0, column: 1, was: "", markdown: "x" }])).toThrow(/row and column/);
     expect(() => parseNotebookOps([{ op: "cell", page: 1, row: 1, column: 1, markdown: "x" }])).toThrow(/current text/);
+    expect(() => parseNotebookOps([{ op: "cell", page: 1, row: 1, column: 1, was: "", markdown: "x" }])).toThrow(/page revision/);
     const page = await newBom();
     const table = await amazonTable(page);
-    const [preview] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 9, column: 2, was: "", markdown: "x" }]));
+    const [preview] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 9, column: 2, was: "", markdown: "x", revision: await rev(page) }]));
     expect(preview.error).toMatch(/no row 9, column 2/);
-    const [heading] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 2, was: "$5.99", markdown: "## big" }]));
+    const [heading] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 2, was: "$5.99", markdown: "## big", revision: await rev(page) }]));
     expect(heading.error).toMatch(/one line of text/);
   });
 });
@@ -170,7 +204,7 @@ describe("Undo", () => {
     const table = await amazonTable(page);
     const key = receipt();
     await applyNotebookOps(store, ctx(), parseNotebookOps([
-      { op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99" },
+      { op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99", revision: await rev(page) },
       { op: "append", page, markdown: "Checked Oct 20." },
       { op: "rename", page, title: "BOM (checked)" },
     ]), key);
@@ -187,7 +221,7 @@ describe("Undo", () => {
     const page = await newBom();
     const table = await amazonTable(page);
     const key = receipt();
-    await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99" }]), key);
+    await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99", revision: await rev(page) }]), key);
     await store.mergeEdit(ctx(), page, { title: "BOM (teammate)" });
     await expect(undoNotebookOps(store, ctx(), key)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/was edited after Bruno's change/) });
     expect(renderNotebookText((await store.page(ctx(), page)).content, {}).text).toContain("| $3.99 |");
@@ -208,11 +242,28 @@ describe("Undo", () => {
     await expect(undoNotebookOps(store, ctx(), k3)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/version history/) });
   });
 
+  it("never trashes subpages added after Bruno made a page; its own subpages go with it", async () => {
+    const key = receipt();
+    const { result } = await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "create", title: "Plan", section, markdown: "hi" }]), key);
+    const teammate = (await t.post("/api/notebook/pages", { sectionId: section, parentId: result[0].pageId, title: "Teammate notes", content: { type: "doc", content: markdownToNotebookBlocks("mine") } }, session)).body.id;
+    await expect(undoNotebookOps(store, ctx(), key)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/subpages that were added after Bruno made it/) });
+    expect((await store.page(ctx(), teammate)).title).toBe("Teammate notes");
+    const k2 = receipt();
+    const made = (await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "create", title: "Parent", section, markdown: "p" }]), k2)).result[0].pageId;
+    const k3 = receipt();
+    const child = (await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "create", title: "Child", parent: made, markdown: "c" }]), k3)).result[0].pageId;
+    await expect(undoNotebookOps(store, ctx(), k2)).rejects.toMatchObject({ status: 409 });
+    await undoNotebookOps(store, ctx(), k3);
+    await undoNotebookOps(store, ctx(), k2);
+    await expect(store.page(ctx(), child)).rejects.toMatchObject({ status: 404 });
+    await expect(store.page(ctx(), made)).rejects.toMatchObject({ status: 404 });
+  });
+
   it("over HTTP, for the member's own card", async () => {
     const page = await newBom();
     const table = await amazonTable(page);
     const key = receipt();
-    const ops = [{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99" }];
+    const ops = [{ op: "cell", page, table: table.attrs.id, row: 4, column: 2, was: "$3.", markdown: "$3.99", revision: await rev(page) }];
     expect((await t.post("/api/ai/notebook/apply", { ops, receipt: key }, session)).status).toBe(200);
     const res = await t.post("/api/ai/notebook/undo", { receipt: key }, session);
     expect(res.status).toBe(200);
@@ -236,7 +287,8 @@ describe("speed: an edit to the open page is one model call", () => {
     model.script = [(body) => {
       const system = body.system_instruction.parts[0].text as string;
       const id = /\[#([\w-]+)\] \| Part \| Unit Price/.exec(system)?.[1];
-      return `Fixing the M4 x 8mm price:\n\`\`\`notebook\n[{"op":"cell","page":${page},"table":"${id}","row":4,"column":2,"was":"$3.","markdown":"$3.99"}]\n\`\`\``;
+      const revision = new RegExp(`page #${page} "BOM" \\(revision (\\d+)\\)`).exec(system)?.[1];
+      return `Fixing the M4 x 8mm price:\n\`\`\`notebook\n[{"op":"cell","page":${page},"table":"${id}","row":4,"column":2,"was":"$3.","markdown":"$3.99","revision":${revision}}]\n\`\`\``;
     }];
     const chat = await t.post("/api/bruno/chats", {}, session);
     const headers = new Headers({ "Content-Type": "application/json", "X-CP-Client": "1" }); withSession(headers, session);

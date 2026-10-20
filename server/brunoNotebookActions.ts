@@ -26,8 +26,9 @@ export type NotebookOp =
   /** Entry metadata: only the fields given change (null clears one). */
   | { op: "tag"; page: number; meta: Record<string, unknown> }
   /** One table cell rewritten ("row"/"column" count from 1, the header row being row 1). "was" is
-   *  the cell's text as Bruno read it, so a cell that changed since is never overwritten unseen. */
-  | { op: "cell"; page: number; table?: string; row: number; column: number; was: string; markdown: string };
+   *  the cell's text as Bruno read it, and "revision" the page's revision then: rows sorted or
+   *  edited since (any change to the page) and the cell is never written by position. */
+  | { op: "cell"; page: number; table?: string; row: number; column: number; was: string; markdown: string; revision: number };
 
 export const MAX_NOTEBOOK_OPS = 10;
 /** Most blocks one rewrite may replace. */
@@ -134,9 +135,11 @@ export function parseNotebookOps(items: unknown): NotebookOp[] {
         const row = posInt(raw.row), column = posInt(raw.column);
         if (!row || !column) throw bad("A cell change needs its row and column (counting from 1)");
         if (typeof raw.was !== "string" || raw.was.length > MAX_CELL) throw bad("A cell change needs the cell's current text (\"was\")");
+        const revision = Number(raw.revision);
+        if (!Number.isSafeInteger(revision) || revision < 0) throw bad("A cell change needs the page revision it was read at");
         const markdown = typeof raw.markdown === "number" ? String(raw.markdown) : raw.markdown ?? "";
         if (typeof markdown !== "string" || markdown.length > MAX_CELL) throw bad(`A table cell is text up to ${MAX_CELL.toLocaleString()} characters`);
-        return { op: "cell", page: page!, ...(raw.table ? { table: raw.table } : {}), row, column, was: raw.was, markdown: markdown.replace(/\s*\n\s*/g, " ").trim() };
+        return { op: "cell", page: page!, ...(raw.table ? { table: raw.table } : {}), row, column, was: raw.was, markdown: markdown.replace(/\s*\n\s*/g, " ").trim(), revision };
       }
       case "tag": {
         const meta: Record<string, unknown> = {};
@@ -294,6 +297,15 @@ export function setCell(doc: PMNode, op: { table?: string; row: number; column: 
   cell.content = blocks;
   return doc;
 }
+/** How many links a rewrite removes: for each URL, how many fewer links point to it afterwards. */
+function lostLinks(before: PMNode[], after: PMNode[]): number {
+  const left = new Map<string, number>();
+  for (const h of linksIn(after)) left.set(h, (left.get(h) ?? 0) + 1);
+  let lost = 0;
+  for (const h of linksIn(before)) { const n = left.get(h) ?? 0; if (n) left.set(h, n - 1); else lost++; }
+  return lost;
+}
+const linkNote = (n: number) => `removes ${n} link${n === 1 ? "" : "s"}`;
 /** The target of every link in some blocks, once per link (a rewrite that drops one is flagged on the card). */
 function linksIn(nodes: PMNode[], out: string[] = []): string[] {
   for (const n of nodes) {
@@ -376,9 +388,12 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
       const summary = `Change one cell in the table in ${name} (row ${op.row}, column ${op.column})`;
       try {
         const page = await store.page(bruno(ctx), op.page);
+        if (page.revision !== op.revision) throw changed();
         const cell = findCell(page.content as PMNode, op);
-        const after = cellText(cellBlocks(op.markdown));
-        out.push({ op: "cell", summary, before: cellText(cell.content ?? []) || "(empty)", after: after || "(empty)", ...(after ? {} : { destructive: true }) });
+        const blocks = cellBlocks(op.markdown), after = cellText(blocks);
+        // A cleared cell or a dropped link is never applied unseen (auto-apply skips it).
+        const lost = lostLinks(cell.content ?? [], blocks);
+        out.push({ op: "cell", summary: lost ? `${summary} (${linkNote(lost)})` : summary, before: cellText(cell.content ?? []) || "(empty)", after: after || "(empty)", ...(!after || lost ? { destructive: true } : {}) });
       } catch (e) {
         out.push({ op: "cell", summary, error: e instanceof NotebookError && e.status !== 404 && e.status !== 403 ? e.message : "This page isn't available to Bruno." });
       }
@@ -396,9 +411,9 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
         // A rewrite that loses links or turns a table into text is never applied unseen
         // (auto-apply skips it; the member ticks the box). It's named on the card.
         const oldBlocks = at.siblings.slice(at.index, at.index + at.count), newBlocks = markdownToNotebookBlocks(op.markdown);
-        const kept = new Set(linksIn(newBlocks)), lost = linksIn(oldBlocks).filter(h => !kept.has(h)).length;
+        const lost = lostLinks(oldBlocks, newBlocks);
         const unTabled = !!added && hasTable(oldBlocks) && !hasTable(newBlocks);
-        const losses = [unTabled ? "turns a table into plain text" : "", lost ? `removes ${lost} link${lost === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+        const losses = [unTabled ? "turns a table into plain text" : "", lost ? linkNote(lost) : ""].filter(Boolean).join(" and ");
         out.push({ op: "replace", summary: `${added ? `Rewrite part of ${name}` : `Remove part of ${name}`}${added && losses ? ` (${losses})` : ""}`, before: before.text, ...(added ? { after: added } : {}), destructive: !added || !!losses });
       }
     }
@@ -414,6 +429,9 @@ export type NotebookOpResult = { op: NotebookOp["op"]; pageId: number; title: st
 export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContext, ops: NotebookOp[], receiptKey: string) {
   const as = confirmed(ctx);
   return store.batchOnce(as, receiptKey, async () => {
+    // Cells are written by position: only onto the page exactly as Bruno read it (checked
+    // before this card's own changes move the revision on).
+    for (const op of ops) if (op.op === "cell" && (await store.page(as, op.page)).revision !== op.revision) throw changed();
     const results: NotebookOpResult[] = [];
     for (const op of ops) {
       if (op.op === "create") {
@@ -480,10 +498,15 @@ export async function undoNotebookOps(store: NotebookStore, ctx: NotebookContext
       pages.set(r.pageId, p);
     }
     const undone: NotebookOpResult[] = [];
+    const created = new Set([...pages].filter(([, p]) => p.created).map(([id]) => id));
     for (const [pageId, p] of pages) {
       const now = await store.page(as, pageId);
       if (now.revision !== p.last) throw new NotebookError(`"${clip(now.title, 80)}" was edited after Bruno's change, so undoing it would also undo those edits. Open the page's version history to restore an earlier version.`, 409);
       if (p.created) {
+        // Trashing a page trashes its subpages: never one this card didn't make (any member's,
+        // protected ones included). A subpage the card made goes with its parent.
+        if ((await store.descendantIds(as, pageId)).some(id => !created.has(id))) throw new NotebookError(`"${clip(now.title, 80)}" has subpages that were added after Bruno made it, so it can't be undone here. Move it to the trash yourself if you want it gone.`, 409);
+        if (now.parentId && created.has(now.parentId)) { undone.push({ op: "delete", pageId, title: now.title }); continue; }
         await store.remove(as, "page", pageId);
         undone.push({ op: "delete", pageId, title: now.title });
         continue;

@@ -921,6 +921,13 @@ export class NotebookStore {
     const row = await s.one("SELECT member_id,result FROM bruno_notebook_receipts WHERE team_id=? AND receipt_key=?", ctx.teamId, String(key));
     return row && Number(row.member_id) === ctx.memberId ? JSON.parse(row.result) as unknown : null;
   }); }
+  /** Every live page beneath a page, whoever can see it (protected ones included). */
+  descendantIds(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
+    await s.item("page", pageId);
+    const rows = await s.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM notebook_pages WHERE parent_id=? AND team_id=? AND deleted_at IS NULL
+      UNION SELECT p.id FROM notebook_pages p JOIN sub ON p.parent_id=sub.id WHERE p.team_id=? AND p.deleted_at IS NULL) SELECT id FROM sub`, pageId, ctx.teamId, ctx.teamId);
+    return rows.map(r => Number(r.id));
+  }); }
   /** A page's saved version at one revision (the page itself must be visible), or null. */
   versionAt(ctx: NotebookContext, pageId: number, revision: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
