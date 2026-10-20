@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { BRUNO_NAVIGATE_EVENT, applyNavigateFromReply, brunoGo, createdToOpen, navigatePath, navigateRequest } from '../brunoNavigate';
+import { BRUNO_NAVIGATE_EVENT, applyNavigateFromReply, applyNavigateKeepingCards, brunoGo, createdToOpen, hasConfirmCards, navigatePath, navigateRequest } from '../brunoNavigate';
 import { stripEventBlocks } from '../aiService';
 
 const reply = (json: string) => 'Opening your BOM page.\n```navigate\n' + json + '\n```';
@@ -74,8 +74,34 @@ describe('opening what Bruno just created', () => {
     expect(createdToOpen([task(true), event(true)], { task: [17], event: [4] })).toBe('/tasks?task=17');
   });
 
+  it('opens the item that was flagged, not the first one', () => {
+    const two = { kind: 'task', items: [{ title: 'A' }, { title: 'B', open: true }] };
+    expect(createdToOpen([two], { task: [17, 18] })).toBe('/tasks?task=18');
+    const split = [{ kind: 'event', items: [{ title: 'A' }] }, { kind: 'event', items: [{ title: 'B', open: true }] }];
+    expect(createdToOpen(split, { event: [4, 5] })).toBe('/calendar?event=5');
+  });
+
+  it("opens nothing when some items weren't saved (positions no longer line up)", () => {
+    const two = { kind: 'task', items: [{ title: 'A' }, { title: 'B', open: true }] };
+    expect(createdToOpen([two], { task: [17] })).toBeNull();
+  });
+
   it("stays put when nobody asked, or nothing was created", () => {
     expect(createdToOpen([task(), event()], { task: [17], event: [4] })).toBeNull();
     expect(createdToOpen([task(true)], {})).toBeNull();
+  });
+});
+
+describe('a chat on its own page keeps its cards', () => {
+  it("doesn't leave the page while a card waits for confirmation", () => {
+    const seen: string[] = [];
+    const on = (e: Event) => seen.push((e as CustomEvent).detail.to);
+    window.addEventListener(BRUNO_NAVIGATE_EVENT, on);
+    const withCard = 'Here it is:\n```tasks\n[{"title":"Order servos"}]\n```\n```navigate\n{"to":"calendar"}\n```';
+    expect(hasConfirmCards(withCard)).toBe(true);
+    expect(applyNavigateKeepingCards(withCard)).toBeNull();
+    expect(applyNavigateKeepingCards('Opening.\n```navigate\n{"to":"calendar"}\n```')).toBe('/calendar');
+    window.removeEventListener(BRUNO_NAVIGATE_EVENT, on);
+    expect(seen).toEqual(['/calendar']);
   });
 });

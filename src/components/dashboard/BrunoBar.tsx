@@ -10,7 +10,7 @@ import { extractNotebookOps, extractStickyOps, newReceiptKey } from '../../servi
 import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
-import { applyNavigateFromReply, brunoGo, createdToOpen } from '../../services/brunoNavigate';
+import { applyNavigateKeepingCards, brunoGo, createdToOpen } from '../../services/brunoNavigate';
 import {
   streamBuildHelper,
   stripEventBlocks,
@@ -99,7 +99,8 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       setProposals(extractActionProposals(agg));
       // "Turn on light mode" from the dashboard switches the theme too.
       applyAppearanceFromReply(agg);
-      applyNavigateFromReply(agg);
+      // A reply with a card stays here so the card isn't lost (see brunoNavigate).
+      applyNavigateKeepingCards(agg);
     } catch (e: any) {
       stream.finish();
       const msg = e?.serverError || t('dashboard.brunoUnreachable', { name });

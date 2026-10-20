@@ -11,6 +11,9 @@
 // The same channel opens a record Bruno just created: a ```tasks or ```event
 // item with "open": true goes to it once the member confirms the card.
 
+import { extractActionProposals } from './aiService';
+import { extractNotebookOps, extractStickyOps } from './notebookProposals';
+
 const BLOCK = /```navigate\s*\r?\n([\s\S]*?)\r?\n```/;
 
 /** Pages Bruno can open, by the name he uses. */
@@ -99,17 +102,41 @@ export function applyNavigateFromReply(text: string): string | null {
   return to;
 }
 
+/** Does the reply carry a confirm card (changes waiting for the member)? */
+export function hasConfirmCards(text: string): boolean {
+  return extractActionProposals(text).length > 0 || extractNotebookOps(text).length > 0 || extractStickyOps(text).length > 0;
+}
+
+/**
+ * For a chat that lives on its own page (the Bruno page, the dashboard bar):
+ * leaving it would drop a card the member hasn't confirmed yet, so a reply
+ * with cards stays put. ("…then show it to me" opens the new record once the
+ * card is confirmed instead.) The side panel keeps its cards across pages
+ * and uses applyNavigateFromReply.
+ */
+export function applyNavigateKeepingCards(text: string): string | null {
+  return hasConfirmCards(text) ? null : applyNavigateFromReply(text);
+}
+
 /**
  * After a confirmed card: the record Bruno was asked to show ("…then open
  * it"), from the ids the server returned. A task wins over an event when
  * both were asked for; the other is a link on the card.
  */
 export function createdToOpen(proposals: { kind: string; items: any[] }[], created: Record<string, number[]>): string | null {
-  const wants = (kind: string) => proposals.some((p) => p.kind === kind && p.items.some((it) => it && it.open === true));
-  const first = (kind: string) => (created[kind] ?? []).map(id).find((n): n is number => n !== null) ?? null;
-  const task = wants('task') ? first('task') : null;
+  // The server returns new ids in item order, so the flagged item's id is at
+  // its position, as long as every item was saved. If some weren't, the
+  // positions can't be trusted: open nothing rather than the wrong record.
+  const flaggedId = (kind: string): number | null => {
+    const items = proposals.filter((p) => p.kind === kind).flatMap((p) => p.items);
+    const at = items.findIndex((it) => it && it.open === true);
+    if (at < 0) return null;
+    const ids = (created[kind] ?? []).map(id);
+    return ids.length === items.length ? ids[at] ?? null : null;
+  };
+  const task = flaggedId('task');
   if (task) return `/tasks?task=${task}`;
-  const event = wants('event') ? first('event') : null;
+  const event = flaggedId('event');
   if (event) return `/calendar?event=${event}`;
   return null;
 }

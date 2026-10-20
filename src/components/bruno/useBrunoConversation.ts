@@ -10,7 +10,7 @@ import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
-import { applyNavigateFromReply, brunoGo, createdToOpen } from '../../services/brunoNavigate';
+import { applyNavigateKeepingCards, brunoGo, createdToOpen } from '../../services/brunoNavigate';
 import { type AttachedFile, type AttachedImage } from '../BrunoImageAttach';
 import { withTextFiles } from '../../utils/brunoFiles';
 import { type ProposalStatus } from '../ActionProposalCard';
@@ -168,7 +168,8 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       // "Turn on light mode": a finished reply's appearance block switches the theme here.
       applyAppearanceFromReply(agg);
       // "Show me my tasks": a navigate block opens that page.
-      applyNavigateFromReply(agg);
+      // A reply with a card stays here so the card isn't lost (see brunoNavigate).
+      applyNavigateKeepingCards(agg);
     } catch (err: any) {
       // Stopped by the user: keep what was generated so far.
       if (err?.name !== 'AbortError') throw err;
