@@ -10,6 +10,7 @@ import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
+import { applyNavigateFromReply, brunoGo, createdToOpen } from '../../services/brunoNavigate';
 import { type AttachedFile, type AttachedImage } from '../BrunoImageAttach';
 import { withTextFiles } from '../../utils/brunoFiles';
 import { type ProposalStatus } from '../ActionProposalCard';
@@ -166,6 +167,8 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       if (agg.trim()) keepThinking();
       // "Turn on light mode": a finished reply's appearance block switches the theme here.
       applyAppearanceFromReply(agg);
+      // "Show me my tasks": a navigate block opens that page.
+      applyNavigateFromReply(agg);
     } catch (err: any) {
       // Stopped by the user: keep what was generated so far.
       if (err?.name !== 'AbortError') throw err;
@@ -290,6 +293,9 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k === 'part' ? 'cad-parts' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
+      // "…then show it to me": open what was just created.
+      const open = createdToOpen(proposals, result.created);
+      if (open) brunoGo(open);
     } catch (e: any) {
       setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
     }

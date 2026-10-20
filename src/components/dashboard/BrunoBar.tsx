@@ -10,6 +10,7 @@ import { extractNotebookOps, extractStickyOps, newReceiptKey } from '../../servi
 import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
+import { applyNavigateFromReply, brunoGo, createdToOpen } from '../../services/brunoNavigate';
 import {
   streamBuildHelper,
   stripEventBlocks,
@@ -59,6 +60,8 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       );
       notifyBrunoDataChanged(types);
       setProposalStatus('done'); setProposalLinks(resultLinks(result));
+      const open = createdToOpen(proposals, result.created);
+      if (open) brunoGo(open);
     } catch (e: any) {
       setProposalStatus('error');
       setProposalError(e?.message || 'Something went wrong');
@@ -96,6 +99,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       setProposals(extractActionProposals(agg));
       // "Turn on light mode" from the dashboard switches the theme too.
       applyAppearanceFromReply(agg);
+      applyNavigateFromReply(agg);
     } catch (e: any) {
       stream.finish();
       const msg = e?.serverError || t('dashboard.brunoUnreachable', { name });

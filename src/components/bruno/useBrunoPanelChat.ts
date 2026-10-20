@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { applyAppearanceFromReply } from '../../services/brunoAppearance';
+import { applyNavigateFromReply, brunoGo, createdToOpen } from '../../services/brunoNavigate';
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
 import { type AttachedFile, type AttachedImage } from '../BrunoImageAttach';
 import { withTextFiles } from '../../utils/brunoFiles';
@@ -94,6 +95,9 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' || k === 'event-rsvp' || k === 'away' ? 'calendar' : k === 'task-update' ? 'task' : k === 'part' ? 'cad-parts' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
+      // "…then show it to me": open what was just created.
+      const open = createdToOpen(proposals, result.created);
+      if (open) brunoGo(open);
     } catch (e: any) {
       setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
     }
@@ -326,6 +330,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
       put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
       // "Turn on light mode": a finished reply's appearance block switches the theme here.
       applyAppearanceFromReply(agg);
+      // "Show me my tasks": a navigate block opens that page.
+      applyNavigateFromReply(agg);
       // Eligible for Auto-apply only if the switch was on when it finished; turning it on later never applies it.
       put<number | null>('bruno-panel:fresh', agg.trim() && readAutoApply() ? replyIndex : null);
     } catch (e: any) {

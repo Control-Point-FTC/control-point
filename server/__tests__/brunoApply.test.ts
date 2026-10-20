@@ -225,3 +225,23 @@ describe("Bruno apply: assigning by role", () => {
     expect(await assigned("Ambiguous case")).toEqual([]); // fits two roles: nobody guessed
   });
 });
+
+describe("Bruno apply: a task and an event to show afterwards", () => {
+  it("creates both, with the people, time and link, and returns the ids the app opens", async () => {
+    // "Create a task due Friday at 5pm for Arnav and Grace, put this link in the
+    //  description, show it to me, and add a calendar event for it."
+    const r = await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "task", items: [{ title: "Finalize auto routes", description: "https://github.com/team/robot/pull/12", due_date: "2099-10-16", due_time: "17:00", assignees: ["Arnav", "Grace"], open: true }] },
+      { kind: "event", items: [{ title: "Auto routes review", date: "2099-10-16", time: "17:00", open: false }] },
+    ] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const [task] = await rows("SELECT * FROM tasks WHERE title = 'Finalize auto routes'");
+    expect(task).toMatchObject({ due_date: "2099-10-16", due_time: "17:00", description: "https://github.com/team/robot/pull/12" });
+    const who = (await rows("SELECT member_id FROM task_assignees WHERE task_id = ? ORDER BY member_id", task.id)).map((x) => Number(x.member_id));
+    expect(who).toEqual([arnav, grace].sort((a, b) => a - b));
+    const [event] = await rows("SELECT * FROM events WHERE title = 'Auto routes review'");
+    expect(event).toMatchObject({ date: "2099-10-16" });
+    expect(r.body.created.task).toEqual([Number(task.id)]);
+    expect(r.body.created.event).toEqual([Number(event.id)]);
+  });
+});
