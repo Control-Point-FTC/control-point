@@ -500,7 +500,7 @@ function ThisWeek({ events, allEvents, dayLabel, onNavigate }: { events: any[]; 
                   </span>
                 </span>
               </button>
-              {e.rsvp_mode && e.rsvp_mode !== 'none' && e.invited !== false && (
+              {((e.rsvp_mode && e.rsvp_mode !== 'none' && e.invited !== false) || e.my_rsvp) && (
                 <div className="ml-14 mt-1.5"><RsvpButtons event={e} compact /></div>
               )}
             </StaggerItem>

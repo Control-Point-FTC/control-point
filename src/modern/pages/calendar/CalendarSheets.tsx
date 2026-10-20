@@ -97,7 +97,8 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams, away = [] }: {
                 </>)}
               </dl>
               <AwayLine names={away} />
-              {cleanRsvpMode(event.rsvp_mode) && cleanRsvpMode(event.rsvp_mode) !== 'none' && (
+              {/* Also when RSVPs were turned off after you answered: you can take it back. */}
+              {((cleanRsvpMode(event.rsvp_mode) && cleanRsvpMode(event.rsvp_mode) !== 'none') || event.my_rsvp) && (
                 <RsvpSection event={event} />
               )}
               <Separator />
@@ -508,9 +509,10 @@ function RsvpSection({ event }: { event: any }) {
       <Separator />
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <Label>RSVP</Label>
-        <span className="text-xs text-muted-foreground">{rsvpCountsText(event)}{who && who.no_answer > 0 ? ` · ${who.no_answer} no answer yet` : ''}</span>
+        {/* No counts once RSVPs are off (only your old answer is left to take back). */}
+        {cleanRsvpMode(event.rsvp_mode) !== 'none' && <span className="text-xs text-muted-foreground">{rsvpCountsText(event)}{who && who.no_answer > 0 ? ` · ${who.no_answer} no answer yet` : ''}</span>}
       </div>
-      {event.invited === false
+      {event.invited === false && !event.my_rsvp
         ? <p className="text-sm text-muted-foreground">This event is for other roles.</p>
         : <RsvpButtons event={event} onChanged={load} />}
       {who && who.answers.length > 0 && (
