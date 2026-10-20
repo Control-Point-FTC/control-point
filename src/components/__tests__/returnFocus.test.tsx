@@ -120,6 +120,23 @@ describe('dialogs and sheets return focus to their opener', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it('a tapped button that left an earlier field focused (Safari) still gets focus back, not the field', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><input aria-label="Filter" /><button type="button" onClick={() => setOpen(true)}>Add part</button><Target open={open} onOpenChange={setOpen} /></>;
+    }
+    render(<Harness />);
+    const field = screen.getByRole('textbox', { name: 'Filter' });
+    const opener = screen.getByRole('button', { name: 'Add part' });
+    act(() => field.focus());
+    fireEvent.pointerDown(opener);
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    await escape();
+    expect(document.activeElement).toBe(opener);
+  });
+
   it('a sheet opened by a tap that left focus on the page (Safari) returns focus to returnFocus', async () => {
     render(<SheetHarness />);
     const more = screen.getByRole('button', { name: 'More' });
@@ -163,6 +180,33 @@ describe('dialogs and sheets return focus to their opener', () => {
     render(<Harness />);
     const trigger = screen.getByRole('button', { name: 'Account menu' });
     const menu = await openMenu(trigger);
+    const item = within(menu).getByRole('menuitem', { name: 'Open target' });
+    act(() => item.focus());
+    fireEvent.keyDown(item, { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog', { name: 'Target' });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    await escape();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it('a caller ref on the menu still gets the element, and the trigger is still found', async () => {
+    const seen: (HTMLElement | null)[] = [];
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><button type="button">Account menu</button></DropdownMenuTrigger>
+            <DropdownMenuContent ref={(el) => { seen.push(el); }}><DropdownMenuItem onSelect={() => setOpen(true)}>Open target</DropdownMenuItem></DropdownMenuContent>
+          </DropdownMenu>
+          <Target open={open} onOpenChange={setOpen} />
+        </>
+      );
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Account menu' });
+    const menu = await openMenu(trigger);
+    expect(seen).toContain(menu);
     const item = within(menu).getByRole('menuitem', { name: 'Open target' });
     act(() => item.focus());
     fireEvent.keyDown(item, { key: 'Enter' });

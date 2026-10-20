@@ -56,10 +56,18 @@ function findTrigger(popup: Element) {
   const t = (by && document.getElementById(by)) || (popup.id && document.querySelector(`[aria-controls="${CSS.escape(popup.id)}"]`));
   return t instanceof HTMLElement ? t : null;
 }
-const rememberTrigger = (popup: HTMLElement | null) => {
-  const trigger = popup && findTrigger(popup);
-  if (trigger) triggers.set(popup, trigger);
-};
+function setRef<T>(ref: React.Ref<T> | undefined, value: T | null) {
+  if (typeof ref === 'function') ref(value);
+  else if (ref) ref.current = value;
+}
+/** A menu's or popover's ref: remembers its trigger, then hands the element on to the caller's own ref. */
+function useRememberTrigger(own: React.Ref<HTMLDivElement> | undefined) {
+  return React.useCallback((popup: HTMLDivElement | null) => {
+    const trigger = popup && findTrigger(popup);
+    if (trigger) triggers.set(popup, trigger);
+    setRef(own, popup);
+  }, [own]);
+}
 /** The last element to take focus, and where it came from. Without exit animations (reduced motion) a sheet
  *  or menu can leave the page before the dialog it opened mounts, taking the focused row with it, so focus is
  *  on <body> by then; and a field with autoFocus takes focus before the content's open handler runs. */
@@ -76,12 +84,13 @@ if (typeof document !== 'undefined') {
 }
 /** What had focus as `content` opened. */
 function openerOf(content: Element): HTMLElement | null {
+  // A control tapped without taking focus (Safari) opened it, whatever still has focus from before.
+  if (lastPressed && !content.contains(lastPressed)) return lastPressed instanceof HTMLElement ? lastPressed : null;
   let a: Element | null = document.activeElement;
   // An autoFocus field inside the content already took focus: the opener is where it came from.
   if (a && content.contains(a)) a = a === lastFocused ? focusedFrom : null;
-  // Focus fell to <body> because the opener left the page (its sheet or menu closed first), or never had it
-  // (a tapped button in Safari).
-  if (!a || a === document.body) a = lastPressed ? (content.contains(lastPressed) ? null : lastPressed) : lastFocused && !lastFocused.isConnected ? lastFocused : null;
+  // Focus fell to <body> because the opener left the page (its sheet or menu closed first).
+  if (!a || a === document.body) a = !lastPressed && lastFocused && !lastFocused.isConnected ? lastFocused : null;
   return a instanceof HTMLElement ? a : null;
 }
 
@@ -108,9 +117,7 @@ function useReturnFocus<P extends { ref?: React.Ref<HTMLDivElement>; onCloseAuto
       targets.current = [...targetsFor(openerOf(el)), () => latest.current.fallback?.()];
       returnTargets.set(el, targets.current);
     }
-    const own = latest.current.ref;
-    if (typeof own === 'function') own(el);
-    else if (own) own.current = el;
+    setRef(latest.current.ref, el);
   }, []);
   return {
     ref,
@@ -231,10 +238,11 @@ const menuItem =
   'relative flex cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm outline-none transition-colors ' +
   'focus:bg-text-base/[0.08] data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0';
 
-export function DropdownMenuContent({ className, sideOffset = 6, ...props }: React.ComponentProps<typeof DM.Content>) {
+export function DropdownMenuContent({ className, sideOffset = 6, ref, ...props }: React.ComponentProps<typeof DM.Content>) {
+  const remember = useRememberTrigger(ref);
   return (
     <DM.Portal>
-      <DM.Content ref={rememberTrigger} data-slot="dropdown-menu-content" data-esc-owner="" sideOffset={sideOffset} className={cn(menuPanel, className)} {...props} />
+      <DM.Content ref={remember} data-slot="dropdown-menu-content" data-esc-owner="" sideOffset={sideOffset} className={cn(menuPanel, className)} {...props} />
     </DM.Portal>
   );
 }
@@ -278,10 +286,11 @@ export function DropdownMenuSubTrigger({ className, children, ...props }: React.
     </DM.SubTrigger>
   );
 }
-export function DropdownMenuSubContent({ className, ...props }: React.ComponentProps<typeof DM.SubContent>) {
+export function DropdownMenuSubContent({ className, ref, ...props }: React.ComponentProps<typeof DM.SubContent>) {
+  const remember = useRememberTrigger(ref);
   return (
     <DM.Portal>
-      <DM.SubContent ref={rememberTrigger} data-slot="dropdown-menu-sub-content" data-esc-owner="" className={cn(menuPanel, className)} {...props} />
+      <DM.SubContent ref={remember} data-slot="dropdown-menu-sub-content" data-esc-owner="" className={cn(menuPanel, className)} {...props} />
     </DM.Portal>
   );
 }
@@ -291,14 +300,15 @@ export function DropdownMenuSubContent({ className, ...props }: React.ComponentP
 export const Popover = P.Root;
 export const PopoverTrigger = P.Trigger;
 export const PopoverAnchor = P.Anchor;
-export function PopoverContent({ className, align = 'center', sideOffset = 6, container, ...props }: React.ComponentProps<typeof P.Content> & {
+export function PopoverContent({ className, align = 'center', sideOffset = 6, container, ref, ...props }: React.ComponentProps<typeof P.Content> & {
   /** Portal target (e.g. a fullscreen element, so the popover stays visible inside it). */
   container?: HTMLElement | null;
 }) {
+  const remember = useRememberTrigger(ref);
   return (
     <P.Portal container={container ?? undefined}>
       <P.Content
-        ref={rememberTrigger}
+        ref={remember}
         data-slot="popover-content"
         data-esc-owner=""
         align={align}
