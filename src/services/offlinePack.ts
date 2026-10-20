@@ -38,13 +38,16 @@ export interface SavedPack { pack: OfflinePack; bytes: number; savedAt: string }
 
 let memo: Promise<SavedPack | null> | null = null;
 const listeners = new Set<(p: SavedPack | null) => void>();
-const announce = (p: SavedPack | null) => { memo = Promise.resolve(p); listeners.forEach((l) => l(p)); };
+// Bumped whenever the saved copy changes (here or in another tab), so a
+// background update can tell the member changed it meanwhile.
+let packVersion = 0;
+const announce = (p: SavedPack | null) => { packVersion++; memo = Promise.resolve(p); listeners.forEach((l) => l(p)); };
 
 // Other tabs: told when this one saves or removes the pack, so they read it again.
 const channel: BroadcastChannel | null = (() => {
   try { return typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('control-point-offline-pack') : null; } catch { return null; }
 })();
-if (channel) channel.onmessage = () => { memo = null; void getOfflinePack().then((p) => listeners.forEach((l) => l(p))); };
+if (channel) channel.onmessage = () => { packVersion++; memo = null; void getOfflinePack().then((p) => listeners.forEach((l) => l(p))); };
 const tellOtherTabs = () => { try { channel?.postMessage('changed'); } catch { /* channel closed */ } };
 
 /** The pack on this device (read once, then kept in memory). Never throws. */
@@ -70,6 +73,11 @@ export async function fetchOfflineRegions(): Promise<OfflineRegions> {
 
 /** Download a region ("ALL" = every region) and replace the pack on this device. */
 export async function downloadOfflinePack(region: string): Promise<SavedPack> {
+  return savePack(await fetchPack(region));
+}
+
+/** A region's pack from the server, checked, not saved yet. */
+async function fetchPack(region: string): Promise<SavedPack> {
   const res = await apiFetch(`/api/offline/pack?region=${encodeURIComponent(region)}`, { timeoutMs: 120_000 });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -78,7 +86,10 @@ export async function downloadOfflinePack(region: string): Promise<SavedPack> {
   const text = await res.text();
   const pack = JSON.parse(text) as OfflinePack;
   if (pack?.format !== OFFLINE_PACK_FORMAT || !Array.isArray(pack.teams) || !Array.isArray(pack.events)) throw new Error('The server sent a pack this version of the app can’t read — reload the page.');
-  const saved: SavedPack = { pack, bytes: text.length, savedAt: new Date().toISOString() };
+  return { pack, bytes: text.length, savedAt: new Date().toISOString() };
+}
+
+async function savePack(saved: SavedPack): Promise<SavedPack> {
   await withStore('readwrite', (s) => s.put(saved, KEY));
   announce(saved);
   tellOtherTabs();
@@ -133,15 +144,18 @@ let checking: Promise<SavedPack | null> | null = null;
 /**
  * Re-download the pack on this device when the server has newer data. Quiet:
  * returns the new pack, or null when there's nothing to do (no pack, turned
- * off, offline, checked recently, already current) or the check failed.
+ * off, offline, checked recently, already current, or the member changed or
+ * removed the copy meanwhile) or the check failed.
  */
 export function updateOfflinePackIfBehind({ force = false }: { force?: boolean } = {}): Promise<SavedPack | null> {
-  checking ??= (async () => {
+  if (checking) return checking;
+  const run = (async (): Promise<SavedPack | null> => {
     try {
       if (!offlineAutoUpdateOn()) return null;
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
       const saved = await getOfflinePack();
       if (!saved) return null;
+      const version = packVersion;
       if (!force) {
         let last = 0;
         try { last = Number(localStorage.getItem(CHECKED_KEY)) || 0; } catch { /* no storage: check */ }
@@ -150,12 +164,17 @@ export function updateOfflinePackIfBehind({ force = false }: { force?: boolean }
       const regions = await fetchOfflineRegions();
       try { localStorage.setItem(CHECKED_KEY, String(Date.now())); } catch { /* fine */ }
       if (!packIsBehind(saved.pack, regions)) return null;
-      return await downloadOfflinePack(saved.pack.region);
+      const fresh = await fetchPack(saved.pack.region);
+      // Removed, replaced or updated while this ran (Settings, another tab): leave it.
+      if (packVersion !== version) return null;
+      return await savePack(fresh);
     } catch {
       return null;
-    } finally {
-      checking = null;
     }
   })();
-  return checking;
+  // Cleared once this run settles (also when it returned early), never before
+  // it was stored, so the next check always runs.
+  checking = run;
+  void run.finally(() => { if (checking === run) checking = null; });
+  return run;
 }

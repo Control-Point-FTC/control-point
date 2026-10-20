@@ -8,7 +8,7 @@ import { OFFLINE_PACK_FORMAT, type OfflinePack, type OfflineRegions } from '../.
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../api', async (orig) => ({ ...(await orig<object>()), ...api }));
 
-import { downloadOfflinePack, packIsBehind, removeOfflinePack, setOfflineAutoUpdate, updateOfflinePackIfBehind } from '../offlinePack';
+import { downloadOfflinePack, getOfflinePack, packIsBehind, removeOfflinePack, setOfflineAutoUpdate, updateOfflinePackIfBehind } from '../offlinePack';
 
 const pack = (dataAsOf: string, season = 2026, region = 'USNJ'): OfflinePack => ({
   format: OFFLINE_PACK_FORMAT, region, regionName: 'New Jersey', season, builtAt: dataAsOf, dataAsOf, teams: [[4215, 'Mech', null, null]], events: [],
@@ -78,6 +78,45 @@ describe('updating on its own', () => {
     server('2026-10-20T06:00:00Z');
     expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
     expect(packDownloads()).toBe(before);
+  });
+
+  it('checks again after an early exit (offline, or turned off)', async () => {
+    server('2026-10-19T06:00:00Z');
+    await downloadOfflinePack('USNJ');
+    server('2026-10-20T06:00:00Z');
+    const online = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
+    if (online) Object.defineProperty(navigator, 'onLine', online); else delete (navigator as any).onLine;
+    setOfflineAutoUpdate(false);
+    expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
+    setOfflineAutoUpdate(true);
+    // Back online and turned on: this check really runs.
+    expect((await updateOfflinePackIfBehind({ force: true }))?.pack.dataAsOf).toBe('2026-10-20T06:00:00Z');
+  });
+
+  it("a removal or another region chosen during the download isn't undone", async () => {
+    server('2026-10-19T06:00:00Z');
+    await downloadOfflinePack('USNJ');
+    // The member removes the copy while the update is downloading.
+    api.apiFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/offline/regions') return json(regions('2026-10-20T06:00:00Z'));
+      await removeOfflinePack();
+      return json(pack('2026-10-20T06:00:00Z'));
+    });
+    expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
+    expect(await getOfflinePack()).toBeNull();
+    // Or picks another region meanwhile: that one stays.
+    server('2026-10-19T06:00:00Z');
+    await downloadOfflinePack('USNJ');
+    api.apiFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/offline/regions') return json(regions('2026-10-20T06:00:00Z'));
+      if (url.includes('region=USPA')) return json(pack('2026-10-20T06:00:00Z', 2026, 'USPA'));
+      await downloadOfflinePack('USPA');
+      return json(pack('2026-10-20T06:00:00Z'));
+    });
+    expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
+    expect((await getOfflinePack())?.pack.region).toBe('USPA');
   });
 
   it('a failed check is quiet', async () => {
