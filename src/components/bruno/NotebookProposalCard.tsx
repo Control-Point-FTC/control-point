@@ -3,15 +3,15 @@
 // "unavailable"), never from the model's own description. Deletions need an
 // explicit tick before the button unlocks.
 import { useEffect, useState } from 'react';
-import { Check, Loader2, NotebookPen, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, Loader2, NotebookPen, StickyNote, Trash2, Undo2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../cn';
 import { Button } from '../ui-kit';
-import { applyNotebookOps, isStickyOp, newReceiptKey, previewNotebookOps, type NotebookOpPreview, type NotebookOpResult } from '../../services/notebookProposals';
+import { applyNotebookOps, canUndoNotebookResults, isStickyOp, newReceiptKey, previewNotebookOps, undoNotebookOps, type NotebookOpPreview, type NotebookOpResult } from '../../services/notebookProposals';
 import { setStickyNotesOpen } from '../../notebook/stickyNotesState';
 
 type State = { status: 'loading' | 'pending' | 'confirming' | 'done' | 'dismissed' | 'error'; error?: string };
-type Memory = { receipt?: string; results?: NotebookOpResult[] };
+type Memory = { receipt?: string; results?: NotebookOpResult[]; undone?: boolean };
 
 /** Session-scoped record of one card (falls back to memory when storage is blocked). */
 const fallback = new Map<string, Memory>();
@@ -47,6 +47,8 @@ export function NotebookProposalCard({ ops, scope, auto = false, onAsk, askDisab
   const [state, setState] = useState<State>(() => memory.read().results ? { status: 'done' } : { status: 'loading' });
   const [results, setResults] = useState<NotebookOpResult[]>(() => memory.read().results ?? []);
   const [deleteOk, setDeleteOk] = useState(false);
+  // Undo for an applied page card: idle, running, done, or the reason it was refused.
+  const [undo, setUndo] = useState<{ status: 'idle' | 'running' | 'done'; error?: string }>(() => ({ status: memory.read().undone ? 'done' : 'idle' }));
   const [receipt] = useState(() => memory.read().receipt ?? memory.write({ receipt: newReceiptKey() }).receipt!);
 
   useEffect(() => {
@@ -83,12 +85,42 @@ export function NotebookProposalCard({ ops, scope, auto = false, onAsk, askDisab
     }
   };
 
+  const undoCard = async () => {
+    setUndo({ status: 'running' });
+    try {
+      await undoNotebookOps(receipt);
+      memory.write({ ...memory.read(), undone: true });
+      setUndo({ status: 'done' });
+    } catch (e) {
+      setUndo({ status: 'idle', error: e instanceof Error ? e.message : 'Could not undo this change' });
+    }
+  };
+
+  if (state.status === 'done' && undo.status === 'done') {
+    return (
+      <div className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status">
+        <p className="flex items-center gap-2"><Undo2 className="size-4" /> Undone. The notebook is back to how it was before this change.</p>
+      </div>
+    );
+  }
+
   if (state.status === 'done') {
     const pages = [...new Map(results.filter(r => r.op !== 'delete' && r.pageId).map(r => [r.pageId, r])).values()];
+    const undoable = !sticky && canUndoNotebookResults(results);
     return (
       <div className="mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success" role="status">
         <p className="flex items-center gap-2"><Check className="size-4" /> {sticky ? 'Sticky notes' : 'Notebook'} updated ({results.length} {results.length === 1 ? 'change' : 'changes'}){autoTried ? ' automatically' : ''}.</p>
-        {pages.length > 0 && <p className="mt-1 flex flex-wrap gap-x-3">{pages.map(r => <Link key={r.pageId} className="underline" to={`/notebook/p/${r.pageId}`}>Open “{r.title}”</Link>)}</p>}
+        {(pages.length > 0 || undoable) && (
+          <p className="mt-1 flex flex-wrap items-center gap-x-3">
+            {pages.map(r => <Link key={r.pageId} className="underline" to={`/notebook/p/${r.pageId}`}>Open “{r.title}”</Link>)}
+            {undoable && (
+              <button type="button" className="inline-flex items-center gap-1 underline disabled:opacity-60" disabled={undo.status === 'running'} onClick={undoCard}>
+                {undo.status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />} Undo
+              </button>
+            )}
+          </p>
+        )}
+        {undo.error && <p className="mt-1 text-destructive" role="alert">{undo.error}</p>}
         {sticky && results.some(r => r.op !== 'sticky_delete') && <p className="mt-1"><button type="button" className="underline" onClick={() => setStickyNotesOpen(true)}>Open sticky notes</button></p>}
       </div>
     );

@@ -5,9 +5,20 @@
 import { useState } from 'react';
 import { apiJson } from './api';
 
-export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete' | 'tag' | 'add_rows' | 'sticky_create' | 'sticky_edit' | 'sticky_delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
-/** Page changes report pageId; sticky note changes report noteId. */
-export type NotebookOpResult = { op: NotebookOpPreview['op']; pageId?: number; noteId?: number; title: string };
+export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete' | 'tag' | 'add_rows' | 'cell' | 'sticky_create' | 'sticky_edit' | 'sticky_delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
+/** Page changes report pageId (and the revision they made); sticky note changes report noteId. */
+export type NotebookOpResult = { op: NotebookOpPreview['op']; pageId?: number; noteId?: number; title: string; revision?: number };
+
+/** Page changes the server can undo (server/brunoNotebookActions.ts canUndo). */
+const UNDOABLE = new Set<NotebookOpPreview['op']>(['create', 'append', 'replace', 'add_rows', 'cell', 'rename']);
+export const canUndoNotebookResults = (results: NotebookOpResult[]) => results.length > 0 && results.every(r => UNDOABLE.has(r.op) && Number.isSafeInteger(r.revision));
+
+/** Take back a confirmed page card (its receipt). Refused when someone edited those pages since. */
+export async function undoNotebookOps(receipt: string) {
+  const out = await apiJson<{ results: NotebookOpResult[]; replayed: boolean }>('/api/ai/notebook/undo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receipt }) });
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['notebook'] } }));
+  return out;
+}
 /** Sticky note changes travel in the same block but always get their own card. */
 export const isStickyOp = (op: Record<string, unknown>) => typeof op.op === 'string' && op.op.startsWith('sticky_');
 

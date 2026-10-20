@@ -916,6 +916,17 @@ export class NotebookStore {
     await s.run("INSERT INTO bruno_notebook_receipts(team_id,receipt_key,member_id,result,created_at) VALUES(?,?,?,?,?)", ctx.teamId, key, ctx.memberId, JSON.stringify(result), now.toISOString());
     return { result, replayed: false };
   }); }
+  /** What a confirmed card recorded under its receipt (this member's own), or null. */
+  receipt(ctx: NotebookContext, key: string) { return this.session(ctx, async s => {
+    const row = await s.one("SELECT member_id,result FROM bruno_notebook_receipts WHERE team_id=? AND receipt_key=?", ctx.teamId, String(key));
+    return row && Number(row.member_id) === ctx.memberId ? JSON.parse(row.result) as unknown : null;
+  }); }
+  /** A page's saved version at one revision (the page itself must be visible), or null. */
+  versionAt(ctx: NotebookContext, pageId: number, revision: number) { return this.session(ctx, async s => {
+    await s.item("page", pageId);
+    const row = await s.one("SELECT title,content FROM notebook_versions WHERE page_id=? AND team_id=? AND revision=?", pageId, ctx.teamId, revision);
+    return row ? { title: String(row.title), content: JSON.parse(row.content) as JSONContent } : null;
+  }); }
   /** A confirmed content/title change merged into the live shared document,
    *  so collaborators' unsynced edits survive (unlike save(), which replaces
    *  the page and forces open editors to recover). */

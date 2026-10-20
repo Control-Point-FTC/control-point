@@ -93,7 +93,7 @@ import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
 import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
-import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
+import { applyNotebookOps, parseNotebookOps, previewNotebookOps, undoNotebookOps } from "./server/brunoNotebookActions.js";
 import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
 import { StickyNotes } from "./server/stickyNotes.js";
 import { BRUNO_NOTEBOOK_OFF, BRUNO_STICKY_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, gatedStickyLookup, type BrunoAccess } from "./server/brunoAccess.js";
@@ -14706,6 +14706,11 @@ Rules:
     const { result, replayed } = isStickyCard(body.ops)
       ? await applyStickyOps(brunoNotebookStore, { ...ctx, source: "bruno_confirmed" }, parseStickyOps(body.ops), String(body.receipt ?? ""))
       : await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
+    return { results: result, replayed };
+  }));
+  // Undo a confirmed page card (the editor's own undo can't reach a change merged in by the server).
+  app.post("/api/ai/notebook/undo", notebookRoute(async (ctx, body) => {
+    const { result, replayed } = await undoNotebookOps(brunoNotebookStore, ctx, String(body.receipt ?? ""));
     return { results: result, replayed };
   }));
 

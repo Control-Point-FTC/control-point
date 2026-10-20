@@ -96,6 +96,7 @@ Copy the essentials into a `.env` file:
 # ANTHROPIC_API_KEY=""
 # ANTHROPIC_MODEL="claude-sonnet-5-5"   # optional; this is the default
 # ANTHROPIC_EFFORT="low"                # optional: low | medium | high | xhigh | max
+# GEMINI_THINKING_LEVEL="low"           # optional: minimal | low | medium | high (unset: the model's default)
 # Bruno web checks (prices, stock, fact-checks) use Gemini google_search grounding, or
 # Claude's web_search / web_fetch tools when Claude answers. Turn web search on for the
 # organization in the Claude Console; if it is off, Claude answers without it.
