@@ -2,7 +2,7 @@
 // bar, footer and mobile tab bar. Pages render through the same routes and the
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ClockWeather } from './chrome/ClockWeather';
 import { useShellActionsSlot } from './chrome/shellActionsSlot';
 import { createPortal } from 'react-dom';
@@ -110,6 +110,9 @@ export function ModernShell(props: ModernShellProps) {
   useEffect(() => { if (stickyOpen) setStickyUsed(true); }, [stickyOpen]);
   const stickyScope = props.user?.id && props.activeTeam?.id ? `${props.user.id}:${props.activeTeam.id}` : undefined;
   const [menuOpen, setMenuOpen] = useState(false);
+  // The More sheet, and anything opened from it (it closes as they open), hand focus back to More when
+  // they close, even when More never had focus (Safari doesn't focus a tapped button). See ui-kit/overlay.
+  const moreRef = useRef<HTMLButtonElement>(null);
   // Phone tab bar: three chosen pages + Bruno + More (per device).
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [mobilePicks, setMobilePicks] = useState<string[]>(readMobileTabs);
@@ -269,11 +272,12 @@ export function ModernShell(props: ModernShellProps) {
             {...props}
             tabs={mobileTabs}
             onOpenMenu={() => setMenuOpen(true)}
+            moreRef={moreRef}
           />
         )}
         {isMobile && (
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-            <SheetContent side="left" className="w-[85vw] max-w-[320px] p-0 gap-0">
+            <SheetContent side="left" returnFocus={() => moreRef.current} className="w-[85vw] max-w-[320px] p-0 gap-0">
               <SheetTitle className="sr-only">Menu</SheetTitle>
               <SheetDescription className="sr-only">All sections of Control Point</SheetDescription>
               {sidebar(true)}
@@ -783,7 +787,7 @@ function TopBarActions({ className, isMobile, onOpenSearch, onOpenBruno, onOpenS
   );
 }
 
-function MobileTabBar({ activeTab, onNavigate, onOpenBruno, onOpenMenu, unreadMentions, tabs }: ModernShellProps & { onOpenMenu: () => void; tabs: MobileTabChoice[] }) {
+function MobileTabBar({ activeTab, onNavigate, onOpenBruno, onOpenMenu, moreRef, unreadMentions, tabs }: ModernShellProps & { onOpenMenu: () => void; moreRef: Ref<HTMLButtonElement>; tabs: MobileTabChoice[] }) {
   const btn = 'relative flex flex-1 flex-col items-center justify-center gap-1 min-h-[60px] text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60';
   return (
     <nav data-print-hide aria-label="Primary" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-secondary/95 backdrop-blur-lg md:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -801,7 +805,7 @@ function MobileTabBar({ activeTab, onNavigate, onOpenBruno, onOpenMenu, unreadMe
       <button type="button" onClick={onOpenBruno} className={cn(btn, 'text-text-muted')}>
         <Bot className="size-5" /> Bruno
       </button>
-      <button type="button" data-onboard="mtab-more" onClick={onOpenMenu} aria-label="More" className={cn(btn, 'text-text-muted')}>
+      <button ref={moreRef} type="button" data-onboard="mtab-more" onClick={onOpenMenu} aria-label="More" className={cn(btn, 'text-text-muted')}>
         <Menu className="size-5" /> More
       </button>
     </nav>
