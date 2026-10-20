@@ -158,6 +158,8 @@ html[data-ui="modern"].cp-pulse-corners .m-canvas {
 
 /* ---------- motion keyframes (components use motion/react or tw-animate) ---------- */
 @keyframes cp-caret { 0% { opacity: 1; } 100% { opacity: 0; } }
+/* Bruno's "Writing…" dots: a soft wave, one after another. */
+@keyframes cp-writing-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-3px); opacity: 1; } }
 @keyframes cp-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @keyframes cp-pulse { 0%, 100% { transform: scale(1); opacity: 0.28; } 50% { transform: scale(1.6); opacity: 0.06; } }
 .cp-pulse-dot { transform-box: fill-box; transform-origin: center; animation: cp-pulse 2.4s ease-in-out infinite; }
