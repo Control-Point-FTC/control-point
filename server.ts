@@ -14686,6 +14686,8 @@ Rules:
           if (!Number.isSafeInteger(id) || id <= 0) continue;
           const event = (await dbGet("SELECT * FROM events WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
           if (!event) return res.status(400).json({ error: `Event #${id} no longer exists — nothing was saved` });
+          // Taking back your own answer always works (see setEventRsvp).
+          if (it?.status === null && (await dbGet("SELECT 1 FROM event_rsvps WHERE event_id = ? AND member_id = ?", id, auth.memberId))) { rsvpTargets.set(id, event); continue; }
           const mode = cleanRsvpMode(event.rsvp_mode) ?? "none";
           if (mode === "none") return res.status(400).json({ error: `"${event.title}" doesn't take RSVPs — nothing was saved` });
           if (it?.status !== null && !rsvpStatusFor(mode, it?.status)) return res.status(400).json({ error: `"${event.title}" only asks who can't make it — nothing was saved` });

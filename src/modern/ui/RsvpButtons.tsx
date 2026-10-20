@@ -28,7 +28,8 @@ export function RsvpButtons({ event, compact = false, onChanged }: { event: any;
   const [busy, setBusy] = useState(false);
   // A newer answer from elsewhere (another tab, Bruno) replaces ours.
   useEffect(() => { setMine(event?.my_rsvp ?? null); setReason(event?.my_rsvp?.reason ?? ''); }, [event?.id, event?.my_rsvp?.status, event?.my_rsvp?.reason, event?.my_rsvp?.excused]);
-  if (mode === 'none' || event?.invited === false) return null;
+  const closed = mode === 'none' || event?.invited === false;
+  if (closed && !mine) return null;
 
   const send = async (status: RsvpStatus | null, why = '') => {
     if (busy) return;
@@ -50,6 +51,17 @@ export function RsvpButtons({ event, compact = false, onChanged }: { event: any;
       setBusy(false);
     }
   };
+
+  // No longer taking answers from you (RSVPs off, or your role is no longer
+  // invited) but you answered before: you can still take that answer back.
+  if (closed && mine) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" role="group" aria-label={`RSVP for ${event.title}`}>
+        <span>You answered “{RSVP_STATUS_LABELS[mine.status]}”. This event isn't taking answers from you any more.</span>
+        <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy} onClick={() => void send(null)}>Take it back</Button>
+      </div>
+    );
+  }
 
   const choices: RsvpStatus[] = mode === 'decline_only' ? ['not_going'] : ['going', 'maybe', 'not_going'];
   return (

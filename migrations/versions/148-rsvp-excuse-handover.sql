@@ -5,8 +5,20 @@
 -- record is handed over to the member's next "can't make it" (with a reason)
 -- on that day instead of being deleted, and deleted only when none is left.
 -- Only records an RSVP owns (rsvp_event_id set) are touched, as before.
+-- Inserts check for an existing record themselves: a trigger's OR IGNORE
+-- doesn't hold when the answer was saved with an upsert, which made a second
+-- decline on an already-excused day fail.
 
 BEGIN;
+
+DROP TRIGGER IF EXISTS rsvp_excuse_insert;
+CREATE TRIGGER rsvp_excuse_insert AFTER INSERT ON event_rsvps BEGIN
+  DELETE FROM attendance WHERE rsvp_event_id = NEW.event_id AND member_id = NEW.member_id;
+  INSERT OR IGNORE INTO attendance (team_id, member_id, date, status, reason, is_excused, rsvp_event_id)
+    SELECT e.team_id, NEW.member_id, e.date, 'E', 'Can''t make it (RSVP)', 1, e.id
+    FROM events e WHERE e.id = NEW.event_id AND NEW.status = 'not_going' AND NEW.reason != ''
+      AND NOT EXISTS (SELECT 1 FROM attendance x WHERE x.member_id = NEW.member_id AND x.date = e.date);
+END;
 
 DROP TRIGGER IF EXISTS rsvp_excuse_update;
 CREATE TRIGGER rsvp_excuse_update AFTER UPDATE ON event_rsvps BEGIN
@@ -22,7 +34,8 @@ CREATE TRIGGER rsvp_excuse_update AFTER UPDATE ON event_rsvps BEGIN
   DELETE FROM attendance WHERE rsvp_event_id = OLD.event_id AND member_id = OLD.member_id;
   INSERT OR IGNORE INTO attendance (team_id, member_id, date, status, reason, is_excused, rsvp_event_id)
     SELECT e.team_id, NEW.member_id, e.date, 'E', 'Can''t make it (RSVP)', 1, e.id
-    FROM events e WHERE e.id = NEW.event_id AND NEW.status = 'not_going' AND NEW.reason != '';
+    FROM events e WHERE e.id = NEW.event_id AND NEW.status = 'not_going' AND NEW.reason != ''
+      AND NOT EXISTS (SELECT 1 FROM attendance x WHERE x.member_id = NEW.member_id AND x.date = e.date);
 END;
 
 DROP TRIGGER IF EXISTS rsvp_excuse_delete;
@@ -64,7 +77,8 @@ CREATE TRIGGER rsvp_excuse_event_move AFTER UPDATE OF date ON events WHEN NEW.da
   DELETE FROM attendance WHERE rsvp_event_id = NEW.id;
   INSERT OR IGNORE INTO attendance (team_id, member_id, date, status, reason, is_excused, rsvp_event_id)
     SELECT NEW.team_id, r.member_id, NEW.date, 'E', 'Can''t make it (RSVP)', 1, NEW.id
-    FROM event_rsvps r WHERE r.event_id = NEW.id AND r.status = 'not_going' AND r.reason != '';
+    FROM event_rsvps r WHERE r.event_id = NEW.id AND r.status = 'not_going' AND r.reason != ''
+      AND NOT EXISTS (SELECT 1 FROM attendance x WHERE x.member_id = r.member_id AND x.date = NEW.date);
 END;
 
 COMMIT;

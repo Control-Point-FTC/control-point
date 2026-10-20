@@ -17,6 +17,24 @@ beforeEach(() => { api.apiFetch.mockReset(); api.apiFetch.mockResolvedValue({ ok
 const body = () => JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body);
 
 describe('RsvpButtons', () => {
+  it('an old answer on an event no longer taking yours can still be taken back', async () => {
+    const mine = { status: 'not_going', reason: 'Trip', excused: true };
+    const { unmount } = render(<RsvpButtons event={{ id: 8, title: 'Scrimmage', rsvp_mode: 'none', invited: true, my_rsvp: mine }} />);
+    expect(screen.queryByRole('button', { name: /Can't make it/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Take it back' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events/8/rsvp', expect.objectContaining({ method: 'PUT' })));
+    expect(body()).toEqual({ status: null, reason: '' });
+    unmount();
+    // Not invited any more: same.
+    render(<RsvpButtons event={{ id: 9, title: 'Builders night', rsvp_mode: 'decline_only', invited: false, my_rsvp: mine }} />);
+    expect(screen.getByRole('button', { name: 'Take it back' })).toBeTruthy();
+  });
+
+  it('nothing to show when the event takes no answers from you and you gave none', () => {
+    const { container } = render(<RsvpButtons event={{ id: 10, title: 'Meet', rsvp_mode: 'none', invited: true, my_rsvp: null }} />);
+    expect(container.innerHTML).toBe('');
+  });
+
   it("can't-make-it only: one button, asks why, sends the reason", async () => {
     render(<RsvpButtons event={{ id: 4, title: 'Practice', rsvp_mode: 'decline_only', invited: true, my_rsvp: null }} />);
     expect(screen.queryByRole('button', { name: /Going/ })).toBeNull();
