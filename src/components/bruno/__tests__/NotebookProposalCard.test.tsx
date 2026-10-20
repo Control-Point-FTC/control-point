@@ -98,6 +98,41 @@ describe('NotebookProposalCard', () => {
     expect(screen.queryByText(/Notebook updated/)).toBeNull();
   });
 
+  it('an applied page change can be undone (the editor’s own undo can’t reach it), and stays undone', async () => {
+    const ops = [{ op: 'cell', page: 3, table: 't1', row: 4, column: 2, was: '$3.', markdown: '$3.99' }];
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'cell', summary: 'Change one cell in the table in "BOM" (row 4, column 2)', before: '$3.', after: '$3.99' }] });
+    const first = card(ops, 'reply-undo');
+    await screen.findByText(/Change one cell/);
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'cell', pageId: 3, title: 'BOM', revision: 8 }], replayed: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await screen.findByText(/Notebook updated/);
+    // Refused (a teammate edited the page since): the reason shows and the change stays.
+    apiJson.mockRejectedValueOnce(new Error('"BOM" was edited after Bruno\'s change'));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByText(/was edited after Bruno's change/)).toBeTruthy();
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'replace', pageId: 3, title: 'BOM', revision: 9 }], replayed: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByText(/Undone\./)).toBeTruthy();
+    expect(apiJson.mock.calls[2][0]).toBe('/api/ai/notebook/undo');
+    expect(body(3).receipt).toBe(body(1).receipt);
+    first.unmount();
+    apiJson.mockReset();
+    card(ops, 'reply-undo');
+    expect(screen.getByText(/Undone\./)).toBeTruthy();
+    expect(apiJson).not.toHaveBeenCalled();
+  });
+
+  it('offers no Undo for changes it can’t take back (a page moved to the trash)', async () => {
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'delete', summary: 'Move "Old" to the trash', destructive: true }] });
+    card([{ op: 'delete', page: 2 }]);
+    await screen.findByText(/Move "Old"/);
+    fireEvent.click(screen.getByRole('checkbox'));
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'delete', pageId: 2, title: 'Old' }], replayed: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await screen.findByText(/Notebook updated/);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
   it('blocks apply when any page is unavailable to Bruno', async () => {
     apiJson.mockResolvedValueOnce({ previews: [{ op: 'rename', summary: "A page Bruno can't access", error: "This page isn't available to Bruno." }] });
     card([{ op: 'rename', page: 9, title: 'x' }]);
