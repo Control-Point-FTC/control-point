@@ -73,6 +73,7 @@ import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { BRUNO_NAVIGATE_EVENT } from './services/brunoNavigate';
+import { useOfflinePackAutoUpdate } from './hooks/useOfflinePackAutoUpdate';
 import { BrunoPanelSwitch } from './modern/BrunoDock';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController } from './components/tasks/useTasksController';
@@ -566,6 +567,8 @@ export default function App() {
   
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
+  // Offline FTC data on this device stays current on its own (Settings → Offline data).
+  useOfflinePackAutoUpdate(!!currentUser);
   const [isOwner, setIsOwner] = useState(false);
   // The owner check has answered (so /owner opened directly isn't bounced first).
   const [ownerChecked, setOwnerChecked] = useState(false);

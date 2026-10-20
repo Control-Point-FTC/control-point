@@ -69,6 +69,8 @@ export interface FirstTeam {
   country: string | null;
   rookieYear: number | null;
   sponsors: string[];
+  /** FIRST's home region code ("USNJ"), when the API gives one. */
+  homeRegion?: string | null;
 }
 
 export interface FirstTeamEvent {
@@ -183,6 +185,7 @@ function validateTeam(raw: unknown): FirstTeam | null {
     country: str(raw.country),
     rookieYear: num(raw.rookieYear),
     sponsors,
+    homeRegion: str(raw.homeRegion),
   };
 }
 

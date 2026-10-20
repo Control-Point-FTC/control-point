@@ -4,11 +4,13 @@ import { OFFLINE_PACK_FORMAT, type OfflinePack, type OfflineRegions } from '../.
 
 const svc = vi.hoisted(() => ({
   getOfflinePack: vi.fn(), fetchOfflineRegions: vi.fn(), downloadOfflinePack: vi.fn(), removeOfflinePack: vi.fn(),
+  offlineAutoUpdateOn: vi.fn(), setOfflineAutoUpdate: vi.fn(), updateOfflinePackIfBehind: vi.fn(),
   listeners: new Set<(p: any) => void>(),
 }));
 vi.mock('../../services/offlinePack', () => ({
   getOfflinePack: svc.getOfflinePack, fetchOfflineRegions: svc.fetchOfflineRegions,
   downloadOfflinePack: svc.downloadOfflinePack, removeOfflinePack: svc.removeOfflinePack,
+  offlineAutoUpdateOn: svc.offlineAutoUpdateOn, setOfflineAutoUpdate: svc.setOfflineAutoUpdate, updateOfflinePackIfBehind: svc.updateOfflinePackIfBehind,
   onOfflinePackChange: (fn: (p: any) => void) => { svc.listeners.add(fn); return () => svc.listeners.delete(fn); },
 }));
 const dialog = vi.hoisted(() => ({ notify: vi.fn(), confirmDialog: vi.fn() }));
@@ -33,6 +35,8 @@ beforeEach(() => {
   Object.values(svc).forEach((f) => typeof f === 'function' && (f as any).mockReset());
   svc.listeners.clear();
   svc.getOfflinePack.mockResolvedValue(null);
+  svc.offlineAutoUpdateOn.mockReturnValue(true);
+  svc.updateOfflinePackIfBehind.mockResolvedValue(null);
   svc.fetchOfflineRegions.mockResolvedValue(regions);
   svc.downloadOfflinePack.mockImplementation(async (code: string) => {
     const saved = { pack: pack(code, code === 'USNJ' ? 'New Jersey' : 'Pennsylvania', new Date().toISOString()), bytes: 412_000, savedAt: '' };
@@ -46,6 +50,38 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Settings → Offline data', () => {
+  it('updates automatically by default; the switch turns it off, and on again catches up', async () => {
+    svc.getOfflinePack.mockResolvedValue({ pack: pack('USNJ', 'New Jersey', new Date().toISOString()), bytes: 412_000, savedAt: '' });
+    render(<OfflineSection />);
+    const sw = await screen.findByRole('switch', { name: 'Update offline data automatically' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText(/Gets newer results when the app opens/)).toBeInTheDocument();
+    fireEvent.click(sw);
+    expect(svc.setOfflineAutoUpdate).toHaveBeenLastCalledWith(false);
+    expect(await screen.findByText(/only changes when you tap Update/)).toBeInTheDocument();
+    fireEvent.click(sw);
+    expect(svc.setOfflineAutoUpdate).toHaveBeenLastCalledWith(true);
+    expect(svc.updateOfflinePackIfBehind).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("says why it can't tell your region", async () => {
+    svc.fetchOfflineRegions.mockResolvedValue({ ...regions, detected: null, undetected: 'no_team', team: null });
+    render(<OfflineSection />);
+    expect(await screen.findByText(/Add your FTC team number in Settings → Workspace/)).toBeInTheDocument();
+    cleanup();
+    svc.fetchOfflineRegions.mockResolvedValue({ ...regions, detected: null, undetected: 'not_found', team: 31415 });
+    render(<OfflineSection />);
+    expect(await screen.findByText(/Team 31415 hasn't played an event we have results for/)).toBeInTheDocument();
+  });
+
+  it('a region with no events yet this season is named, with nothing to download', async () => {
+    svc.fetchOfflineRegions.mockResolvedValue({ ...regions, detected: { code: 'USOH', name: 'Ohio', events: 0, teams: 0 }, undetected: null, team: 4215 });
+    render(<OfflineSection />);
+    expect(await screen.findByText('Your region: Ohio')).toBeInTheDocument();
+    expect(screen.getByText(/No Ohio events have results yet this season/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Download OH offline data/ })).toBeNull();
+  });
+
   it('offers the detected region, downloads it, and shows what is on the device', async () => {
     render(<OfflineSection />);
     expect(screen.getByText('Nothing downloaded')).toBeInTheDocument();

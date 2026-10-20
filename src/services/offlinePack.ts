@@ -38,13 +38,16 @@ export interface SavedPack { pack: OfflinePack; bytes: number; savedAt: string }
 
 let memo: Promise<SavedPack | null> | null = null;
 const listeners = new Set<(p: SavedPack | null) => void>();
-const announce = (p: SavedPack | null) => { memo = Promise.resolve(p); listeners.forEach((l) => l(p)); };
+// Bumped whenever the saved copy changes (here or in another tab), so a
+// background update can tell the member changed it meanwhile.
+let packVersion = 0;
+const announce = (p: SavedPack | null) => { packVersion++; memo = Promise.resolve(p); listeners.forEach((l) => l(p)); };
 
 // Other tabs: told when this one saves or removes the pack, so they read it again.
 const channel: BroadcastChannel | null = (() => {
   try { return typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('control-point-offline-pack') : null; } catch { return null; }
 })();
-if (channel) channel.onmessage = () => { memo = null; void getOfflinePack().then((p) => listeners.forEach((l) => l(p))); };
+if (channel) channel.onmessage = () => { packVersion++; memo = null; void getOfflinePack().then((p) => listeners.forEach((l) => l(p))); };
 const tellOtherTabs = () => { try { channel?.postMessage('changed'); } catch { /* channel closed */ } };
 
 /** The pack on this device (read once, then kept in memory). Never throws. */
@@ -70,6 +73,11 @@ export async function fetchOfflineRegions(): Promise<OfflineRegions> {
 
 /** Download a region ("ALL" = every region) and replace the pack on this device. */
 export async function downloadOfflinePack(region: string): Promise<SavedPack> {
+  return savePack(await fetchPack(region));
+}
+
+/** A region's pack from the server, checked, not saved yet. */
+async function fetchPack(region: string): Promise<SavedPack> {
   const res = await apiFetch(`/api/offline/pack?region=${encodeURIComponent(region)}`, { timeoutMs: 120_000 });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -78,7 +86,34 @@ export async function downloadOfflinePack(region: string): Promise<SavedPack> {
   const text = await res.text();
   const pack = JSON.parse(text) as OfflinePack;
   if (pack?.format !== OFFLINE_PACK_FORMAT || !Array.isArray(pack.teams) || !Array.isArray(pack.events)) throw new Error('The server sent a pack this version of the app can’t read — reload the page.');
-  const saved: SavedPack = { pack, bytes: text.length, savedAt: new Date().toISOString() };
+  return { pack, bytes: text.length, savedAt: new Date().toISOString() };
+}
+
+/**
+ * Write `next` only if the stored copy is still the one saved at `expected`,
+ * checked and written in one transaction (atomic across tabs). True if written.
+ */
+async function replaceIfUnchanged(expected: string, next: SavedPack): Promise<boolean> {
+  const db = await openDb();
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      let wrote = false;
+      const get = store.get(KEY) as IDBRequest<SavedPack | undefined>;
+      get.onsuccess = () => {
+        if (get.result?.savedAt === expected) { store.put(next, KEY); wrote = true; }
+      };
+      tx.oncomplete = () => resolve(wrote);
+      tx.onerror = () => reject(tx.error ?? new Error('Offline storage failed.'));
+      tx.onabort = () => reject(tx.error ?? new Error('Offline storage failed (is the device out of space?).'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function savePack(saved: SavedPack): Promise<SavedPack> {
   await withStore('readwrite', (s) => s.put(saved, KEY));
   announce(saved);
   tellOtherTabs();
@@ -103,4 +138,73 @@ export async function removeOfflinePack(): Promise<void> {
   await withStore('readwrite', (s) => s.delete(KEY));
   announce(null);
   tellOtherTabs();
+}
+
+// Keeping the pack current: on by default, per device. The app checks when it
+// opens, when the connection comes back, and every two hours while open; the
+// server refreshes its FTC data about that often too.
+const AUTO_KEY = 'cp-offline-auto-update';
+const CHECKED_KEY = 'cp-offline-checked-at';
+export const AUTO_CHECK_EVERY_MS = 2 * 60 * 60 * 1000;
+
+export function offlineAutoUpdateOn(): boolean {
+  try { return localStorage.getItem(AUTO_KEY) !== 'off'; } catch { return true; }
+}
+export function setOfflineAutoUpdate(on: boolean): void {
+  try { localStorage.setItem(AUTO_KEY, on ? 'on' : 'off'); } catch { /* private mode: stays on */ }
+}
+
+/** Is the server's data newer than the pack (a later sync, or the next season)? */
+export function packIsBehind(pack: Pick<OfflinePack, 'season' | 'dataAsOf' | 'region'>, regions: Pick<OfflineRegions, 'season' | 'dataAsOf' | 'regions'>): boolean {
+  if (regions.season > pack.season) {
+    // A new season: only once the pack's region has events in it.
+    return pack.region === 'ALL' || regions.regions.some((r) => r.code === pack.region);
+  }
+  if (regions.season < pack.season || !regions.dataAsOf) return false;
+  return !pack.dataAsOf || regions.dataAsOf > pack.dataAsOf;
+}
+
+let checking: Promise<SavedPack | null> | null = null;
+/**
+ * Re-download the pack on this device when the server has newer data. Quiet:
+ * returns the new pack, or null when there's nothing to do (no pack, turned
+ * off, offline, checked recently, already current, or the member changed or
+ * removed the copy meanwhile) or the check failed.
+ */
+export function updateOfflinePackIfBehind({ force = false }: { force?: boolean } = {}): Promise<SavedPack | null> {
+  if (checking) return checking;
+  const run = (async (): Promise<SavedPack | null> => {
+    try {
+      if (!offlineAutoUpdateOn()) return null;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+      const saved = await getOfflinePack();
+      if (!saved) return null;
+      const version = packVersion;
+      if (!force) {
+        let last = 0;
+        try { last = Number(localStorage.getItem(CHECKED_KEY)) || 0; } catch { /* no storage: check */ }
+        if (Date.now() - last < AUTO_CHECK_EVERY_MS) return null;
+      }
+      const regions = await fetchOfflineRegions();
+      try { localStorage.setItem(CHECKED_KEY, String(Date.now())); } catch { /* fine */ }
+      if (!packIsBehind(saved.pack, regions)) return null;
+      const fresh = await fetchPack(saved.pack.region);
+      // Removed, replaced or updated while this ran (Settings, another tab): leave it.
+      if (packVersion !== version) return null;
+      // The same check in the write itself, so another tab's change that
+      // hasn't been announced here yet is never overwritten either.
+      if (!(await replaceIfUnchanged(saved.savedAt, fresh))) return null;
+      announce(fresh);
+      tellOtherTabs();
+      void warmOfflineForecast();
+      return fresh;
+    } catch {
+      return null;
+    }
+  })();
+  // Cleared once this run settles (also when it returned early), never before
+  // it was stored, so the next check always runs.
+  checking = run;
+  void run.finally(() => { if (checking === run) checking = null; });
+  return run;
 }

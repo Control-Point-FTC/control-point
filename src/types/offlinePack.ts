@@ -96,8 +96,15 @@ export interface OfflineRegion { code: string; name: string; events: number; tea
 export interface OfflineRegions {
   season: number;
   dataAsOf: string | null;
-  /** The workspace team's region, from the events it played. */
+  /**
+   * The workspace team's region: from the events it played, else FIRST's home
+   * region or where the team is. Can have 0 events (none with results yet).
+   */
   detected: OfflineRegion | null;
+  /** Why no region was detected: no FTC team number on the workspace, or that team wasn't found. */
+  undetected?: 'no_team' | 'not_found' | null;
+  /** The FTC team number detection used. */
+  team?: number | null;
   regions: OfflineRegion[];
   all: { events: number; teams: number };
 }
