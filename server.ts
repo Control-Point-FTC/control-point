@@ -10934,10 +10934,14 @@ Rules:
         ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
         : initialReview(proofReq, check);
       const eachPart = task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done";
+      // A part's history entry says whether it needs a manager's look; it
+      // shares its time with the member's task_assignee_done row, which is
+      // how the last part finds the current round's parts (see below).
+      const partAt = new Date().toISOString();
+      const partEntry = () => JSON.stringify({ by: auth.memberId, at: partAt, notes: notes || null, link, ai_note: aiNote, images, part: true, review: null, needs_review: start.status === "pending" });
       if (eachPart) {
-        const at = new Date().toISOString();
-        // Whether this part needs a manager's look; the task's review counts every part.
-        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at, needs_review) VALUES (?, ?, ?, ?)", task.id, auth.memberId, at, start.status === "pending" ? 1 : 0);
+        const at = partAt;
+        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
         const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
         if (remaining.length) {
@@ -10945,7 +10949,7 @@ Rules:
           // recorded once, by the full completion below.
           await dbRun(
             "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
-            JSON.stringify({ by: auth.memberId, at, notes: notes || null, link, ai_note: aiNote, images, part: true, review: null }), task.id,
+            partEntry(), task.id,
           );
           const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
           await withAssignees([partial]);
@@ -10963,8 +10967,14 @@ Rules:
       // The last part of an each-person task: approved only if no one's part
       // (still assigned) needed a review.
       let review = start.status;
-      if (eachPart && review === "approved" && taskAssignees.length) {
-        const flagged = await dbGet(`SELECT 1 AS x FROM task_assignee_done WHERE task_id = ? AND needs_review = 1 AND member_id IN (${taskAssignees.map(() => "?").join(", ")})`, task.id, ...taskAssignees);
+      if (eachPart && review === "approved") {
+        // The other current assignees' parts this round: their done rows, and
+        // the history entry each part wrote at that same moment.
+        const rows = (await dbAll("SELECT member_id, completed_at FROM task_assignee_done WHERE task_id = ? AND member_id != ?", task.id, auth.memberId)) as any[];
+        const fresh = (await dbGet("SELECT completion_history FROM tasks WHERE id = ?", task.id)) as any;
+        const history: any[] = (() => { try { const h = JSON.parse(fresh?.completion_history || "[]"); return Array.isArray(h) ? h : []; } catch { return []; } })();
+        const flagged = rows.some((r) => taskAssignees.includes(Number(r.member_id))
+          && history.some((e) => e?.part && Number(e.by) === Number(r.member_id) && e.at === r.completed_at && e.needs_review === true));
         if (flagged) review = "pending";
       }
       const reviewedBy = canManage && review === "approved" ? auth.memberId : null;
@@ -10984,7 +10994,7 @@ Rules:
         // Someone was added meanwhile and hasn't finished: this was a part.
         await dbRun(
           "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
-          JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, link, ai_note: aiNote, images, part: true, review: null }), task.id,
+          partEntry(), task.id,
         );
         const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
         await withAssignees([partial]);
