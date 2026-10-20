@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { BrunoThinking, thinkingSteps } from '../BrunoThinking';
+import { BrunoThinking, StreamingCaret, thinkingSteps, writingLabel } from '../BrunoThinking';
 
 afterEach(cleanup);
 
@@ -29,5 +29,24 @@ describe('BrunoThinking', () => {
     expect(screen.queryByText('Looking at Tasks')).not.toBeInTheDocument();
     fireEvent.click(toggle);
     expect(screen.getByText('Looking at Tasks')).toBeInTheDocument();
+  });
+});
+
+describe('while the reply streams', () => {
+  const L = String.fromCharCode(10);
+  const fence = '```';
+  it('says what Bruno is doing: writing, looking something up, or drafting changes', () => {
+    expect(writingLabel('Here are the steps')).toBe('Writing');
+    expect(writingLabel(['Checking.', `${fence}lookup`, '{"kind":"notebook'].join(L))).toBe('Looking it up');
+    expect(writingLabel(['Adding it:', `${fence}tasks`, '[{"title":"Order'].join(L))).toBe('Drafting changes');
+    // A finished block: back to writing.
+    expect(writingLabel(['Added:', `${fence}tasks`, '[]', fence, 'Anything else'].join(L))).toBe('Writing');
+  });
+  it('shows three dots and the label under the text, not a lone bar', () => {
+    render(<StreamingCaret text={['Adding it:', `${fence}notebook`, '[{"op"'].join(L)} />);
+    const chip = screen.getByTestId('bruno-writing');
+    expect(chip).toHaveTextContent('Drafting changes…');
+    expect(chip.querySelectorAll('.rounded-full.bg-accent')).toHaveLength(3);
+    expect(chip).toHaveAttribute('aria-hidden', 'true');
   });
 });

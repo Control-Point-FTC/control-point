@@ -251,7 +251,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                       {m.text ? (
                         <>
                           <BrunoMarkdown>{stripEventBlocks(m.text)}</BrunoMarkdown>
-                          {modern && busy && i === messages.length - 1 && <StreamingCaret />}
+                          {modern && busy && i === messages.length - 1 && <StreamingCaret text={m.text} />}
                         </>
                       ) : modern && thinkMeta[i] ? null : (
                         <span className="flex gap-1 items-center text-text-muted">

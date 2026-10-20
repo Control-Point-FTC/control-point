@@ -259,7 +259,7 @@ export function LiveReply({ text, liveThink }: { text: string; liveThink: LiveTh
       <BrunoAvatar className="mt-0.5" />
       <div className="min-w-0 flex-1 text-sm leading-relaxed [overflow-wrap:anywhere]">
         {liveThink && <BrunoThinking steps={liveThink.steps} startedAt={liveThink.startedAt} thoughtMs={liveThink.thoughtMs} phase={text ? 'generating' : 'thinking'} />}
-        {text && <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown><StreamingCaret /></div>}
+        {text && <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown><StreamingCaret text={text} /></div>}
       </div>
     </div>
   );

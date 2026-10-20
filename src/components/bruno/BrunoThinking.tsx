@@ -123,7 +123,38 @@ export function BrunoThinking({ steps, phase, startedAt, thoughtMs }: {
   );
 }
 
-/** Blinking caret that follows streaming text. */
-export function StreamingCaret() {
-  return <span className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] bg-accent align-baseline animate-[cp-caret_1s_steps(2)_infinite]" aria-hidden="true" />;
+/**
+ * What Bruno is doing while the reply streams, from the text so far: inside
+ * a lookup block he's looking something up; inside any other action block
+ * (hidden from the chat) he's drafting the changes for the confirm card;
+ * otherwise he's writing.
+ */
+export function writingLabel(text: string): string {
+  const fences = [...String(text || '').matchAll(/```([\w-]*)/g)];
+  // An odd number of fences: the last one is still open.
+  if (fences.length % 2 === 1) {
+    const kind = fences[fences.length - 1][1];
+    if (kind === 'lookup' || kind === 'scout-team' || kind === 'scout-event') return 'Looking it up';
+    if (kind) return 'Drafting changes';
+  }
+  return 'Writing';
+}
+
+/**
+ * Shown under a reply while it streams: three dots and what Bruno is doing
+ * ("Writing…", "Drafting changes…"). Decorative: the reply's own live region
+ * already reads the text as it arrives. Reduced motion keeps it still.
+ */
+export function StreamingCaret({ text = '' }: { text?: string }) {
+  const label = writingLabel(text);
+  return (
+    <span className="mt-1.5 inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-xs" data-testid="bruno-writing" aria-hidden="true">
+      <span className="flex items-center gap-0.5">
+        {[0, 1, 2].map((d) => (
+          <span key={d} className="size-1.5 rounded-full bg-accent animate-[cp-writing-dot_1.2s_ease-in-out_infinite]" style={{ animationDelay: `${d * 0.16}s` }} />
+        ))}
+      </span>
+      <span className="cp-shimmer-text font-medium">{label}…</span>
+    </span>
+  );
 }
