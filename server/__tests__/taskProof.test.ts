@@ -130,6 +130,23 @@ describe("Bruno's verdict stays on the server", () => {
     expect(r.completion_ai_note).toBe("Links a commit that adds the path.");
   });
 
+  it("each person completes it: a part Bruno flagged keeps the task in review even if the last part passed", async () => {
+    const team = (await row(await newTask())).team_id;
+    const calId = await seedMember(t.db, team, "Cal", "cal@proof.test");
+    const cal = await t.session(calId);
+    const id = await newTask({ title: "Fill in the safety form", assignee_ids: [anaId, calId], completion_mode: "each" });
+    script.push(verdict("flag", "note", "Says nothing about the form."));
+    const v1 = await t.post(`/api/tasks/${id}/verify-proof`, { notes: "ok" }, ana);
+    const part = await complete(id, ana, { notes: "ok", check_id: v1.body.check_id });
+    expect(part.body.partial).toBe(true);
+    script.push(verdict("pass"));
+    const v2 = await t.post(`/api/tasks/${id}/verify-proof`, { notes: "Signed and turned in the safety form." }, cal);
+    await complete(id, cal, { notes: "Signed and turned in the safety form.", check_id: v2.body.check_id });
+    const r = await row(id);
+    expect(r.status).toBe("done");
+    expect(r.review_status).toBe("pending");
+  });
+
   it("a flagged finish goes to a manager", async () => {
     const id = await newTask();
     script.push(verdict("flag", "photo", "Says nothing about the work."));

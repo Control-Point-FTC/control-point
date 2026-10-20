@@ -10924,10 +10924,20 @@ Rules:
       // "Everyone completes it separately": an assignee finishes their own
       // part; the task is done once every current assignee has. A manager can
       // finish it for everyone with whole=1.
+      // Done isn't accepted yet: a manager reviews it (approve, or send it
+      // back). Bruno approves a finish he passed, unless it's code/digital
+      // work (a person signs that off). A manager finishing a task approves
+      // their own work, unless Bruno didn't pass it: then it waits for
+      // review like anyone's, with his note. (Managers could approve it
+      // themselves anyway, so a manager's finish with no check stays approved.)
+      const start = canManage
+        ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
+        : initialReview(proofReq, check);
       const eachPart = task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done";
       if (eachPart) {
         const at = new Date().toISOString();
-        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
+        // Whether this part needs a manager's look; the task's review counts every part.
+        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at, needs_review) VALUES (?, ?, ?, ?)", task.id, auth.memberId, at, start.status === "pending" ? 1 : 0);
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
         const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
         if (remaining.length) {
@@ -10950,19 +10960,16 @@ Rules:
       const now = new Date().toISOString();
       // Unassigned task: the completer claims it.
       const assignee = task.assigned_to || auth.memberId;
-      // Done isn't accepted yet: a manager reviews it (approve, or send it
-      // back). Bruno approves a finish he passed, unless it's code/digital
-      // work (a person signs that off). A manager finishing a task approves
-      // their own work, unless Bruno didn't pass it: then it waits for
-      // review like anyone's, with his note. (Managers could approve it
-      // themselves anyway, so a manager's finish with no check stays approved.)
-      const start = canManage
-        ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
-        : initialReview(proofReq, check);
-      const review = start.status;
+      // The last part of an each-person task: approved only if no one's part
+      // (still assigned) needed a review.
+      let review = start.status;
+      if (eachPart && review === "approved" && taskAssignees.length) {
+        const flagged = await dbGet(`SELECT 1 AS x FROM task_assignee_done WHERE task_id = ? AND needs_review = 1 AND member_id IN (${taskAssignees.map(() => "?").join(", ")})`, task.id, ...taskAssignees);
+        if (flagged) review = "pending";
+      }
       const reviewedBy = canManage && review === "approved" ? auth.memberId : null;
       const reviewedAt = review === "approved" ? now : null;
-      const reviewEntry = review === "approved" ? { status: "approved", by: reviewedBy, at: now, note: null, ...(start.byBruno ? { bruno: true } : {}) } : null;
+      const reviewEntry = review === "approved" ? { status: "approved", by: reviewedBy, at: now, note: null, ...(start.byBruno && !reviewedBy ? { bruno: true } : {}) } : null;
       const closed: any = await dbRun(
         // Each finish is kept in completion_history (appended in SQL, so two
         // finishes at once both land), with just this finish's photos.
