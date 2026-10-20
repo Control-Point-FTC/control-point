@@ -82,6 +82,8 @@ describe("sync against a fake Google", () => {
           return json(200, { access_token: `at-${body.refresh_token}`, expires_in: 3600 });
         }
         if (req.url === "/revoke") return json(200, {});
+        // FTC Scout stand-in for the competition import: one official event.
+        if (req.url === "/graphql") return json(200, { data: { activeTeamsCount: 1, teamByNumber: { number: 12345, name: "Robo", events: [{ event: { code: "USZZQ1", name: "ZZ State Qualifier", start: "2099-12-05", timezone: "America/Chicago", type: "Qualifier" }, stats: null, awards: [] }] } } });
         if (req.method === "POST") return json(200, { id: `g${++n}` });
         if (req.method === "PATCH") return json(200, {});
         if (req.method === "DELETE" && req.url!.endsWith("/g-fail")) return json(503, { error: "backendError" });
@@ -94,6 +96,7 @@ describe("sync against a fake Google", () => {
     t = await startTestServer("cp-gcal-", {
       CALENDAR_TOKEN_KEY: KEY, GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "secret",
       GOOGLE_CALENDAR_API_BASE: `${base}/calendar/v3`, GOOGLE_TOKEN_URL: `${base}/token`, GOOGLE_REVOKE_URL: `${base}/revoke`,
+      FTC_SCOUT_URL: `${base}/graphql`, FTC_EVENTS_USERNAME: "", FTC_EVENTS_TOKEN: "",
       CALENDAR_RESET_DELAY_MS: "12000",
     });
     // Links from before the fix, queued for the one-time reset (the queue
@@ -138,6 +141,17 @@ describe("sync against a fake Google", () => {
       start: { dateTime: "2099-03-01T16:00:00", timeZone: "America/Chicago" },
       end: { dateTime: "2099-03-01T17:30:00", timeZone: "America/Chicago" },
     });
+  });
+
+  it("imported official competitions reach Google too", async () => {
+    calls = [];
+    await t.db.execute({ sql: "UPDATE teams SET ftc_team_number = 12345 WHERE id = ?", args: [teams.a] });
+    const r = await t.post("/api/events/import-first", {}, sessions.a);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.added).toBe(1);
+    const [ev] = await q("SELECT id FROM events WHERE team_id = ? AND first_event_code = 'USZZQ1'", teams.a);
+    expect(await waitFor(async () => (await q("SELECT 1 FROM event_calendar_sync WHERE event_id = ?", ev.id)).length === 1)).toBe(true);
+    expect(eventCalls("POST").some((c) => c.body.summary === "ZZ State Qualifier")).toBe(true);
   });
 
   it("another team's events don't sync while its switch is off", async () => {

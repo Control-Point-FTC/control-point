@@ -131,6 +131,88 @@ describe("RSVP", () => {
   });
 });
 
+describe("RSVP edge cases", () => {
+  it("an old answer can be withdrawn after RSVPs are turned off, and after your role is taken off the event", async () => {
+    const off = (await t.post("/api/events", { title: "Scrimmage", date: "2099-04-02", rsvp_mode: "decline_only" }, admin)).body.id;
+    expect((await put(`/api/events/${off}/rsvp`, { status: "not_going", reason: "Trip" }, ana)).body.excused).toBe(true);
+    expect((await t.patch(`/api/events/${off}`, { rsvp_mode: "none" }, admin)).status).toBe(200);
+    expect((await put(`/api/events/${off}/rsvp`, { status: null }, ana)).status).toBe(200);
+    expect(await rows("SELECT 1 FROM event_rsvps WHERE event_id = ? AND member_id = ?", off, anaId)).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM attendance WHERE member_id = ? AND date = '2099-04-02'", anaId)).toHaveLength(0);
+    // New answers still aren't taken.
+    expect((await put(`/api/events/${off}/rsvp`, { status: "not_going", reason: "Trip" }, ana)).status).toBe(400);
+    // Through Bruno's card too.
+    const viaBruno = (await t.post("/api/events", { title: "Outreach fair", date: "2099-04-04", rsvp_mode: "decline_only" }, admin)).body.id;
+    await put(`/api/events/${viaBruno}/rsvp`, { status: "not_going", reason: "Trip" }, ana);
+    await t.patch(`/api/events/${viaBruno}`, { rsvp_mode: "none" }, admin);
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "event-rsvp", items: [{ id: viaBruno, status: null }] }] }, ana);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await rows("SELECT 1 FROM event_rsvps WHERE event_id = ? AND member_id = ?", viaBruno, anaId)).toHaveLength(0);
+    // A new answer through Bruno is still refused.
+    expect((await t.post("/api/ai/apply-actions", { actions: [{ kind: "event-rsvp", items: [{ id: viaBruno, status: "not_going", reason: "x" }] }] }, ana)).status).toBe(400);
+
+    const roles = (await t.post("/api/events", { title: "Builders night", date: "2099-04-03", rsvp_mode: "decline_only", attendee_roles: [builders] }, admin)).body.id;
+    expect((await put(`/api/events/${roles}/rsvp`, { status: "not_going", reason: "Sick" }, ana)).status).toBe(200);
+    // Ana leaves the Builders role: the event is no longer for her.
+    await t.db.execute({ sql: "DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", args: [anaId, builders] });
+    expect((await put(`/api/events/${roles}/rsvp`, { status: "not_going", reason: "Sick" }, ana)).status).toBe(400);
+    expect((await put(`/api/events/${roles}/rsvp`, { status: null }, ana)).status).toBe(200);
+    expect(await rows("SELECT 1 FROM attendance WHERE member_id = ? AND date = '2099-04-03'", anaId)).toHaveLength(0);
+    await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [anaId, builders] });
+  });
+
+  it("a full-RSVP event: changing the owning decline to going hands the day to the other decline", async () => {
+    const day = "2099-04-20";
+    const a = (await t.post("/api/events", { title: "Build A", date: day, rsvp_mode: "full" }, admin)).body.id;
+    const b = (await t.post("/api/events", { title: "Build B", date: day, rsvp_mode: "full" }, admin)).body.id;
+    await put(`/api/events/${a}/rsvp`, { status: "not_going", reason: "Exam" }, ben);
+    await put(`/api/events/${b}/rsvp`, { status: "not_going", reason: "Exam" }, ben);
+    const owner = async () => (await rows("SELECT rsvp_event_id FROM attendance WHERE member_id = ? AND date = ?", benId, day))[0]?.rsvp_event_id ?? null;
+    expect(Number(await owner())).toBe(a);
+    await put(`/api/events/${a}/rsvp`, { status: "going" }, ben);
+    expect(Number(await owner())).toBe(b);
+    await put(`/api/events/${b}/rsvp`, { status: "maybe", reason: "Exam" }, ben);
+    expect(await owner()).toBeNull();
+  });
+
+  it("two declines on one day: the excuse stays while either stands", async () => {
+    const day = "2099-04-10";
+    const a = (await t.post("/api/events", { title: "Morning build", date: day, rsvp_mode: "decline_only" }, admin)).body.id;
+    const b = (await t.post("/api/events", { title: "Evening build", date: day, rsvp_mode: "decline_only" }, admin)).body.id;
+    const excuse = async () => (await rows("SELECT rsvp_event_id FROM attendance WHERE member_id = ? AND date = ?", benId, day))[0]?.rsvp_event_id ?? null;
+    await put(`/api/events/${a}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    await put(`/api/events/${b}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    expect(Number(await excuse())).toBe(a);
+    // Withdrawing the first hands the day to the second.
+    await put(`/api/events/${a}/rsvp`, { status: null }, ben);
+    expect(Number(await excuse())).toBe(b);
+    // Changing the owning answer so it no longer excuses (here: no reason) hands it over too.
+    await put(`/api/events/${a}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    await put(`/api/events/${b}/rsvp`, { status: null }, ben);
+    expect(Number(await excuse())).toBe(a);
+    await put(`/api/events/${b}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    await put(`/api/events/${a}/rsvp`, { status: "not_going", reason: "" }, ben);
+    expect(Number(await excuse())).toBe(b);
+    // And back: b still owns the day; a's answer counts again for a later handover.
+    await put(`/api/events/${a}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    expect(Number(await excuse())).toBe(b);
+    await put(`/api/events/${b}/rsvp`, { status: null }, ben);
+    expect(Number(await excuse())).toBe(a);
+    await put(`/api/events/${b}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    // Deleting the owning event, or moving it away, hands it over too.
+    expect((await t.api(`/api/events/${a}`, { method: "DELETE", session: admin, headers: { "x-cp-client": "1" } })).status).toBe(200);
+    expect(Number(await excuse())).toBe(b);
+    const c = (await t.post("/api/events", { title: "Lunch build", date: day, rsvp_mode: "decline_only" }, admin)).body.id;
+    await put(`/api/events/${c}/rsvp`, { status: "not_going", reason: "School" }, ben);
+    expect((await t.patch(`/api/events/${b}`, { date: "2099-04-11" }, admin)).status).toBe(200);
+    expect(Number(await excuse())).toBe(c);
+    expect(Number((await rows("SELECT rsvp_event_id FROM attendance WHERE member_id = ? AND date = '2099-04-11'", benId))[0]?.rsvp_event_id)).toBe(b);
+    // The last one withdrawn: no excuse left.
+    await put(`/api/events/${c}/rsvp`, { status: null }, ben);
+    expect(await excuse()).toBeNull();
+  });
+});
+
 describe("RSVP follow-through", () => {
   it("counts who said going and who of them came; Bruno's facts say so", async () => {
     const id = (await t.post("/api/events", { title: "Turnout night", date: "2026-10-10", rsvp_mode: "full" }, admin)).body.id;
