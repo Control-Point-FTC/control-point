@@ -10934,14 +10934,20 @@ Rules:
         ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
         : initialReview(proofReq, check);
       const eachPart = task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done";
-      // A part's history entry says whether it needs a manager's look; it
-      // shares its time with the member's task_assignee_done row, which is
-      // how the last part finds the current round's parts (see below).
+      // A part's history entry also notes whether it needed a manager's look
+      // (shown with it); the decision itself reads task_part_flags.
       const partAt = new Date().toISOString();
       const partEntry = () => JSON.stringify({ by: auth.memberId, at: partAt, notes: notes || null, link, ai_note: aiNote, images, part: true, review: null, needs_review: start.status === "pending" });
       if (eachPart) {
         const at = partAt;
-        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
+        // The part and whether it needs a manager's look are written together,
+        // so anyone who sees this part done also sees its flag.
+        await dbBatch([
+          { sql: "INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", args: [task.id, auth.memberId, at] },
+          start.status === "pending"
+            ? { sql: "INSERT OR IGNORE INTO task_part_flags (task_id, member_id) VALUES (?, ?)", args: [task.id, auth.memberId] }
+            : { sql: "DELETE FROM task_part_flags WHERE task_id = ? AND member_id = ?", args: [task.id, auth.memberId] },
+        ]);
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
         const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
         if (remaining.length) {
@@ -10967,14 +10973,13 @@ Rules:
       // The last part of an each-person task: approved only if no one's part
       // (still assigned) needed a review.
       let review = start.status;
-      if (eachPart && review === "approved") {
-        // The other current assignees' parts this round: their done rows, and
-        // the history entry each part wrote at that same moment.
-        const rows = (await dbAll("SELECT member_id, completed_at FROM task_assignee_done WHERE task_id = ? AND member_id != ?", task.id, auth.memberId)) as any[];
-        const fresh = (await dbGet("SELECT completion_history FROM tasks WHERE id = ?", task.id)) as any;
-        const history: any[] = (() => { try { const h = JSON.parse(fresh?.completion_history || "[]"); return Array.isArray(h) ? h : []; } catch { return []; } })();
-        const flagged = rows.some((r) => taskAssignees.includes(Number(r.member_id))
-          && history.some((e) => e?.part && Number(e.by) === Number(r.member_id) && e.at === r.completed_at && e.needs_review === true));
+      if (eachPart && review === "approved" && taskAssignees.length) {
+        // Any current assignee's part this round (a done row) that's flagged.
+        const flagged = await dbGet(
+          `SELECT 1 AS x FROM task_part_flags f JOIN task_assignee_done d ON d.task_id = f.task_id AND d.member_id = f.member_id
+           WHERE f.task_id = ? AND f.member_id IN (${taskAssignees.map(() => "?").join(", ")})`,
+          task.id, ...taskAssignees,
+        );
         if (flagged) review = "pending";
       }
       const reviewedBy = canManage && review === "approved" ? auth.memberId : null;

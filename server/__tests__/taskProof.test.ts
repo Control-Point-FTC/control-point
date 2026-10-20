@@ -147,6 +147,26 @@ describe("Bruno's verdict stays on the server", () => {
     expect(r.review_status).toBe("pending");
   });
 
+  it("each person completes it: two parts finished at the same moment still keep a flagged one in review", async () => {
+    const team = (await row(await newTask())).team_id;
+    const dot = await seedMember(t.db, team, "Dot", "dot@proof.test");
+    const dotS = await t.session(dot);
+    for (let round = 0; round < 3; round++) {
+      const id = await newTask({ title: `Sign the waiver ${round}`, assignee_ids: [anaId, dot], completion_mode: "each" });
+      script.push(verdict("flag", "note", "Too thin."));
+      const v1 = await t.post(`/api/tasks/${id}/verify-proof`, { notes: "ok" }, ana);
+      script.push(verdict("pass"));
+      const v2 = await t.post(`/api/tasks/${id}/verify-proof`, { notes: "Signed the waiver and handed it to the coach." }, dotS);
+      await Promise.all([
+        complete(id, ana, { notes: "ok", check_id: v1.body.check_id }),
+        complete(id, dotS, { notes: "Signed the waiver and handed it to the coach.", check_id: v2.body.check_id }),
+      ]);
+      const r = await row(id);
+      expect(r.status).toBe("done");
+      expect(r.review_status).toBe("pending");
+    }
+  });
+
   it("a flagged finish goes to a manager", async () => {
     const id = await newTask();
     script.push(verdict("flag", "photo", "Says nothing about the work."));
