@@ -140,7 +140,7 @@ export function DropdownMenuContent({ className, sideOffset = 6, ...props }: Rea
   );
 }
 export function DropdownMenuItem({ className, variant, ...props }: React.ComponentProps<typeof DM.Item> & { variant?: 'default' | 'destructive' }) {
-  return <DM.Item data-slot="dropdown-menu-item" className={cn(menuItem, variant === 'destructive' && 'text-rose-500 focus:bg-rose-500/10', className)} {...props} />;
+  return <DM.Item data-slot="dropdown-menu-item" className={cn(menuItem, variant === 'destructive' && 'text-destructive focus:bg-rose-500/10', className)} {...props} />;
 }
 export function DropdownMenuCheckboxItem({ className, children, ...props }: React.ComponentProps<typeof DM.CheckboxItem>) {
   return (

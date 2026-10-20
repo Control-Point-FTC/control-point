@@ -93,6 +93,9 @@
   --color-accent-hover: #ffd633; /* volt hover */
   --color-accent-ink: #231a00;   /* text on volt */
   --color-accent-soft: #ffc7001f;/* volt tint fills */
+  /* The accent as small text (link buttons): the accent itself on dark. On light, volt #eab308 reads 1.9:1
+     on white, so html.light darkens whatever the accent is (a team's own colour too) toward black. */
+  --color-accent-text: var(--color-accent);
   --color-line: #ffffff14;       /* hairline borders */
   --color-info: #38bdf8;
   --color-success: #34d399;
@@ -280,6 +283,7 @@ html.light {
   --color-accent-hover: #ca8a04;
   --color-accent-ink: #231a00;   /* text on volt */
   --color-accent-soft: #eab3081f;/* volt tint fills */
+  --color-accent-text: color-mix(in srgb, var(--color-accent) 55%, black); /* volt: #816204, 5.7:1 on white */
   --color-line: #09090b14;       /* hairline borders */
   --color-info: #0284c7;
   --color-success: #059669;
@@ -468,6 +472,7 @@ html.light .theme-dark {
   --color-accent-hover: #ffd633;
   --color-accent-ink: #231a00;
   --color-accent-soft: #ffc7001f;
+  --color-accent-text: #ffc700;
   --color-line: #ffffff14;
   --color-info: #38bdf8;
   --color-success: #34d399;
