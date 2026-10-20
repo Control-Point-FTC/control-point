@@ -182,6 +182,12 @@ describe("one cell", () => {
     expect(dropped).toMatchObject({ destructive: true, summary: 'Change one cell in the table in "BOM" (row 2, column 1) (removes 1 link)' });
     const [kept] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 1, was: `[${name}](${url(0)})`, markdown: `[Hex nuts](${url(0)})`, revision: await rev(page) }]));
     expect(kept.destructive).toBeUndefined();
+    // One link split by formatting is still one link: rewording it keeps it.
+    const k = await rev(page);
+    await applyNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 1, was: name, markdown: `[Hex **nut** kit](${url(0)})`, revision: k }]), receipt());
+    const [reworded] = await previewNotebookOps(store, ctx(), parseNotebookOps([{ op: "cell", page, table: table.attrs.id, row: 2, column: 1, was: "Hex nut kit", markdown: `[Hex nuts](${url(0)})`, revision: k + 1 }]));
+    expect(reworded.summary).not.toMatch(/removes/);
+    expect(reworded.destructive).toBeUndefined();
   });
 
   it("is validated: row, column, the text it had, one line of text", async () => {

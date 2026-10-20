@@ -308,8 +308,12 @@ function lostLinks(before: PMNode[], after: PMNode[]): number {
 const linkNote = (n: number) => `removes ${n} link${n === 1 ? "" : "s"}`;
 /** The target of every link in some blocks, once per link (a rewrite that drops one is flagged on the card). */
 function linksIn(nodes: PMNode[], out: string[] = []): string[] {
+  // One link can span several text nodes ("[Motor **kit**](url)"): a run of neighbours with the same target counts once.
+  let previous: string | undefined;
   for (const n of nodes) {
-    for (const m of (n.marks ?? []) as { type?: string; attrs?: Record<string, any> }[]) if (m.type === "link" && m.attrs?.href) out.push(String(m.attrs.href));
+    const href = ((n.marks ?? []) as { type?: string; attrs?: Record<string, any> }[]).find(m => m.type === "link" && m.attrs?.href)?.attrs?.href;
+    if (href && String(href) !== previous) out.push(String(href));
+    previous = href ? String(href) : undefined;
     linksIn(n.content ?? [], out);
   }
   return out;
