@@ -35,9 +35,12 @@ describe('BrunoThinking', () => {
 describe('while the reply streams', () => {
   const L = String.fromCharCode(10);
   const fence = '```';
-  it('says what Bruno is doing: writing, looking something up, or drafting changes', () => {
+  it('says what Bruno is doing: writing, or drafting changes for a confirm card', () => {
     expect(writingLabel('Here are the steps')).toBe('Writing');
-    expect(writingLabel(['Checking.', `${fence}lookup`, '{"kind":"notebook'].join(L))).toBe('Looking it up');
+    // A code example is shown as it streams: still writing.
+    expect(writingLabel(['Try this:', `${fence}java`, 'public class Auto {'].join(L))).toBe('Writing');
+    // Lookups never reach the browser; an unknown block isn't a change.
+    expect(writingLabel(['Checking.', `${fence}lookup`, '{"kind":"notebook'].join(L))).toBe('Writing');
     expect(writingLabel(['Adding it:', `${fence}tasks`, '[{"title":"Order'].join(L))).toBe('Drafting changes');
     // A finished block: back to writing.
     expect(writingLabel(['Added:', `${fence}tasks`, '[]', fence, 'Anything else'].join(L))).toBe('Writing');

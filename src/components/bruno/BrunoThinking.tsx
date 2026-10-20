@@ -124,19 +124,26 @@ export function BrunoThinking({ steps, phase, startedAt, thoughtMs }: {
 }
 
 /**
+ * The action blocks that become a confirm card (src/services/aiService.ts,
+ * notebookProposals.ts). They're hidden from the chat while they stream, so
+ * the reply looks stalled without a label. Lookups never reach the browser
+ * (the server holds them back), and code examples (```java) are shown, so
+ * neither is listed.
+ */
+const CHANGE_BLOCKS = new Set([
+  'event', 'delete-event', 'outreach', 'communications', 'tasks', 'task-update', 'workspace',
+  'task-comment', 'event-rsvp', 'parts', 'checklist', 'away', 'budget', 'notebook',
+]);
+
+/**
  * What Bruno is doing while the reply streams, from the text so far: inside
- * a lookup block he's looking something up; inside any other action block
- * (hidden from the chat) he's drafting the changes for the confirm card;
- * otherwise he's writing.
+ * an action block he's drafting the changes for the confirm card; otherwise
+ * he's writing.
  */
 export function writingLabel(text: string): string {
   const fences = [...String(text || '').matchAll(/```([\w-]*)/g)];
   // An odd number of fences: the last one is still open.
-  if (fences.length % 2 === 1) {
-    const kind = fences[fences.length - 1][1];
-    if (kind === 'lookup' || kind === 'scout-team' || kind === 'scout-event') return 'Looking it up';
-    if (kind) return 'Drafting changes';
-  }
+  if (fences.length % 2 === 1 && CHANGE_BLOCKS.has(fences[fences.length - 1][1])) return 'Drafting changes';
   return 'Writing';
 }
 
