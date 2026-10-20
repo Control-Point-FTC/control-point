@@ -173,3 +173,17 @@ describe("Bruno and task links", () => {
     expect(out).not.toMatch(/blocked by/);
   });
 });
+
+describe("two link edits at once", () => {
+  it("both blockers stay: neither edit replaces the list the other just changed", async () => {
+    for (let round = 0; round < 3; round++) {
+      const target = await task(`Wire the robot ${round}`);
+      const others: number[] = [];
+      for (let i = 0; i < 8; i++) others.push(await task(`Wiring step ${round}.${i}`));
+      const results = await Promise.all(others.map((o) => t.post(`/api/tasks/${target}/links`, { kind: "blocked_by", other_id: o }, admin)));
+      expect(results.every((r) => r.status === 200)).toBe(true);
+      const stored = (await t.db.execute({ sql: "SELECT from_id FROM task_links WHERE to_id = ? AND kind = 'blocks' ORDER BY from_id", args: [target] })).rows.map((r: any) => Number(r.from_id));
+      expect(stored).toEqual([...others].sort((a, b) => a - b));
+    }
+  });
+});

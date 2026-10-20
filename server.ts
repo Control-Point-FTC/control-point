@@ -10509,13 +10509,16 @@ Rules:
    */
   async function applyTaskLinkChanges(auth: { teamId: number | null; memberId: number }, changes: LinkChange[]): Promise<string | null> {
     if (!changes.length) return null;
-    return withLinkLock(auth.teamId!, async () => {
-      const plan = await planTaskLinks(auth, changes);
-      if ("error" in plan) return plan.error;
-      await writeTaskLinks(auth.teamId, plan);
-      if (plan.add.length || plan.remove.length) for (const id of new Set(changes.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }]);
-      return null;
-    });
+    return withLinkLock(auth.teamId!, () => applyTaskLinkChangesLocked(auth, changes));
+  }
+  /** applyTaskLinkChanges for a caller already holding the team's link lock. */
+  async function applyTaskLinkChangesLocked(auth: { teamId: number | null; memberId: number }, changes: LinkChange[]): Promise<string | null> {
+    if (!changes.length) return null;
+    const plan = await planTaskLinks(auth, changes);
+    if ("error" in plan) return plan.error;
+    await writeTaskLinks(auth.teamId, plan);
+    if (plan.add.length || plan.remove.length) for (const id of new Set(changes.map((c) => c.id))) await recordActivity(auth.teamId, id, auth.memberId, [{ kind: "links" }]);
+    return null;
   }
 
   // Add or remove one link: { kind: "blocked_by" | "blocks" | "related", other_id }.
@@ -10528,14 +10531,19 @@ Rules:
       const kind = src?.kind as LinkKind;
       const other = cleanTaskIds([src?.other_id], taskId)[0];
       if (!(LINK_KINDS as readonly string[]).includes(kind) || !other) return res.status(400).json({ error: "Pick a task to link" });
-      // Only links this member can see; applyTaskLinkChanges keeps the hidden ones as they are.
-      const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
-      const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
-      const current = (await currentLinkIds(auth.teamId!, taskId, kind)).filter((x) => visible.has(x));
-      const next = add ? [...new Set([...current, other])] : current.filter((x) => x !== other);
-      if (!visible.has(taskId)) return res.status(404).json({ error: "Task not found" });
-      const err = await applyTaskLinkChanges(auth, [{ id: taskId, kind, ids: next }]);
-      if (err) return res.status(400).json({ error: err });
+      // Read the current list and write the new one under the same lock, so
+      // two edits at once can't each replace the list the other just changed.
+      const out = await withLinkLock(auth.teamId!, async (): Promise<{ status: number; error: string } | null> => {
+        // Only links this member can see; the plan keeps the hidden ones as they are.
+        const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
+        const visible = new Set(((await dbAll("SELECT id FROM tasks WHERE team_id = ?" + boardSql(seesBoard), auth.teamId)) as any[]).map((r) => Number(r.id)));
+        if (!visible.has(taskId)) return { status: 404, error: "Task not found" };
+        const current = (await currentLinkIds(auth.teamId!, taskId, kind)).filter((x) => visible.has(x));
+        const next = add ? [...new Set([...current, other])] : current.filter((x) => x !== other);
+        const err = await applyTaskLinkChangesLocked(auth, [{ id: taskId, kind, ids: next }]);
+        return err ? { status: 400, error: err } : null;
+      });
+      if (out) return res.status(out.status).json({ error: out.error });
       res.json({ success: true });
     } catch (error) {
       console.error("Error editing task link:", error);
@@ -11160,6 +11168,16 @@ Rules:
    * message, or whether your attendance now shows the excuse.
    */
   async function setEventRsvp(auth: { teamId: number | null; memberId: number }, event: any, status: unknown, reasonRaw: unknown): Promise<{ error: string } | { excused: boolean }> {
+    // Taking back your own answer always works, even after the event stopped
+    // taking RSVPs or your role was taken off it: otherwise an old answer,
+    // and the attendance excuse it made, could never be removed.
+    if (status === null && (await dbGet("SELECT 1 FROM event_rsvps WHERE event_id = ? AND member_id = ?", event.id, auth.memberId))) {
+      await dbRun("DELETE FROM event_rsvps WHERE event_id = ? AND member_id = ?", event.id, auth.memberId);
+      const excused = !!(await dbGet("SELECT 1 FROM attendance WHERE rsvp_event_id = ? AND member_id = ?", event.id, auth.memberId));
+      broadcastToTeam(event.team_id, { type: "events_changed" });
+      broadcastToTeam(event.team_id, { type: "attendance_changed", date: event.date });
+      return { excused };
+    }
     const mode = cleanRsvpMode(event.rsvp_mode) ?? "none";
     if (mode === "none") return { error: "This event doesn't take RSVPs" };
     const invitees = await eventInviteeIds(event.team_id, event.attendee_roles);
@@ -11420,6 +11438,14 @@ Rules:
       }
       if (added.length) {
         broadcastToTeam(auth.teamId, { type: "events_changed" });
+        // Linked Google Calendars get the new competitions too, like any new event.
+        const codes = added.map((p) => p.code);
+        const rows = (await dbAll(
+          `SELECT * FROM events WHERE team_id = ? AND first_event_season = ? AND first_event_code IN (${codes.map(() => "?").join(", ")})`,
+          auth.teamId, season, ...codes,
+        )) as any[];
+        const teamId = auth.teamId!;
+        void (async () => { for (const row of rows) await syncEventToCalendars(row, teamId); })();
         const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
         void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
           `${added.length} official competition${added.length === 1 ? "" : "s"} added to the calendar: ${added.map((p) => p.title).slice(0, 3).join(", ")}${added.length > 3 ? "…" : ""}`, {}, added.length);
