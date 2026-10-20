@@ -119,6 +119,32 @@ describe('updating on its own', () => {
     expect((await getOfflinePack())?.pack.region).toBe('USPA');
   });
 
+  it("another tab's change it hasn't heard about yet isn't overwritten", async () => {
+    server('2026-10-19T06:00:00Z');
+    await downloadOfflinePack('USNJ');
+    // Another tab replaces the stored copy (written straight to the store; this tab isn't told).
+    const otherTab = () => new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('control-point-offline', 1);
+      open.onsuccess = () => {
+        const tx = open.result.transaction('packs', 'readwrite');
+        tx.objectStore('packs').put({ pack: pack('2026-10-19T07:00:00Z', 2026, 'USPA'), bytes: 1, savedAt: 'other-tab' }, 'current');
+        tx.oncomplete = () => { open.result.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    api.apiFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/offline/regions') return json(regions('2026-10-20T06:00:00Z'));
+      await otherTab();
+      return json(pack('2026-10-20T06:00:00Z'));
+    });
+    expect(await updateOfflinePackIfBehind({ force: true })).toBeNull();
+    const stored = await new Promise<any>((resolve) => {
+      const open = indexedDB.open('control-point-offline', 1);
+      open.onsuccess = () => { const r = open.result.transaction('packs').objectStore('packs').get('current'); r.onsuccess = () => { open.result.close(); resolve(r.result); }; };
+    });
+    expect(stored.savedAt).toBe('other-tab');
+  });
+
   it('a failed check is quiet', async () => {
     server('2026-10-19T06:00:00Z');
     await downloadOfflinePack('USNJ');

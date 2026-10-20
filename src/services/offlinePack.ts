@@ -89,6 +89,30 @@ async function fetchPack(region: string): Promise<SavedPack> {
   return { pack, bytes: text.length, savedAt: new Date().toISOString() };
 }
 
+/**
+ * Write `next` only if the stored copy is still the one saved at `expected`,
+ * checked and written in one transaction (atomic across tabs). True if written.
+ */
+async function replaceIfUnchanged(expected: string, next: SavedPack): Promise<boolean> {
+  const db = await openDb();
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      let wrote = false;
+      const get = store.get(KEY) as IDBRequest<SavedPack | undefined>;
+      get.onsuccess = () => {
+        if (get.result?.savedAt === expected) { store.put(next, KEY); wrote = true; }
+      };
+      tx.oncomplete = () => resolve(wrote);
+      tx.onerror = () => reject(tx.error ?? new Error('Offline storage failed.'));
+      tx.onabort = () => reject(tx.error ?? new Error('Offline storage failed (is the device out of space?).'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 async function savePack(saved: SavedPack): Promise<SavedPack> {
   await withStore('readwrite', (s) => s.put(saved, KEY));
   announce(saved);
@@ -167,7 +191,13 @@ export function updateOfflinePackIfBehind({ force = false }: { force?: boolean }
       const fresh = await fetchPack(saved.pack.region);
       // Removed, replaced or updated while this ran (Settings, another tab): leave it.
       if (packVersion !== version) return null;
-      return await savePack(fresh);
+      // The same check in the write itself, so another tab's change that
+      // hasn't been announced here yet is never overwritten either.
+      if (!(await replaceIfUnchanged(saved.savedAt, fresh))) return null;
+      announce(fresh);
+      tellOtherTabs();
+      void warmOfflineForecast();
+      return fresh;
     } catch {
       return null;
     }
