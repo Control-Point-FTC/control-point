@@ -104,3 +104,58 @@ export async function removeOfflinePack(): Promise<void> {
   announce(null);
   tellOtherTabs();
 }
+
+// Keeping the pack current: on by default, per device. The app checks when it
+// opens, when the connection comes back, and every two hours while open; the
+// server refreshes its FTC data about that often too.
+const AUTO_KEY = 'cp-offline-auto-update';
+const CHECKED_KEY = 'cp-offline-checked-at';
+export const AUTO_CHECK_EVERY_MS = 2 * 60 * 60 * 1000;
+
+export function offlineAutoUpdateOn(): boolean {
+  try { return localStorage.getItem(AUTO_KEY) !== 'off'; } catch { return true; }
+}
+export function setOfflineAutoUpdate(on: boolean): void {
+  try { localStorage.setItem(AUTO_KEY, on ? 'on' : 'off'); } catch { /* private mode: stays on */ }
+}
+
+/** Is the server's data newer than the pack (a later sync, or the next season)? */
+export function packIsBehind(pack: Pick<OfflinePack, 'season' | 'dataAsOf' | 'region'>, regions: Pick<OfflineRegions, 'season' | 'dataAsOf' | 'regions'>): boolean {
+  if (regions.season > pack.season) {
+    // A new season: only once the pack's region has events in it.
+    return pack.region === 'ALL' || regions.regions.some((r) => r.code === pack.region);
+  }
+  if (regions.season < pack.season || !regions.dataAsOf) return false;
+  return !pack.dataAsOf || regions.dataAsOf > pack.dataAsOf;
+}
+
+let checking: Promise<SavedPack | null> | null = null;
+/**
+ * Re-download the pack on this device when the server has newer data. Quiet:
+ * returns the new pack, or null when there's nothing to do (no pack, turned
+ * off, offline, checked recently, already current) or the check failed.
+ */
+export function updateOfflinePackIfBehind({ force = false }: { force?: boolean } = {}): Promise<SavedPack | null> {
+  checking ??= (async () => {
+    try {
+      if (!offlineAutoUpdateOn()) return null;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+      const saved = await getOfflinePack();
+      if (!saved) return null;
+      if (!force) {
+        let last = 0;
+        try { last = Number(localStorage.getItem(CHECKED_KEY)) || 0; } catch { /* no storage: check */ }
+        if (Date.now() - last < AUTO_CHECK_EVERY_MS) return null;
+      }
+      const regions = await fetchOfflineRegions();
+      try { localStorage.setItem(CHECKED_KEY, String(Date.now())); } catch { /* fine */ }
+      if (!packIsBehind(saved.pack, regions)) return null;
+      return await downloadOfflinePack(saved.pack.region);
+    } catch {
+      return null;
+    } finally {
+      checking = null;
+    }
+  })();
+  return checking;
+}

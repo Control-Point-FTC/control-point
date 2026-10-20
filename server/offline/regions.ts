@@ -24,3 +24,29 @@ export function regionName(code: string): string {
   if (us && US_STATES[us[1]]) return US_STATES[us[1]];
   return code;
 }
+
+/**
+ * A region code from where a team is (state/province and country), for a
+ * team that has played no stored event yet. Only codes in `known` (regions
+ * that have had events) count: a state FTC splits into several regions
+ * (California, Texas, New York) gives nothing rather than a wrong guess.
+ */
+export function regionFromLocation(state: string | null | undefined, country: string | null | undefined, known: Set<string>): string | null {
+  const st = String(state || "").trim();
+  const co = String(country || "").trim().toLowerCase();
+  if (!st && !co) return null;
+  const usa = !co || co === "usa" || co === "us" || co === "united states" || co === "united states of america";
+  const canada = co === "canada" || co === "ca";
+  const candidates: string[] = [];
+  if (usa && st) {
+    const ab = /^[A-Za-z]{2}$/.test(st) ? st.toUpperCase() : Object.entries(US_STATES).find(([, n]) => n.toLowerCase() === st.toLowerCase())?.[0];
+    if (ab) candidates.push(`US${ab}`);
+  } else if (canada && st) {
+    const ab = /^[A-Za-z]{2}$/.test(st) ? st.toUpperCase() : Object.entries(SPECIAL).find(([c, n]) => c.startsWith("CA") && c.length === 4 && n.toLowerCase() === st.toLowerCase())?.[0]?.slice(2);
+    if (ab) candidates.push(`CA${ab}`);
+  } else if (co) {
+    const byName = Object.entries(SPECIAL).find(([c, n]) => c.length === 2 && n.toLowerCase() === co)?.[0];
+    candidates.push(...[byName, /^[a-z]{2}$/.test(co) ? co.toUpperCase() : null].filter((c): c is string => !!c));
+  }
+  return candidates.find((c) => known.has(c)) ?? null;
+}

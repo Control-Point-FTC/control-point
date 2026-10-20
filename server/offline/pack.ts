@@ -149,7 +149,10 @@ export function listRegions(events: PackedEvent[], season: number, dataAsOf: str
     by.set(event.region, r);
   }
   const regions: OfflineRegion[] = [...by.entries()].map(([code, r]) => ({ code, name: regionName(code), events: r.events, teams: r.teams.size })).sort((a, b) => a.name.localeCompare(b.name));
-  return { season, dataAsOf, detected: regions.find((r) => r.code === detectedCode) ?? null, regions, all: { events: events.length, teams: allTeams.size } };
+  // A region known from elsewhere (last season, FIRST, the team's location)
+  // stays detected with no events: none have results yet this season.
+  const detected = detectedCode ? regions.find((r) => r.code === detectedCode) ?? { code: detectedCode, name: regionName(detectedCode), events: 0, teams: 0 } : null;
+  return { season, dataAsOf, detected, regions, all: { events: events.length, teams: allTeams.size } };
 }
 
 /** The pack for one region ("ALL" = every event of the season). */

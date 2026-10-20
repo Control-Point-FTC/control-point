@@ -1,15 +1,24 @@
 // Settings → Offline data (V3.5 phase 6b): download the team's FTC region (or
 // every region) so team search, team pages and events work with no
-// connection. The region is detected from the events the team played.
+// connection. The region is detected from the events the team played (else
+// FIRST's home region or where the team is). The pack keeps itself current
+// unless automatic updates are turned off (useOfflinePackAutoUpdate).
 import { useEffect, useState } from 'react';
 import { CloudDownload, HardDrive, RefreshCw, Trash2, TriangleAlert } from 'lucide-react';
-import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui-kit';
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../../components/ui-kit';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { relTime } from '../../../components/scout/ScoutUi';
-import { downloadOfflinePack, fetchOfflineRegions, getOfflinePack, onOfflinePackChange, removeOfflinePack, type SavedPack } from '../../../services/offlinePack';
+import { downloadOfflinePack, fetchOfflineRegions, getOfflinePack, offlineAutoUpdateOn, onOfflinePackChange, removeOfflinePack, setOfflineAutoUpdate, updateOfflinePackIfBehind, type SavedPack } from '../../../services/offlinePack';
 import { packAsOf, packStale } from '../../../utils/offlinePack';
 import type { OfflineRegion, OfflineRegions } from '../../../types/offlinePack';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
+
+/** Why the region couldn't be found, in words a member can act on. */
+export function undetectedText(r: Pick<OfflineRegions, 'undetected' | 'team'>): string {
+  if (r.undetected === 'no_team') return 'Add your FTC team number in Settings → Workspace to find your region, or pick one below.';
+  if (r.team) return `Team ${r.team} hasn't played an event we have results for, and FIRST doesn't list its region yet. Pick your region below.`;
+  return "We couldn't tell your region. Pick one below.";
+}
 
 /** "USNJ" → "NJ" for the button; other codes use the region's name. */
 export const shortRegion = (r: Pick<OfflineRegion, 'code' | 'name'>) => (/^US[A-Z]{2}$/.test(r.code) ? r.code.slice(2) : r.name);
@@ -22,6 +31,13 @@ export function OfflineSection() {
   const [regionsError, setRegionsError] = useState<string | null>(null);
   const [other, setOther] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [auto, setAuto] = useState(offlineAutoUpdateOn);
+  const toggleAuto = (on: boolean) => {
+    setAuto(on);
+    setOfflineAutoUpdate(on);
+    // Turned on: catch up now rather than at the next check.
+    if (on) void updateOfflinePackIfBehind({ force: true });
+  };
 
   useEffect(() => {
     let live = true;
@@ -97,6 +113,9 @@ export function OfflineSection() {
                 </Button>
               </div>
             </SettingsRow>
+            <SettingsRow label="Update automatically" description={auto ? 'Gets newer results when the app opens and every couple of hours while you’re online.' : 'Off: this copy only changes when you tap Update.'}>
+              <Switch checked={auto} onCheckedChange={(v: boolean) => toggleAuto(v)} aria-label="Update offline data automatically" />
+            </SettingsRow>
             {stale && (
               <p role="status" className="flex items-center gap-2 border-t border-border px-4 py-3 text-sm text-warning">
                 <TriangleAlert className="size-4 shrink-0" aria-hidden /> This copy is over a week old — update it while you're online so results and odds are current.
@@ -120,14 +139,16 @@ export function OfflineSection() {
         {!regions && !regionsError && <p className="px-4 py-4 text-sm text-muted-foreground">Loading regions…</p>}
         {regions && (
           <>
-            {detected ? (
+            {detected && detected.events > 0 ? (
               <SettingsRow label={`Your region: ${detected.name}`} description={`${count(detected.teams, 'team')} · ${count(detected.events, 'event')}`}>
                 <Button disabled={!!busy} onClick={() => void download(detected.code, detected.name)} className="max-sm:h-11 max-sm:w-full">
                   <CloudDownload /> {busy === detected.code ? 'Downloading…' : `Download ${shortRegion(detected)} offline data`}
                 </Button>
               </SettingsRow>
+            ) : detected ? (
+              <SettingsRow label={`Your region: ${detected.name}`} description={`No ${detected.name} events have results yet this season. Check back once your region's first events are played.`} />
             ) : (
-              <SettingsRow label="Your region" description="We couldn't tell your region yet (connect your FTC team number in Settings, or pick one below)." />
+              <SettingsRow label="Your region" description={undetectedText(regions)} />
             )}
             <SettingsRow label="Another region" description={chosen ? `${count(chosen.teams, 'team')} · ${count(chosen.events, 'event')}` : 'For an out-of-region event or championship.'}>
               <div className="flex flex-wrap gap-2">

@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildPack, detectRegion, listRegions, packEvent, OfflinePackBuilder } from "../offline/pack";
+import { regionFromLocation } from "../offline/regions";
+import { createServer, type Server } from "node:http";
 import { PredictStore, STORE_FORMAT } from "../predict/store";
 import { currentFtcSeason } from "../../src/components/FtcStats";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
@@ -72,6 +74,25 @@ describe("packEvent / buildPack", () => {
   });
 });
 
+describe("finding a region without played events", () => {
+  const known = new Set(["USNJ", "USPA", "CAON", "MX", "USCALA"]);
+  it("maps a state or province (code or name) and a country, only to regions that have had events", () => {
+    expect(regionFromLocation("NJ", "USA", known)).toBe("USNJ");
+    expect(regionFromLocation("Pennsylvania", "United States", known)).toBe("USPA");
+    expect(regionFromLocation("Ontario", "Canada", known)).toBe("CAON");
+    expect(regionFromLocation(null, "Mexico", known)).toBe("MX");
+    // California is split into several regions: no guess.
+    expect(regionFromLocation("CA", "USA", known)).toBeNull();
+    expect(regionFromLocation("Ohio", "USA", known)).toBeNull();
+    expect(regionFromLocation(null, null, known)).toBeNull();
+  });
+  it("keeps a known region with no events yet as detected", () => {
+    const r = listRegions([], SEASON, null, "USNJ");
+    expect(r.detected).toEqual({ code: "USNJ", name: "New Jersey", events: 0, teams: 0 });
+    expect(listRegions([], SEASON, null, null).detected).toBeNull();
+  });
+});
+
 describe("PredictStore layout upgrade", () => {
   it("re-downloads events stored before team names were kept, once", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cp-store-fmt-"));
@@ -131,6 +152,7 @@ describe("offline routes", () => {
   let t: TestServer;
   let session = "";
   let dataDir = "";
+  let scout: Server;
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "cp-offline-data-"));
     const sdir = join(dataDir, "scout", String(SEASON));
@@ -139,12 +161,45 @@ describe("offline routes", () => {
     writeFileSync(join(sdir, "USNYQ1.json"), JSON.stringify(rawEvent("USNYQ1", "USNYNY", [[2222, "Visitors"], [5555, "Five"], [6666, "Six"], [7777, "Seven"]])));
     writeFileSync(join(sdir, "_index.json"), "{}");
     writeFileSync(join(sdir, "_status.json"), JSON.stringify({ complete: true, lastSync: "2026-10-08T06:00:00.000Z", failed: 0, format: STORE_FORMAT }));
-    t = await startTestServer("cp-offline-", { PREDICT_DATA_DIR: dataDir });
+    // FTC Scout stand-in: team 8888 is in New Jersey, every other team unknown.
+    scout = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        const n = JSON.parse(raw || "{}")?.variables?.number;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: { activeTeamsCount: 1, teamByNumber: n === 8888 ? { number: 8888, name: "Rookies", location: { city: "Edison", state: "NJ", country: "USA" }, events: [] } : null } }));
+      });
+    });
+    await new Promise<void>((r) => scout.listen(0, "127.0.0.1", () => r()));
+    t = await startTestServer("cp-offline-", { PREDICT_DATA_DIR: dataDir, FTC_SCOUT_URL: `http://127.0.0.1:${(scout.address() as any).port}/graphql`, FTC_EVENTS_USERNAME: "", FTC_EVENTS_TOKEN: "" });
     const team = await seedTeam(t.db, "Mech");
     await t.db.execute({ sql: "UPDATE teams SET ftc_team_number = '4215' WHERE id = ?", args: [team] });
     session = await t.session(await seedMember(t.db, team, "Ada", "ada@offline.test", "admin"));
   }, 120_000);
-  afterAll(async () => { await t?.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+  afterAll(async () => { await t?.stop(); scout?.close(); rmSync(dataDir, { recursive: true, force: true }); });
+
+  /** A workspace with these team-number fields, and a session in it. */
+  const workspace = async (name: string, number: string, ftc: string | null) => {
+    const id = await seedTeam(t.db, name);
+    await t.db.execute({ sql: "UPDATE teams SET number = ?, ftc_team_number = ? WHERE id = ?", args: [number, ftc, id] });
+    return t.session(await seedMember(t.db, id, name, `${name.toLowerCase()}@offline.test`, "admin"));
+  };
+
+  it("uses the workspace number when the FTC number field is empty, as Settings shows it", async () => {
+    const r = await t.api("/api/offline/regions", { session: await workspace("Robo", "1111", null) });
+    expect(r.body).toMatchObject({ team: 1111, undetected: null, detected: { code: "USNJ" } });
+  });
+
+  it("a team with no played events: found from where it is", async () => {
+    const r = await t.api("/api/offline/regions", { session: await workspace("Rookies", "", "8888") });
+    expect(r.body).toMatchObject({ team: 8888, undetected: null, detected: { code: "USNJ", events: 1 } });
+  });
+
+  it("says why when it can't tell: no team number, or a team it can't place", async () => {
+    expect((await t.api("/api/offline/regions", { session: await workspace("Nameless", "", null) })).body).toMatchObject({ team: null, undetected: "no_team", detected: null });
+    expect((await t.api("/api/offline/regions", { session: await workspace("Faraway", "", "9999") })).body).toMatchObject({ team: 9999, undetected: "not_found", detected: null });
+  });
 
   it("lists regions with the team's own detected", async () => {
     expect((await t.api("/api/offline/regions")).status).toBe(401);

@@ -180,6 +180,7 @@ import { ENGINE_VERSION, FITTED_MODEL } from "@control-scout/predict-engine";
 import { PredictStore } from "./server/predict/store.js";
 import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
 import { OfflinePackBuilder, buildPack, detectRegion, listRegions, type PackedEvent } from "./server/offline/pack.js";
+import { regionFromLocation } from "./server/offline/regions.js";
 import { passwordProblem } from "./src/utils/password.js";
 import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
@@ -6671,8 +6672,33 @@ async function startServer() {
   }
 
   async function myFtcTeam(teamId: number | null): Promise<number | null> {
-    const row = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
-    return parseInt(row?.ftc_team_number, 10) || null;
+    const row = (await dbGet("SELECT ftc_team_number, number FROM teams WHERE id = ?", teamId)) as any;
+    const ftc = parseInt(row?.ftc_team_number, 10);
+    if (ftc > 0) return ftc;
+    // Workspaces made before the FTC number field have the team number in
+    // "number"; Settings already shows it as the FTC number (WorkspaceSection).
+    const plain = String(row?.number ?? "").trim();
+    return /^\d{1,6}$/.test(plain) && Number(plain) > 0 ? Number(plain) : null;
+  }
+
+  /**
+   * Where a team is, for a team that played no stored event yet: FIRST's home
+   * region, and its state and country (FIRST, else FTC Scout). Kept for 12
+   * hours per team; a lookup that fails counts as nothing found.
+   */
+  const teamWhereCache = new Map<number, { at: number; homeRegion: string | null; state: string | null; country: string | null }>();
+  async function teamWhere(team: number, season: number) {
+    const hit = teamWhereCache.get(team);
+    if (hit && Date.now() - hit.at < 12 * 60 * 60 * 1000) return hit;
+    const [first, scout] = await Promise.allSettled([
+      isFirstEventsConfigured() ? getFirstEventsTeam(season, team) : Promise.resolve(null),
+      getFtcTeamPayload(team, season),
+    ]);
+    const f = first.status === "fulfilled" ? first.value : null;
+    const sc = scout.status === "fulfilled" ? scout.value : null;
+    const out = { at: Date.now(), homeRegion: f?.homeRegion ?? null, state: f?.state ?? sc?.state ?? null, country: f?.country ?? sc?.country ?? null };
+    teamWhereCache.set(team, out);
+    return out;
   }
 
   // ---- Offline region pack (V3.5 phase 6b) ----
@@ -6695,10 +6721,24 @@ async function startServer() {
     if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
     const myTeam = await myFtcTeam(auth.teamId);
     const asEvents = (evs: PackedEvent[]) => evs.map((e) => ({ region: e.event.region, teams: e.event.teams.map((t) => t[0]) }));
+    const lastSeason = predictEngine.seasonData(got.season - 1).events.map((e) => ({ region: e.region ?? null, teams: e.teams }));
     // This season's events first; early in a season, last season's.
-    const detected = detectRegion(asEvents(got.events), myTeam)
-      ?? detectRegion(predictEngine.seasonData(got.season - 1).events.map((e) => ({ region: e.region ?? null, teams: e.teams })), myTeam);
-    res.json(listRegions(got.events, got.season, predictStore.lastSync(got.season), detected));
+    let detected = detectRegion(asEvents(got.events), myTeam) ?? detectRegion(lastSeason, myTeam);
+    // A team that played none of them (a rookie, or a season not synced yet):
+    // FIRST's home region, else where the team is, if that's a region with events.
+    if (!detected && myTeam) {
+      const known = new Set<string>([...got.events.map((e) => e.event.region), ...lastSeason.map((e) => e.region)].filter((r): r is string => !!r));
+      try {
+        const where = await teamWhere(myTeam, got.season);
+        const home = where.homeRegion && /^[A-Z0-9]{2,8}$/.test(where.homeRegion) ? where.homeRegion : null;
+        detected = (home && known.has(home) ? home : null) ?? regionFromLocation(where.state, where.country, known);
+      } catch { /* no extra lookup: undetected */ }
+    }
+    res.json({
+      ...listRegions(got.events, got.season, predictStore.lastSync(got.season), detected),
+      team: myTeam,
+      undetected: detected ? null : myTeam ? "not_found" : "no_team",
+    });
   });
 
   app.get("/api/offline/pack", async (req, res) => {
