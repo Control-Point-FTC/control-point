@@ -13973,6 +13973,8 @@ Rules:
         t = t.replace(/```checklist\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```checklist[\s\S]*$/, "");
         // The appearance switch is applied in the browser as the reply finishes; it's never shown or saved.
         t = t.replace(/```appearance\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```appearance[\s\S]*$/, "");
+        // So is a navigate block (the page opens once, as the reply finishes).
+        t = t.replace(/```navigate\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```navigate[\s\S]*$/, "");
         // CAD parts list additions too.
         t = t.replace(/```parts\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```parts[\s\S]*$/, "");
         t = extractScoutBlock(t).text;

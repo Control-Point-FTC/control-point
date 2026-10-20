@@ -12,6 +12,13 @@ describe("Bruno's rules", () => {
   it("speaks like a coach, not about its machinery", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/don't mention blocks, fences, tools, lookups or your context/);
   });
+  it("can open pages, and new records once confirmed", () => {
+    expect(BUILD_HELPER_SYSTEM).toMatch(/NAVIGATION SKILL/);
+    expect(BUILD_HELPER_SYSTEM).toMatch(/```navigate/);
+    expect(BUILD_HELPER_SYSTEM).toMatch(/look it up first/);
+    expect(BUILD_HELPER_SYSTEM).toMatch(/"open": true when the user wants to see the new task/);
+    expect(BUILD_HELPER_SYSTEM).toMatch(/only when they asked to see or go somewhere, never on your own/);
+  });
   it("is honest that it can't see other Bruno chats", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/you can't see the user's other conversations with you/);
   });

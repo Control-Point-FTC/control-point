@@ -141,6 +141,16 @@ describe("a proposal cut off by the length cap", () => {
   });
 });
 
+describe("Opening a page", () => {
+  it("the navigate block reaches the app as the reply streams, but isn't saved with the chat", async () => {
+    gemini.script = [["Opening your calendar.", "```navigate", '{"to":"calendar"}', "```"].join(String.fromCharCode(10))];
+    const r = await ask("Show me my calendar");
+    expect(r.status).toBe(200);
+    expect(r.shown).toMatch(/```navigate/);
+    expect(r.saved).toBe("Opening your calendar.");
+  });
+});
+
 describe("Suggest tags in the task editor", () => {
   it("keeps only the team's subsystems and real awards, with Bruno's reason; nothing is saved", async () => {
     gemini.script = ['```json\n{"subsystems":["intake","Warp drive"],"awards":["think","Best Snacks"],"labels":["Prototype","CAD","Extra"],"reason":"Builds and tests a new intake."}\n```'];

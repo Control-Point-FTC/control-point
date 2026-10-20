@@ -72,6 +72,7 @@ import { JOIN_REQUESTS_EVENT } from './modern/pages/people/JoinRequestsCard';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
+import { BRUNO_NAVIGATE_EVENT } from './services/brunoNavigate';
 import { BrunoPanelSwitch } from './modern/BrunoDock';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController } from './components/tasks/useTasksController';
@@ -420,6 +421,15 @@ export default function App() {
   const navigate = useNavigate();
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
   const setActiveTab = (id: string) => navigate(`/${id}`);
+  // Bruno opens pages and records ("show me my calendar"): src/services/brunoNavigate.ts.
+  useEffect(() => {
+    const go = (e: Event) => {
+      const to = (e as CustomEvent<{ to?: string }>).detail?.to;
+      if (typeof to === 'string' && to.startsWith('/') && !to.startsWith('//')) navigate(to);
+    };
+    window.addEventListener(BRUNO_NAVIGATE_EVENT, go);
+    return () => window.removeEventListener(BRUNO_NAVIGATE_EVENT, go);
+  }, [navigate]);
   const activeNav = navItems.find((t) => t.id === activeTab)
     || navItems.flatMap((t) => (t as any).children || []).find((c: any) => c.id === activeTab);
   // Messaging is immersive: no top bar, no footer — the chat fills the whole content area
