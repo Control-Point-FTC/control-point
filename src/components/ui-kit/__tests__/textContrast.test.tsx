@@ -42,17 +42,29 @@ describe('kit text contrast', () => {
     expect(ratio(hex(prop(index, '@theme', '--color-accent')), hex('#1a1a1f'))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('destructive menu items use the destructive token, readable on the popover in both themes', () => {
+  it('destructive menu items use the destructive text colour, readable on the popover and on their focus tint', () => {
     render(
       <DropdownMenu open>
         <DropdownMenuTrigger>Menu</DropdownMenuTrigger>
         <DropdownMenuContent><DropdownMenuItem variant="destructive">Delete</DropdownMenuItem></DropdownMenuContent>
       </DropdownMenu>,
     );
-    expect(screen.getByRole('menuitem', { name: 'Delete' }).className).toMatch(/(^|\s)text-destructive(\s|$)/);
-    for (const theme of ['html[data-ui="modern"] {', 'html.light[data-ui="modern"] {']) {
-      const fg = hex(prop(modern, theme, '--sh-destructive')), bg = hex(prop(modern, theme, '--sh-popover'));
-      expect(ratio(fg, bg), theme).toBeGreaterThanOrEqual(4.5);
+    const cls = screen.getByRole('menuitem', { name: 'Delete' }).className;
+    expect(cls).toMatch(/(^|\s)text-destructive-text(\s|$)/);
+    const tint = /focus:bg-rose-500\/(\d+)/.exec(cls);
+    expect(tint, 'the focus tint this test measures').not.toBeNull();
+    const a = Number(tint![1]) / 100, rose500 = hex('#ff2056'); // Tailwind 4's rose 500 as the browser computes it
+    const onTint = (bg: RGB) => bg.map((v, i) => Math.round(rose500[i] * a + v * (1 - a))) as RGB;
+    const cases: [string, RGB, RGB][] = [
+      // Light: the html.light token on the white popover.
+      ['light', hex(prop(index, 'html.light {', '--color-destructive-text')), hex(prop(modern, 'html.light[data-ui="modern"] {', '--sh-popover'))],
+      // Dark: the token is the destructive colour itself.
+      ['dark', hex(prop(modern, 'html[data-ui="modern"] {', '--sh-destructive')), hex(prop(modern, 'html[data-ui="modern"] {', '--sh-popover'))],
+    ];
+    expect(prop(index, '@theme', '--color-destructive-text')).toBe('var(--color-destructive)');
+    for (const [theme, fg, bg] of cases) {
+      expect(ratio(fg, bg), `${theme} at rest`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(fg, onTint(bg)), `${theme} focused`).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
