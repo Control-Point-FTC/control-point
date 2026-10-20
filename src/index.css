@@ -93,6 +93,9 @@
   --color-accent-hover: #ffd633; /* volt hover */
   --color-accent-ink: #231a00;   /* text on volt */
   --color-accent-soft: #ffc7001f;/* volt tint fills */
+  /* The accent as small text (link buttons): the accent itself on dark. On light, volt #eab308 reads 1.9:1
+     on white, so html.light darkens whatever the accent is (a team's own colour too) toward black. */
+  --color-accent-text: var(--color-accent);
   --color-line: #ffffff14;       /* hairline borders */
   --color-info: #38bdf8;
   --color-success: #34d399;
@@ -116,6 +119,9 @@
   --color-input: var(--sh-input, #ffffff1f);
   --color-ring: var(--sh-ring, #ffc700);
   --color-destructive: var(--sh-destructive, #f43f5e);
+  /* Destructive as small text (menu items), on white or its own 10% focus tint: the token itself on dark;
+     html.light deepens it to rose 700, since rose 600 drops to 4.1:1 on the focus tint. */
+  --color-destructive-text: var(--color-destructive);
   --color-chart-1: var(--sh-chart-1, #ffc700);
   --color-chart-2: var(--sh-chart-2, #38bdf8);
   --color-chart-3: var(--sh-chart-3, #34d399);
@@ -280,6 +286,8 @@ html.light {
   --color-accent-hover: #ca8a04;
   --color-accent-ink: #231a00;   /* text on volt */
   --color-accent-soft: #eab3081f;/* volt tint fills */
+  --color-accent-text: color-mix(in srgb, var(--color-accent) 55%, black); /* volt: #816204, 5.7:1 on white */
+  --color-destructive-text: #be123c; /* rose 700: 6.6:1 on white, 5.4:1 on the rose focus tint */
   --color-line: #09090b14;       /* hairline borders */
   --color-info: #0284c7;
   --color-success: #059669;
@@ -468,6 +476,8 @@ html.light .theme-dark {
   --color-accent-hover: #ffd633;
   --color-accent-ink: #231a00;
   --color-accent-soft: #ffc7001f;
+  --color-accent-text: #ffc700;
+  --color-destructive-text: var(--color-destructive);
   --color-line: #ffffff14;
   --color-info: #38bdf8;
   --color-success: #34d399;
