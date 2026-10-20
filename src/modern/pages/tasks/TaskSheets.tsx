@@ -11,7 +11,7 @@ import {
   ToggleGroup, ToggleGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, RequiredMark,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { PRIORITY_META, REPEAT_OPTIONS, ruleToRepeat, taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
+import { PRIORITY_META, PROOF_REQUIREMENTS, REPEAT_OPTIONS, ruleToRepeat, taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
 import { Countdown } from '../../ui/Countdown';
@@ -147,6 +147,17 @@ export function CompletionHistory({ task, members }: { task: any; members: any[]
             {e.notes
               ? <p className="whitespace-pre-wrap text-sm text-foreground/90">{e.notes}</p>
               : <p className="text-sm text-muted-foreground">No note.</p>}
+            {e.link && (
+              <a href={e.link} target="_blank" rel="noreferrer noopener" className="flex items-center gap-1.5 break-all text-sm text-accent underline-offset-2 hover:underline">
+                <LinkIcon className="size-3.5 shrink-0" aria-hidden />{e.link}
+              </a>
+            )}
+            {e.aiNote && (
+              <p className="flex gap-1.5 rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
+                <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden />
+                <span><span className="font-medium text-foreground">Bruno:</span> {e.aiNote}</span>
+              </p>
+            )}
             {e.images.length > 0 && (
               <div className="grid grid-cols-3 gap-2">
                 {e.images.map((src, n) => <ProofPhoto key={src} src={src} n={n + 1} by={nameOf(e.by)} />)}
@@ -154,7 +165,7 @@ export function CompletionHistory({ task, members }: { task: any; members: any[]
             )}
             {e.review && (
               <p className={cn('text-xs', e.review.status === 'approved' ? 'text-success' : 'text-destructive')}>
-                {e.review.status === 'approved' ? 'Approved' : 'Sent back'} by {nameOf(e.review.by)}{when(e.review.at) && ` · ${when(e.review.at)}`}
+                {e.review.status === 'approved' ? 'Approved' : 'Sent back'} by {e.review.bruno ? 'Bruno' : nameOf(e.review.by)}{when(e.review.at) && ` · ${when(e.review.at)}`}
                 {e.review.note && <span className="block whitespace-pre-wrap text-foreground/80">{e.review.note}</span>}
               </p>
             )}
@@ -486,6 +497,16 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               </span>
               <Switch checked={f.completion_mode === 'each'} onCheckedChange={(v: boolean) => set({ completion_mode: v ? 'each' : '' })} aria-label="Everyone assigned completes it separately" />
             </label>
+            <div className="grid gap-2">
+              <Label htmlFor="task-proof">Proof to finish it</Label>
+              <Select value={f.proof_requirement || 'auto'} onValueChange={(v) => set({ proof_requirement: v })}>
+                <SelectTrigger id="task-proof"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PROOF_REQUIREMENTS.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Bruno checks the proof against this before the task counts as done. Code and CAD links always get a manager's sign-off.</p>
+            </div>
             <AiTagStrip s={tagSuggest} />
             <div className="grid gap-2">
               <Label htmlFor="task-subsystems">Subsystems</Label>

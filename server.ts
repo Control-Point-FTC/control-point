@@ -61,6 +61,7 @@ import {
 } from "./server/onboarding.js";
 import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
+import { cleanProofRequirement, readProof, safeProofLink, proofFingerprint, proofShortfall, ProofCheckStore, initialReview, PROOF_CHECK_SYSTEM, proofCheckPrompt, parseProofVerdict } from "./server/taskProof.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { buildIcs } from "./server/ics.js";
@@ -10070,8 +10071,8 @@ Rules:
       await dbBatch([
         {
           // Tags carry over; a start date belongs to one occurrence, so it doesn't.
-          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, subsystems, awards, labels, completion_mode) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence, task.subsystems ?? null, task.awards ?? null, task.labels ?? null, task.completion_mode ?? null],
+          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, subsystems, awards, labels, completion_mode, proof_requirement) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence, task.subsystems ?? null, task.awards ?? null, task.labels ?? null, task.completion_mode ?? null, task.proof_requirement ?? null],
         },
         { sql: "UPDATE tasks SET next_task_id = last_insert_rowid() WHERE id = ? AND next_task_id = -1", args: [task.id] },
         ...assignees.map((mid) => ({
@@ -10131,9 +10132,10 @@ Rules:
       const legacyAssignedTo = validIds[0] || null;
 
       const info = (await dbRun(
-        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels, completion_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence, start_date, subsystems, awards, labels, completion_mode, proof_requirement) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         auth.teamId, title, description ?? '', ['todo', 'in-progress', 'done'].includes(status) ? status : 'todo', legacyAssignedTo, due_date || null, dueTime, is_board ? 1 : 0, createdAt, priority, recurrence,
         tags.cols.start_date ?? null, tags.cols.subsystems ?? null, tags.cols.awards ?? null, tags.cols.labels ?? null, cleanCompletionMode(req.body?.completion_mode),
+        cleanProofRequirement(req.body?.proof_requirement),
       ));
 
       const taskId = Number(info.lastInsertRowid);
@@ -10372,8 +10374,8 @@ Rules:
       if (!canManage && (req.body?.status === 'cancelled' || (task.status === 'cancelled' && req.body?.status !== undefined))) {
         return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
       }
-      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence, completion_mode } = req.body;
-      if (!canManage && (completion_mode !== undefined || title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence, completion_mode, proof_requirement } = req.body;
+      if (!canManage && (completion_mode !== undefined || proof_requirement !== undefined || title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined || TASK_TAG_FIELDS.some((k) => req.body?.[k] !== undefined))) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       if (title !== undefined && !String(title ?? '').trim()) return res.status(400).json({ error: "Add a title" });
@@ -10397,6 +10399,7 @@ Rules:
       }
       if (priority !== undefined) { sets.push('priority = ?'); vals.push(cleanPriority(priority)); }
       if (completion_mode !== undefined) { sets.push('completion_mode = ?'); vals.push(cleanCompletionMode(completion_mode)); }
+      if (proof_requirement !== undefined) { sets.push('proof_requirement = ?'); vals.push(cleanProofRequirement(proof_requirement)); }
       if (recurrence !== undefined) { sets.push('recurrence = ?'); vals.push(cleanRecurrence(recurrence)); }
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
@@ -10823,6 +10826,58 @@ Rules:
     }
   });
 
+  // Bruno checks completion proof before the finish counts. Body: { notes,
+  // link, imageCount, followups }. Returns { verdict, required, message,
+  // check_id }: 'pass' | 'followup' (one question to answer) | 'flag'. The
+  // verdict stays here; /complete redeems check_id for the same proof. When
+  // Bruno can't answer (not set up, an error, or this member's checks for
+  // the next few minutes are used up) it's 503 + aiUnavailable, and the
+  // client finishes the task for a manager to review instead.
+  const proofChecks = new ProofCheckStore();
+  const proofCheckLimiter = new RateLimiter();
+  setInterval(() => { proofChecks.sweep(); proofCheckLimiter.sweep(); }, 10 * 60 * 1000).unref();
+  app.post("/api/tasks/:id/verify-proof", async (req: any, res: any) => {
+    const unavailable = (why: string) => res.status(503).json({ error: why, aiUnavailable: true });
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) return res.status(404).json({ error: "Task not found" });
+      if (await boardTaskHidden(task, auth.memberId, auth.teamId)) return res.status(404).json({ error: "Task not found" });
+      const canManage = await hasPerm(auth, 'manage_tasks');
+      const taskAssignees = await getTaskAssigneeIds(Number(task.id));
+      const isAssignee = taskAssignees.includes(auth.memberId) || task.assigned_to === auth.memberId;
+      if (!canManage && !isAssignee && (taskAssignees.length > 0 || task.assigned_to)) {
+        return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
+      }
+      const proofReq = cleanProofRequirement(task.proof_requirement);
+      const { notes, link } = readProof(req.body);
+      const images = Math.max(0, Math.min(5, Math.floor(Number(req.body?.imageCount) || 0)));
+      if (link && !safeProofLink(link)) return res.status(400).json({ error: "Use a link that starts with https://" });
+      if (proofReq === "none") return res.json({ verdict: "pass", required: "note", message: "No proof needed for this task.", check_id: null });
+      const short = proofShortfall(proofReq, { notes, link, images });
+      if (short) return res.status(400).json({ error: short });
+      if (!isGeminiConfigured()) return unavailable("Bruno isn't set up on this server.");
+      // A budget per member, so a whole team on one school network doesn't share one.
+      if (proofCheckLimiter.hit(`proof:${auth.memberId}`, { max: 20, windowMs: 10 * MIN })) {
+        return unavailable("Bruno has checked a lot of proof from you just now.");
+      }
+      let raw: string;
+      try {
+        raw = await aiGenerate(PROOF_CHECK_SYSTEM, proofCheckPrompt(task, proofReq, { notes, link, images }, req.body?.followups), 300);
+      } catch (e: any) {
+        console.error("verify-proof AI error:", e?.message || e);
+        return unavailable("Bruno couldn't check this right now.");
+      }
+      const v = parseProofVerdict(raw);
+      const check_id = proofChecks.issue({ taskId: Number(task.id), memberId: auth.memberId, fingerprint: proofFingerprint(notes, link, images), ...v });
+      res.json({ ...v, check_id });
+    } catch (error) {
+      console.error("Error verifying proof:", error);
+      unavailable("Bruno couldn't check this right now.");
+    }
+  });
+
   // Mark a task done WITH proof: completion notes + optional screenshots.
   // If the task is unassigned, the completer becomes the assignee.
   app.post("/api/tasks/:id/complete", (req: any, res: any) => {
@@ -10846,28 +10901,53 @@ Rules:
       if (task.status === 'cancelled' && !canManage) {
         return res.status(403).json({ error: "Only team managers can cancel or restore tasks" });
       }
-      const notes = String(req.body?.notes || "").trim().slice(0, 2000);
+      const { notes, link: rawLink } = readProof(req.body);
+      const link = safeProofLink(rawLink);
+      if (rawLink && !link) return res.status(400).json({ error: "Use a link that starts with https://" });
+      const proofReq = cleanProofRequirement(task.proof_requirement);
+      const incoming = ((req.files || []) as any[]).filter((f) => f?.buffer?.length);
+      // What the proof must contain, checked before anything is stored.
+      const short = proofShortfall(proofReq, { notes, link: link || "", images: incoming.length });
+      if (short) return res.status(400).json({ error: short });
       // Proof images are persisted in the database so they survive restarts.
       const images: string[] = [];
-      for (const f of (req.files || []) as any[]) {
-        if (!f?.buffer?.length) continue;
+      for (const f of incoming) {
         const fid = await storeFile({
           teamId: auth.teamId, memberId: auth.memberId, kind: "proof",
           filename: f.originalname, mimeType: f.mimetype, buffer: f.buffer,
         });
         images.push(fileUrl(fid));
       }
-      // Proof is required: a description, screenshots, or both.
-      if (!notes && images.length === 0) {
-        return res.status(400).json({ error: "Add a description or at least one screenshot as proof of completion." });
-      }
+      // Bruno's verdict, only if it was for this member, task and exact proof.
+      const check = proofChecks.redeem(req.body?.check_id, Number(task.id), auth.memberId, proofFingerprint(notes, rawLink, incoming.length));
+      const aiNote = check?.message || null;
       // "Everyone completes it separately": an assignee finishes their own
       // part; the task is done once every current assignee has. A manager can
       // finish it for everyone with whole=1.
+      // Done isn't accepted yet: a manager reviews it (approve, or send it
+      // back). Bruno approves a finish he passed, unless it's code/digital
+      // work (a person signs that off). A manager finishing a task approves
+      // their own work, unless Bruno didn't pass it: then it waits for
+      // review like anyone's, with his note. (Managers could approve it
+      // themselves anyway, so a manager's finish with no check stays approved.)
+      const start = canManage
+        ? { status: check && check.verdict !== "pass" ? "pending" as const : "approved" as const, byBruno: false }
+        : initialReview(proofReq, check);
       const eachPart = task.completion_mode === "each" && isAssignee && !(canManage && String(req.body?.whole || "") === "1") && task.status !== "done";
+      // A part's history entry also notes whether it needed a manager's look
+      // (shown with it); the decision itself reads task_part_flags.
+      const partAt = new Date().toISOString();
+      const partEntry = () => JSON.stringify({ by: auth.memberId, at: partAt, notes: notes || null, link, ai_note: aiNote, images, part: true, review: null, needs_review: start.status === "pending" });
       if (eachPart) {
-        const at = new Date().toISOString();
-        await dbRun("INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", task.id, auth.memberId, at);
+        const at = partAt;
+        // The part and whether it needs a manager's look are written together,
+        // so anyone who sees this part done also sees its flag.
+        await dbBatch([
+          { sql: "INSERT OR REPLACE INTO task_assignee_done (task_id, member_id, completed_at) VALUES (?, ?, ?)", args: [task.id, auth.memberId, at] },
+          start.status === "pending"
+            ? { sql: "INSERT OR IGNORE INTO task_part_flags (task_id, member_id) VALUES (?, ?)", args: [task.id, auth.memberId] }
+            : { sql: "DELETE FROM task_part_flags WHERE task_id = ? AND member_id = ?", args: [task.id, auth.memberId] },
+        ]);
         const doneIds = ((await dbAll("SELECT member_id FROM task_assignee_done WHERE task_id = ?", task.id)) as any[]).map((r) => Number(r.member_id));
         const remaining = taskAssignees.filter((m) => !doneIds.includes(m));
         if (remaining.length) {
@@ -10875,7 +10955,7 @@ Rules:
           // recorded once, by the full completion below.
           await dbRun(
             "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
-            JSON.stringify({ by: auth.memberId, at, notes: notes || null, images, part: true, review: null }), task.id,
+            partEntry(), task.id,
           );
           const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
           await withAssignees([partial]);
@@ -10890,24 +10970,36 @@ Rules:
       const now = new Date().toISOString();
       // Unassigned task: the completer claims it.
       const assignee = task.assigned_to || auth.memberId;
-      // Done isn't accepted yet: a manager reviews it (approve, or send it
-      // back). A manager finishing a task approves their own work.
-      const review = canManage ? "approved" : "pending";
+      // The last part of an each-person task: approved only if no one's part
+      // (still assigned) needed a review.
+      let review = start.status;
+      if (eachPart && review === "approved" && taskAssignees.length) {
+        // Any current assignee's part this round (a done row) that's flagged.
+        const flagged = await dbGet(
+          `SELECT 1 AS x FROM task_part_flags f JOIN task_assignee_done d ON d.task_id = f.task_id AND d.member_id = f.member_id
+           WHERE f.task_id = ? AND f.member_id IN (${taskAssignees.map(() => "?").join(", ")})`,
+          task.id, ...taskAssignees,
+        );
+        if (flagged) review = "pending";
+      }
+      const reviewedBy = canManage && review === "approved" ? auth.memberId : null;
+      const reviewedAt = review === "approved" ? now : null;
+      const reviewEntry = review === "approved" ? { status: "approved", by: reviewedBy, at: now, note: null, ...(start.byBruno && !reviewedBy ? { bruno: true } : {}) } : null;
       const closed: any = await dbRun(
         // Each finish is kept in completion_history (appended in SQL, so two
         // finishes at once both land), with just this finish's photos.
         // The last part of an each-person task closes it only if everyone still
         // assigned has finished at this moment (someone added meanwhile keeps it open).
-        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ?, completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)) WHERE id = ?" + (eachPart ? ` AND ${EVERYONE_DONE_SQL}` : ""),
-        now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, review, canManage ? auth.memberId : null, canManage ? now : null,
-        JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, images, review: canManage ? { status: "approved", by: auth.memberId, at: now, note: null } : null }),
+        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, completion_link = ?, completion_ai_note = ?, assigned_to = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ?, completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)) WHERE id = ?" + (eachPart ? ` AND ${EVERYONE_DONE_SQL}` : ""),
+        now, auth.memberId, notes || null, JSON.stringify(allImages), link, aiNote, assignee, review, reviewedBy, reviewedAt,
+        JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, link, ai_note: aiNote, images, review: reviewEntry }),
         req.params.id
       );
       if (eachPart && !Number(closed?.changes ?? 0)) {
         // Someone was added meanwhile and hasn't finished: this was a part.
         await dbRun(
           "UPDATE tasks SET completion_history = json_insert(COALESCE(completion_history, '[]'), '$[#]', json(?)), status = CASE WHEN status = 'todo' THEN 'in-progress' ELSE status END WHERE id = ?",
-          JSON.stringify({ by: auth.memberId, at: now, notes: notes || null, images, part: true, review: null }), task.id,
+          partEntry(), task.id,
         );
         const partial = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
         await withAssignees([partial]);

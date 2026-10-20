@@ -608,25 +608,43 @@ export default function App() {
   // PATCH transitions to done, so nothing may bypass it.
   const [completingTask, setCompletingTask] = useState<any | null>(null);
   const [completionNotes, setCompletionNotes] = useState('');
+  const [completionLink, setCompletionLink] = useState('');
   const [completionFiles, setCompletionFiles] = useState<File[]>([]);
   const [completing, setCompleting] = useState(false);
+  // Bruno reads the proof first (POST /verify-proof): a pass counts at once,
+  // a thin one gets one question back (two at most), and anything else, or
+  // Bruno being unavailable, goes to a manager to review.
+  const [verifyingProof, setVerifyingProof] = useState(false);
+  const [proofQuestion, setProofQuestion] = useState<string | null>(null);
+  const proofFollowups = useRef<{ q: string; a: string }[]>([]);
+  // Bumped when the dialog opens or closes, so a check that answers late
+  // doesn't act on a dialog that's gone.
+  const completionGen = useRef(0);
+  const resetCompletion = () => {
+    completionGen.current += 1;
+    setCompletionNotes('');
+    setCompletionLink('');
+    setCompletionFiles([]);
+    setProofQuestion(null);
+    proofFollowups.current = [];
+  };
   const openCompleteDialog = (task: any) => {
     if (!task || task.status === 'done') return;
     setCompletingTask(task);
-    setCompletionNotes('');
-    setCompletionFiles([]);
+    resetCompletion();
   };
   const closeCompleteDialog = () => {
     setCompletingTask(null);
-    setCompletionNotes('');
-    setCompletionFiles([]);
+    resetCompletion();
   };
-  const handleCompleteTask = async () => {
-    if (!completingTask || completing) return;
+  const submitCompletion = async (checkId: string | null) => {
+    if (!completingTask) return;
     setCompleting(true);
     try {
       const form = new FormData();
       form.append('notes', completionNotes.trim());
+      form.append('link', completionLink.trim());
+      if (checkId) form.append('check_id', checkId);
       for (const f of completionFiles.slice(0, 5)) form.append('images', f);
       // "Finish for everyone" on a task each assignee completes separately.
       if (completingTask.__whole) form.append('whole', '1');
@@ -642,13 +660,58 @@ export default function App() {
       } else {
         refresh.tasks();
       }
-      notify(d.partial ? `Your part is done (${d.done} of ${d.of}).` : 'Task marked done.', 'success');
+      notify(d.partial ? `Your part is done (${d.done} of ${d.of}).`
+        : d.task?.review_status === 'pending' ? 'Marked done. A manager will review it.' : 'Task marked done.', 'success');
       closeCompleteDialog();
     } catch (e: any) {
       notify(e?.message || 'Could not complete task.', 'error');
     } finally {
       setCompleting(false);
     }
+  };
+  const handleCompleteTask = async () => {
+    if (!completingTask || completing || verifyingProof) return;
+    const notes = completionNotes.trim();
+    const link = completionLink.trim();
+    if (completingTask.proof_requirement !== 'none') {
+      // Obvious junk never reaches Bruno.
+      if (notes.length < 2 && !link && completionFiles.length === 0) {
+        setProofQuestion('That looks a bit thin. What did you actually do? Add a sentence or two.');
+        return;
+      }
+    }
+    // Answering Bruno's question: he sees it with the next check.
+    if (proofQuestion) proofFollowups.current.push({ q: proofQuestion, a: notes });
+    const gen = completionGen.current;
+    setVerifyingProof(true);
+    let checkId: string | null = null;
+    try {
+      const res = await apiFetch(`/api/tasks/${completingTask.id}/verify-proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes, link, imageCount: Math.min(completionFiles.length, 5), followups: proofFollowups.current }),
+      });
+      const v: any = await res.json().catch(() => ({}));
+      if (gen !== completionGen.current) return;
+      if (!res.ok && !v.aiUnavailable) {
+        notify(v.error || 'Could not check the proof.', 'error');
+        return;
+      }
+      if (v.verdict === 'followup' && proofFollowups.current.length < 2) {
+        setProofQuestion(v.message || 'Can you say a bit more about what you actually did?');
+        return;
+      }
+      // A pass, a flag, the last follow-up, or Bruno unavailable: finish it.
+      // The server decides the review from the check it issued.
+      checkId = typeof v.check_id === 'string' ? v.check_id : null;
+    } catch {
+      if (gen !== completionGen.current) return;
+      // Couldn't reach Bruno: a manager reviews it instead.
+    } finally {
+      setVerifyingProof(false);
+    }
+    setProofQuestion(null);
+    await submitCompletion(checkId);
   };
   const [budget, setBudget] = useState<BudgetItem[]>([]);
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
@@ -2532,9 +2595,13 @@ export default function App() {
           task={completingTask}
           notes={completionNotes}
           onNotesChange={setCompletionNotes}
+          link={completionLink}
+          onLinkChange={setCompletionLink}
           files={completionFiles}
           onFilesChange={setCompletionFiles}
           completing={completing}
+          verifying={verifyingProof}
+          aiQuestion={proofQuestion}
           onSubmit={handleCompleteTask}
           onClose={closeCompleteDialog}
         />

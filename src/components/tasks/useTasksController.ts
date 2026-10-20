@@ -14,6 +14,15 @@ import { teamToday } from '../../utils/dueShortcuts';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 import { recordedCompletions } from '../../utils/taskCompletions';
 
+/** What finishing a task takes, for the editor's menu (server/taskProof.ts). */
+export const PROOF_REQUIREMENTS = [
+  { id: 'auto', label: 'Bruno decides' },
+  { id: 'photo', label: 'A photo' },
+  { id: 'link', label: 'A link (code, CAD, docs)' },
+  { id: 'note', label: 'A written note' },
+  { id: 'none', label: 'No proof needed' },
+] as const;
+
 export interface TaskForm {
   team_id: any;
   title: string;
@@ -33,6 +42,8 @@ export interface TaskForm {
   start_date?: string;
   /** 'each' = every assignee completes it separately; '' = one shared deliverable. */
   completion_mode?: string;
+  /** Proof finishing it takes: auto (Bruno decides) | photo | link | note | none. */
+  proof_requirement?: string;
   /** Robot subsystems, FTC award ids and labels (src/types/taskTags.ts). */
   subsystems?: string[];
   awards?: string[];
@@ -88,7 +99,7 @@ export const TASK_COLUMNS = [
 /** Cancelled tasks are kept but hidden; the board shows this column on request. */
 export const CANCELLED_COLUMN = { id: 'cancelled', label: 'Cancelled' } as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [], completion_mode: '' };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '', start_date: '', subsystems: [], awards: [], labels: [], completion_mode: '', proof_requirement: 'auto' };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -145,6 +156,7 @@ export function editPayload(f: any, isBoard: boolean): Record<string, unknown> {
     awards: f.awards ?? [],
     labels: f.labels ?? [],
     completion_mode: f.completion_mode === 'each' ? 'each' : null,
+    proof_requirement: f.proof_requirement || 'auto',
   };
 }
 
@@ -241,6 +253,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       awards: parseTagList(task.awards),
       labels: parseTagList(task.labels),
       completion_mode: task.completion_mode === 'each' ? 'each' : '',
+      proof_requirement: task.proof_requirement || 'auto',
     };
     setNewTask(form);
     // What the task was when opened: edits save only the fields that changed from it,
@@ -548,6 +561,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
           recurrence: task.recurrence ? readRecurrence(task.recurrence) : null, is_board: task.is_board ? 1 : 0,
           start_date: task.start_date || null, subsystems: parseTagList(task.subsystems), awards: parseTagList(task.awards), labels: parseTagList(task.labels),
           completion_mode: task.completion_mode === 'each' ? 'each' : null,
+          proof_requirement: task.proof_requirement || 'auto',
         }),
       });
       if (!res.ok) { notify('Could not duplicate the task — try again.', 'error'); return null; }

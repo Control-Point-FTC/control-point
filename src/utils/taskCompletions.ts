@@ -7,15 +7,23 @@ export interface CompletionReview {
   by: number | null;
   at: string | null;
   note: string | null;
+  /** Approved by Bruno's proof check rather than a person. */
+  bruno?: boolean;
 }
 
 export interface TaskCompletion {
   by: number | null;
   at: string | null;
   notes: string | null;
+  /** A link to the work (http/https only). */
+  link: string | null;
+  /** What Bruno said when he checked the proof. */
+  aiNote: string | null;
   images: string[];
   review: CompletionReview | null;
 }
+
+const httpLink = (v: unknown): string | null => (typeof v === 'string' && /^https?:\/\/\S+$/i.test(v) ? v : null);
 
 const urls = (v: unknown): string[] =>
   // Same-origin paths only (/api/files/…, legacy /uploads/…): not "//host"
@@ -29,7 +37,7 @@ function parse(raw: unknown): unknown {
 
 function readReview(v: any): CompletionReview | null {
   if (!v || (v.status !== 'approved' && v.status !== 'changes_requested')) return null;
-  return { status: v.status, by: Number(v.by) || null, at: v.at ? String(v.at) : null, note: v.note ? String(v.note) : null };
+  return { status: v.status, by: Number(v.by) || null, at: v.at ? String(v.at) : null, note: v.note ? String(v.note) : null, ...(v.bruno ? { bruno: true } : {}) };
 }
 
 /** How many completions the server has recorded for the task (sent with a
@@ -50,6 +58,8 @@ export function taskCompletions(task: any): TaskCompletion[] {
         by: Number(e.by) || null,
         at: e.at ? String(e.at) : null,
         notes: e.notes ? String(e.notes) : null,
+        link: httpLink(e.link),
+        aiNote: e.ai_note ? String(e.ai_note) : null,
         images: urls(e.images),
         review: readReview(e.review),
       }))
@@ -57,11 +67,14 @@ export function taskCompletions(task: any): TaskCompletion[] {
   }
   const notes = task.completion_notes ? String(task.completion_notes) : null;
   const images = urls(parse(task.completion_images));
-  if (!notes && !images.length) return [];
+  const link = httpLink(task.completion_link);
+  if (!notes && !images.length && !link) return [];
   return [{
     by: Number(task.completed_by) || null,
     at: task.completed_at ? String(task.completed_at) : null,
     notes,
+    link,
+    aiNote: task.completion_ai_note ? String(task.completion_ai_note) : null,
     images,
     review: readReview({ status: task.review_status, by: task.reviewed_by, at: task.reviewed_at, note: task.review_note }),
   }];
