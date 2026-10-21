@@ -357,8 +357,9 @@ function CallBadge({ pre, played }: { pre: number | null; played: { red: number;
     : <Badge className="border-amber-500/30 bg-amber-500/15 text-amber-500" variant="outline" title={`Before the match the winner had ${pct(1 - c.favP)}`}>Upset · {pct(1 - c.favP)}</Badge>;
 }
 
-/** "±14": half-width of the engine's stated score range (the larger side when the range is cut off at 0). */
-const plusMinus = (mean: number, band: { lo: number; hi: number }) => Math.max(0, Math.round(Math.max(band.hi - mean, mean - band.lo)));
+/** "±14": from the displayed (rounded) score to the range's whole-point bounds, the larger side, so
+ *  "score ± x" always reaches both ends (a range cut off at 0 is lopsided). */
+const plusMinus = (mean: number, band: { lo: number; hi: number }) => { const m = Math.round(mean); return Math.max(0, band.hi - m, m - band.lo); };
 
 function Alliance({ color, teams, myTeam, score, mean, band, className }: { color: 'red' | 'blue'; teams: number[]; myTeam: number | null; score: number | null; mean: number | null; band?: { lo: number; hi: number; level: number } | null; className?: string }) {
   const rangeTitle = band ? `${Math.round(band.level * 100)}% range ${band.lo}–${band.hi}: about ${Math.round(band.level * 10)} in 10 real scores land inside` : undefined;
