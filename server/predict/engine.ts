@@ -206,6 +206,8 @@ export class PredictEngine extends Forecaster {
       played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
       // Their recorded bonus RPs: the device's live forecast keeps them as facts, like the server's.
       bonus: Object.fromEntries(codes.map((c) => [c, this.storedBonus(season, c)])),
+      // The bonus-RP model the server's forecasts use, so the device's bonus odds are the same.
+      bonusModel: this.bonusModel(season),
     };
   }
 }
