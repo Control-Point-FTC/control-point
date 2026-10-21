@@ -34,6 +34,24 @@ describe('reliability client', () => {
     expect(urls).toHaveLength(3);
   });
 
+  it('drops expired rows and the field index when their refresh fails (never serves an old number as current)', async () => {
+    let t = 0, up = true;
+    const fetchImpl = (async (url: string) => {
+      if (!up) throw new Error('down');
+      const teams = new URL(url).searchParams.get('teams')!.split(',').map(Number);
+      return new Response(JSON.stringify({ season: 2025, fieldIndex: 75, teams: teams.map((n) => row(n, 70)) }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const c = createReliabilityClient({ origin: 'https://scout.test', fetchImpl, now: () => t });
+    expect((await c.get(2025, [1])).teams).toHaveLength(1);
+    up = false;
+    t = CACHE_MS - 1; // still fresh: served from the cache, Scout not asked
+    expect(await c.get(2025, [1])).toMatchObject({ fieldIndex: 75, teams: [{ team: 1 }] });
+    t = CACHE_MS; // expired, and the refresh fails
+    expect(await c.get(2025, [1])).toEqual({ season: 2025, fieldIndex: null, teams: [] });
+    up = true;
+    expect((await c.get(2025, [1])).teams).toHaveLength(1);
+  });
+
   it('gives no numbers, never an error, when Scout fails', async () => {
     const down = createReliabilityClient({ origin: 'https://scout.test', fetchImpl: (async () => { throw new Error('down'); }) as unknown as typeof fetch });
     expect(await down.get(2025, [1])).toEqual({ season: 2025, fieldIndex: null, teams: [] });

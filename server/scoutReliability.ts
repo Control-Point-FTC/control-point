@@ -21,8 +21,10 @@ export interface TeamReliability {
 export interface ReliabilityAnswer { season: number; fieldIndex: number | null; teams: TeamReliability[] }
 
 export const CACHE_MS = 10 * 60_000;
+/** Teams per request (Scout's limit too). */
+export const MAX_TEAMS_PER_REQUEST = 100;
 const TIMEOUT_MS = 4000;
-const MAX_TEAMS = 100;
+const MAX_TEAMS = MAX_TEAMS_PER_REQUEST;
 
 const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
 
@@ -68,9 +70,13 @@ export function createReliabilityClient(o: { origin: string; fetchImpl?: typeof 
         } catch { /* Scout unreachable: no numbers this time, asked again next time */ }
       }
       if (cache.size > 20_000) cache.clear();
+      // Only what's still fresh: a row (or field index) past CACHE_MS whose refresh just failed is no number,
+      // never an old one passed off as current.
+      const fresh = (at: number | undefined) => at != null && t - at < CACHE_MS;
+      const f = field.get(season);
       return {
-        season, fieldIndex: field.get(season)?.value ?? null,
-        teams: want.map((x) => cache.get(`${season}:${x}`)?.row).filter((r): r is TeamReliability => !!r),
+        season, fieldIndex: fresh(f?.at) ? f!.value : null,
+        teams: want.map((x) => cache.get(`${season}:${x}`)).filter((h) => h && fresh(h.at)).map((h) => h!.row).filter((r): r is TeamReliability => !!r),
       };
     },
   };
