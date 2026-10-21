@@ -265,4 +265,53 @@ describe("Prediction Engine 2.0 in Control Point", () => {
       expect(recorded.call(engine, 2025, "M1", "qual:0:1", "blue")).toBeNull();
     } finally { delete hist.M1.matches[0].red.bonusRp; }
   });
+
+  it("shows earlier matches between the robots with upcoming calls (engine 2.2), without moving the odds", () => {
+    const fc = engine.forecast(liveEvent({ played: 3 }), null, 200)!;
+    const upcoming = fc.matches.filter((m) => !m.played);
+    const withHistory = upcoming.filter((m) => m.history);
+    expect(withHistory.length).toBeGreaterThan(0);
+    for (const m of withHistory) {
+      const h = m.history!;
+      expect(h.shift).toBe(0); // reasons only in 2.2
+      expect(h.label).toMatch(h.kind === "together" ? /have played \d+ matches together/ : /earlier meetings?$/);
+      const lineup = [...m.red, ...m.blue];
+      expect(lineup).toContain(h.teams[0]);
+      expect(lineup).toContain(h.teams[1]);
+    }
+    // Played matches carry no history, and an older season reads no later pairs.
+    expect(fc.matches.filter((m) => m.played).every((m) => m.history == null)).toBe(true);
+    expect((engine as unknown as { partnerships(s: number): unknown }).partnerships(2024)).toBeNull();
+    // The same forecast without the pair table: identical odds and expected scores.
+    const without = Object.assign(Object.create(Object.getPrototypeOf(engine)), engine, { partnerships: () => null }) as PredictEngine;
+    const plain = without.forecast(liveEvent({ played: 3 }), null, 200)!;
+    expect(plain.matches.every((m) => m.history === undefined)).toBe(true);
+    expect(plain.matches.map((m) => [m.pRedWin, m.redMean, m.blueMean])).toEqual(fc.matches.map((m) => [m.pRedWin, m.redMean, m.blueMean]));
+    expect(plain.teams).toEqual(fc.teams);
+  });
+
+  it("counts the event's fresh results in the history of a later match (a rematch shows its record as of now)", () => {
+    const ev = liveEvent({ played: 6 });
+    const table = (engine as unknown as { partnerships(s: number): { together(a: number, b: number): { n: number } | undefined } | null }).partnerships(2025)!;
+    const fc = engine.forecast(ev, null, 200)!;
+    const together = fc.matches.filter((m) => !m.played && m.history?.kind === "together");
+    expect(together.length).toBeGreaterThan(0);
+    let sawFresh = false;
+    for (const m of together) {
+      const [a, b] = m.history!.teams;
+      const fresh = ev.matches.filter((x) => x.played && [x.red, x.blue].some((s) => s.teams.some((t) => t.number === a) && s.teams.some((t) => t.number === b))).length;
+      expect(m.history!.matches).toBe((table.together(a, b)?.n ?? 0) + fresh);
+      sawFresh ||= fresh > 0;
+    }
+    expect(sawFresh).toBe(true); // at least one pair played together earlier at this event
+  });
+
+  it("names the event in a partnership fact when the stored file has its name", async () => {
+    const named = { ...fakeStore, parseEventFileNamed: (path: string) => ({ rec: hist[path], name: `League Meet ${path}` }) } as unknown as PredictStore;
+    const e = new PredictEngine(named, [2025]);
+    await e.rebuild();
+    const together = e.forecast(liveEvent({ played: 0 }), null, 200)!.matches.map((m) => m.history).filter((h) => h?.kind === "together");
+    expect(together.length).toBeGreaterThan(0);
+    for (const h of together) expect(h!.label).toMatch(/best [\d.]+ at League Meet M[12]$/);
+  });
 });

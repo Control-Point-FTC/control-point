@@ -100,6 +100,30 @@ describe("offline forecast", () => {
   });
 });
 
+describe("offline bonus RP odds (engine 2.3)", () => {
+  it("the pack carries the server's selected bonus model, and the device's odds equal the server's", () => {
+    expect(pack.predict!.bonusModel).toEqual(engine.bonusModel(2025));
+    const ev = liveEvent(0);
+    const a = engine.forecast(ev, null, 100)!, b = offlineForecaster(pack)!.forecast(ev, null, 100)!;
+    expect(a.matches[0].bonus).toBeTruthy();
+    expect(b.matches.map((m) => m.bonus)).toEqual(a.matches.map((m) => m.bonus));
+  });
+
+  it("uses the pack's model, not the engine's shipped fit (a season fit the server chose)", () => {
+    const fit = { model: { movement: [3, 0] as [number, number], goal: [-3, 0] as [number, number], pattern: [0, 0] as [number, number] }, source: "season" as const, samples: 2000 };
+    const off = new OfflineForecaster({ ...pack, predict: { ...pack.predict!, bonusModel: fit } } as never);
+    const b = off.forecast(liveEvent(0), null, 100)!.matches[0].bonus!;
+    expect(b.red[0]).toBeCloseTo(1 / (1 + Math.exp(-3)), 3);
+    expect(b.red[1]).toBeCloseTo(1 / (1 + Math.exp(3)), 3);
+  });
+
+  it("a pack from before engine 2.3 (no bonus model) shows no bonus odds rather than different ones", () => {
+    const { bonusModel: _gone, ...old } = pack.predict!;
+    const off = new OfflineForecaster({ ...pack, predict: old } as never);
+    expect(off.forecast(liveEvent(0), null, 100)!.matches.every((m) => (m.bonus ?? null) === null)).toBe(true);
+  });
+});
+
 describe("a rebuild in progress", () => {
   it("never shows a mix of new ratings and old award history", async () => {
     let gen = 1;

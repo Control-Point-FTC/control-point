@@ -2,7 +2,7 @@
 // scenarios), Field (every team, searchable) and Matches (calls + results).
 import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Crown, Gauge, Search, Swords, Trophy, Users } from 'lucide-react';
+import { Crown, Gauge, Handshake, Search, Swords, Trophy, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Badge, Input, Label, Skeleton, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
@@ -13,6 +13,7 @@ import { useReliability } from '../../../services/reliabilityApi';
 import { EmptyState, Stat } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BonusOdds } from './BonusOdds';
 
 type FcProps = { fc: ForecastView; myTeam: number | null };
 const ease = [0.2, 0.8, 0.2, 1] as const;
@@ -317,14 +318,14 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
         />
       ) : (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
-          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} reasons={reasonsOf(m)} />)}
+          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} season={fc.season} reasons={reasonsOf(m)} />)}
         </Stagger>
       )}
     </div>
   );
 }
 
-function MatchRow({ m, myTeam, reasons = [] }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null; reasons?: string[] }) {
+function MatchRow({ m, myTeam, season, reasons = [] }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null; season: number; reasons?: string[] }) {
   const p = m.pRedWin;
   const favRed = p != null && p >= 0.5;
   const won = m.played ? (m.played.red === m.played.blue ? 'Tie' : m.played.red > m.played.blue ? 'Red won' : 'Blue won') : null;
@@ -350,12 +351,28 @@ function MatchRow({ m, myTeam, reasons = [] }: { m: NonNullable<ForecastView['ma
           <span className={cn('font-medium', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</span>
         ) : <span className="text-muted-foreground" title="Which two robots will play isn't known yet">No prediction</span>}
       </div>
+      {m.bonus && <BonusOdds season={season} bonus={m.bonus} className="col-span-2 sm:col-span-5" />}
+      {!m.played && m.history ? <PairHistory history={m.history} /> : null}
       {reasons.length > 0 && (
         <ul className="col-span-2 space-y-0.5 text-xs text-amber-600 dark:text-amber-400 sm:col-span-4 sm:col-start-2" data-testid="match-reasons">
           {reasons.map((r) => <li key={r}>{r}</li>)}
         </ul>
       )}
     </StaggerItem>
+  );
+}
+
+/**
+ * Earlier matches between these robots (engine 2.2 partnership memory): a real result shown as
+ * a reason. It doesn't move the odds (the engine's held-out test found no gain from blending it).
+ */
+function PairHistory({ history }: { history: NonNullable<NonNullable<ForecastView['matches']>[number]['history']> }) {
+  const tone = history.kind === 'against' ? 'bg-muted text-muted-foreground' : history.side === 'A' ? 'bg-red-500/15 text-red-500' : 'bg-blue-500/15 text-blue-500';
+  return (
+    <p className="col-start-2 flex items-start gap-1.5 text-xs text-muted-foreground sm:col-end-6">
+      <span className={cn('mt-px flex size-4 shrink-0 items-center justify-center rounded-full', tone)} aria-hidden="true"><Handshake className="size-2.5" /></span>
+      <span><span className="sr-only">Earlier matches: </span>{history.label}</span>
+    </p>
   );
 }
 

@@ -14,7 +14,7 @@ import type { PredictStore } from "./store.js";
 import type { EventRecord, MatchRecord } from "./types.js";
 import { Forecaster, normType, type AdvancementRecord, type PredictModel } from "./forecast.js";
 import type { OfflinePredict } from "../../src/types/offlinePack.js";
-import { FITTED_MODEL, type BonusFlags } from "@control-scout/predict-engine";
+import { FITTED_MODEL, PartnershipBook, PartnershipTable, bonusSamples, seasonBonusModel, type BonusFlags, type BonusModelSource, type PartnershipData } from "@control-scout/predict-engine";
 
 export * from "./forecast.js";
 
@@ -23,6 +23,19 @@ export * from "./forecast.js";
 const M: PredictModel = FITTED_MODEL;
 
 const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
+
+/** A pair table cut down to pairs whose both teams are in `teams` (events keep only those still referenced). */
+function packPairs(d: PartnershipData, teams: Set<number>): PartnershipData {
+  const together = d.together.filter((r) => teams.has(r[0]) && teams.has(r[1]));
+  const used = [...new Set(together.map((r) => r[11]))].sort((a, b) => a - b);
+  const index = new Map(used.map((old, i) => [old, i]));
+  return {
+    ...d,
+    together: together.map((r) => [...r.slice(0, 11), index.get(r[11])!]),
+    against: d.against.filter((r) => teams.has(r[0]) && teams.has(r[1])),
+    events: used.map((i) => d.events[i]),
+  };
+}
 
 export class PredictEngine extends Forecaster {
   protected readonly model = M;
@@ -36,8 +49,13 @@ export class PredictEngine extends Forecaster {
   private regionByCode = new Map<string, string>();
   private regions = new Set<string>();
   /** Parsed events by season and code, re-parsed only when the file changes. */
-  private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null }>>();
+  private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null; name: string | null }>>();
   readyAt: string | null = null;
+  /** Pair history (engine 2.2 partnership memory) through the newest season: earlier matches the
+   *  robots played together or against each other, shown as a reason with a prediction. */
+  private pairTable: PartnershipTable | null = null;
+  /** The same table as data, for offline packs (filtered to a pack's teams). */
+  private pairData: PartnershipData | null = null;
 
   constructor(private store: PredictStore, readonly seasons: number[]) { super(); }
 
@@ -71,6 +89,7 @@ export class PredictEngine extends Forecaster {
     const books = new Map<number, RatingBook>();
     const events = new Map<number, EventRecord[]>();
     const advancement = new Map<number, AdvancementRecord[]>();
+    const pairs = new PartnershipBook(M.rating);
     for (const s of [...this.seasons].sort((a, b) => a - b)) {
       if (!this.store.hasSeason(s)) continue;
       for (const meta of Object.values(this.store.index(s))) if (meta.region) { this.regionByCode.set(meta.code, meta.region); this.regions.add(meta.region); }
@@ -81,7 +100,11 @@ export class PredictEngine extends Forecaster {
         const f = files[i];
         seen.add(f.code);
         const hit = cache.get(f.code);
-        if (!hit || hit.mtimeMs !== f.mtimeMs) cache.set(f.code, { mtimeMs: f.mtimeMs, rec: this.store.parseEventFile(f.path, s) });
+        if (!hit || hit.mtimeMs !== f.mtimeMs) {
+          // Event names word the partnership facts ("best 131 at Arkansas Championship").
+          const parsed = this.store.parseEventFileNamed ? this.store.parseEventFileNamed(f.path, s) : { rec: this.store.parseEventFile(f.path, s), name: null };
+          cache.set(f.code, { mtimeMs: f.mtimeMs, ...parsed });
+        }
         if (i % 25 === 24) await yieldLoop();
       }
       for (const code of [...cache.keys()]) if (!seen.has(code)) cache.delete(code);
@@ -91,16 +114,27 @@ export class PredictEngine extends Forecaster {
       advancement.set(s, this.store.loadAdvancement(s));
       for (const e of evs) for (const a of e.awards) records.push({ season: s, team: a.team, time: e.startTime, type: a.type, placement: a.placement });
       book.startSeason(s);
-      for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) book.update(m);
+      for (const [code, x] of cache) if (x.name) pairs.nameEvent(s, code, x.name);
+      for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) { pairs.observe(m); book.update(m); }
       books.set(s, book.clone());
       await yieldLoop();
     }
+    // Pairs of teams active in the newest two seasons only (the ones a call can be about).
+    const newest = Math.max(...this.seasons);
+    const active = new Set([...(books.get(newest)?.ratings.keys() ?? []), ...(books.get(newest - 1)?.ratings.keys() ?? [])]);
+    // Weak pairs (under the shown counts) stay: an event's fresh results fold into this table (PartnershipOverlay), on
+    // the server and in offline packs, and must count a pair's one earlier match.
+    const pairData: PartnershipData | null = pairs.season != null ? { ...pairs.toData({ teams: active, keepWeak: true }), season: newest } : null;
+    const pairTable = PartnershipTable.fromData(pairData);
     // One synchronous swap (no await in between).
+    this.pairTable = pairTable;
+    this.pairData = pairData;
     this.books = books;
     this.events = events;
     this.stored = new Map([...events.values()].flat().flatMap((e) => e.matches.map((m) => [`${m.season}|${m.eventCode}|${m.level}:${m.series}:${m.number}`, m] as [string, MatchRecord])));
     this.advancement = advancement;
     this.awardHistory = indexAwards(records);
+    this.bonusModels = new Map();
     // Ready only once there are real ratings (a fresh install has no data yet).
     if (books.size && [...events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
   }
@@ -114,6 +148,20 @@ export class PredictEngine extends Forecaster {
     return this.stored.get(`${season}|${code}|${key}`)?.[side].bonusRp ?? null;
   }
 
+  private bonusModels = new Map<number, BonusModelSource | null>();
+  /**
+   * The season's bonus-RP model, exactly as Control Scout serves it: fitted to
+   * the season's latest stored qualification results (engine seasonBonusModel),
+   * else the shipped fit. Once per rebuild.
+   */
+  bonusModel(season: number): BonusModelSource | null {
+    if (!this.bonusModels.has(season)) {
+      const matches = () => (this.events.get(season) ?? []).flatMap((e) => e.matches).sort((x, y) => x.time - y.time);
+      this.bonusModels.set(season, seasonBonusModel(M.bonus, season, () => bonusSamples(matches())));
+    }
+    return this.bonusModels.get(season)!;
+  }
+
   /** Recorded bonus RPs of an event's stored matches, by match key ([red, blue]). */
   private storedBonus(season: number, code: string): Record<string, [BonusFlags | null, BonusFlags | null]> {
     const out: Record<string, [BonusFlags | null, BonusFlags | null]> = {};
@@ -121,6 +169,11 @@ export class PredictEngine extends Forecaster {
       if (m.red.bonusRp || m.blue.bonusRp) out[`${m.level}:${m.series}:${m.number}`] = [m.red.bonusRp ?? null, m.blue.bonusRp ?? null];
     }
     return out;
+  }
+
+  /** Pair history, only for the season it was built through (an older season's call mustn't read later pairs). */
+  protected partnerships(season: number): PartnershipTable | null {
+    return this.pairTable && this.pairTable.season === season ? this.pairTable : null;
   }
 
   /** Ratings book for a season, with the clock set to now. */
@@ -191,6 +244,10 @@ export class PredictEngine extends Forecaster {
       played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
       // Their recorded bonus RPs: the device's live forecast keeps them as facts, like the server's.
       bonus: Object.fromEntries(codes.map((c) => [c, this.storedBonus(season, c)])),
+      // The bonus-RP model the server's forecasts use, so the device's bonus odds are the same.
+      bonusModel: this.bonusModel(season),
+      // Pair history between the pack's teams, so offline calls carry the same reasons (engine 2.4).
+      ...(this.pairData && this.pairData.season === season ? { partnerships: packPairs(this.pairData, teams) } : {}),
     };
   }
 }
