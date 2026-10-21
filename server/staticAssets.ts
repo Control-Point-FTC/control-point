@@ -114,6 +114,12 @@ export function serveDist(app: express.Express, distDir: string, opts: { csp?: {
   app.get("/index.html", sendIndex);
   // Browsers and crawlers ask for /favicon.ico by name; the icon is a PNG.
   app.get("/favicon.ico", (_req, res) => res.redirect(301, "/favicon.png"));
+  // iOS asks for its home-screen icon by these names too (older versions, and pages it
+  // reaches without the <link> tag). Without them it gets a 404 page and makes its own
+  // icon, which then sticks: a home-screen icon is never refreshed once added.
+  for (const name of ["/apple-touch-icon-precomposed.png", "/apple-touch-icon-180x180.png", "/apple-touch-icon-180x180-precomposed.png"]) {
+    app.get(name, (_req, res, next) => res.sendFile(path.join(root, "apple-touch-icon.png"), { headers: { "Cache-Control": cacheControlFor("/apple-touch-icon.png") } }, err => { if (err) next(); }));
+  }
   app.use(express.static(root, {
     index: false,
     setHeaders: (res, filePath) => {
