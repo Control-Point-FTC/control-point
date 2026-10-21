@@ -5,6 +5,7 @@ import { Forecaster, normType, type AdvancementRecord, type PredictModel } from 
 import { RatingBook } from '../../server/predict/rating';
 import type { AwardRecord } from '../../server/predict/awards';
 import type { OfflinePack, OfflinePredict } from '../types/offlinePack';
+import type { BonusModelSource } from '@control-scout/predict-engine';
 
 /** Fewer runs than the server (2000): the device may be a phone. */
 export const OFFLINE_RUNS = 1000;
@@ -43,6 +44,14 @@ export class OfflineForecaster extends Forecaster {
   protected recordedBonus(season: number, code: string, key: string, side: 'red' | 'blue') {
     if (season !== this.pack.season) return null;
     return this.pack.predict.bonus?.[code]?.[key]?.[side === 'red' ? 0 : 1] ?? null;
+  }
+  /**
+   * The bonus-RP model the server selected when it built the pack. Packs from
+   * before engine 2.3 don't carry one: no bonus odds, rather than the engine's
+   * shipped fit (which the server no longer uses).
+   */
+  bonusModel(season: number): BonusModelSource | null {
+    return season === this.pack.season ? this.pack.predict.bonusModel ?? null : null;
   }
   protected awardSlots(_season: number, type: string | null) {
     return this.pack.predict.awardSlots[normType(type)] ?? [{ type: 'Inspire', placement: 1 }, { type: 'Inspire', placement: 2 }];

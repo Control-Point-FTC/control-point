@@ -14,7 +14,7 @@ import type { PredictStore } from "./store.js";
 import type { EventRecord, MatchRecord } from "./types.js";
 import { Forecaster, normType, type AdvancementRecord, type PredictModel } from "./forecast.js";
 import type { OfflinePredict } from "../../src/types/offlinePack.js";
-import { FITTED_MODEL, type BonusFlags } from "@control-scout/predict-engine";
+import { FITTED_MODEL, bonusSamples, seasonBonusModel, type BonusFlags, type BonusModelSource } from "@control-scout/predict-engine";
 
 export * from "./forecast.js";
 
@@ -101,6 +101,7 @@ export class PredictEngine extends Forecaster {
     this.stored = new Map([...events.values()].flat().flatMap((e) => e.matches.map((m) => [`${m.season}|${m.eventCode}|${m.level}:${m.series}:${m.number}`, m] as [string, MatchRecord])));
     this.advancement = advancement;
     this.awardHistory = indexAwards(records);
+    this.bonusModels = new Map();
     // Ready only once there are real ratings (a fresh install has no data yet).
     if (books.size && [...events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
   }
@@ -112,6 +113,20 @@ export class PredictEngine extends Forecaster {
    */
   protected recordedBonus(season: number, code: string, key: string, side: "red" | "blue"): BonusFlags | null {
     return this.stored.get(`${season}|${code}|${key}`)?.[side].bonusRp ?? null;
+  }
+
+  private bonusModels = new Map<number, BonusModelSource | null>();
+  /**
+   * The season's bonus-RP model, exactly as Control Scout serves it: fitted to
+   * the season's latest stored qualification results (engine seasonBonusModel),
+   * else the shipped fit. Once per rebuild.
+   */
+  bonusModel(season: number): BonusModelSource | null {
+    if (!this.bonusModels.has(season)) {
+      const matches = () => (this.events.get(season) ?? []).flatMap((e) => e.matches).sort((x, y) => x.time - y.time);
+      this.bonusModels.set(season, seasonBonusModel(M.bonus, season, () => bonusSamples(matches())));
+    }
+    return this.bonusModels.get(season)!;
   }
 
   /** Recorded bonus RPs of an event's stored matches, by match key ([red, blue]). */
@@ -191,6 +206,8 @@ export class PredictEngine extends Forecaster {
       played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
       // Their recorded bonus RPs: the device's live forecast keeps them as facts, like the server's.
       bonus: Object.fromEntries(codes.map((c) => [c, this.storedBonus(season, c)])),
+      // The bonus-RP model the server's forecasts use, so the device's bonus odds are the same.
+      bonusModel: this.bonusModel(season),
     };
   }
 }

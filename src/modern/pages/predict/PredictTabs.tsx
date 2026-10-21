@@ -11,6 +11,7 @@ import type { ForecastView } from '../../../services/predictApi';
 import { EmptyState, Stat } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BonusOdds } from './BonusOdds';
 
 type FcProps = { fc: ForecastView; myTeam: number | null };
 const ease = [0.2, 0.8, 0.2, 1] as const;
@@ -311,14 +312,14 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
         />
       ) : (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
-          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} />)}
+          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} season={fc.season} />)}
         </Stagger>
       )}
     </div>
   );
 }
 
-function MatchRow({ m, myTeam }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null }) {
+function MatchRow({ m, myTeam, season }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null; season: number }) {
   const p = m.pRedWin;
   const favRed = p != null && p >= 0.5;
   const won = m.played ? (m.played.red === m.played.blue ? 'Tie' : m.played.red > m.played.blue ? 'Red won' : 'Blue won') : null;
@@ -344,6 +345,7 @@ function MatchRow({ m, myTeam }: { m: NonNullable<ForecastView['matches']>[numbe
           <span className={cn('font-medium', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</span>
         ) : <span className="text-muted-foreground" title="Which two robots will play isn't known yet">No prediction</span>}
       </div>
+      {m.bonus && <BonusOdds season={season} bonus={m.bonus} className="col-span-2 sm:col-span-5" />}
     </StaggerItem>
   );
 }
