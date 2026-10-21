@@ -22,6 +22,7 @@ beforeAll(async () => {
   writeFileSync(join(dir, "assets", "index-abc.js.br"), brotliCompressSync(Buffer.from(JS)));
   writeFileSync(join(dir, "assets", "index-abc.js.gz"), gzipSync(Buffer.from(JS)));
   writeFileSync(join(dir, "icon.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  writeFileSync(join(dir, "apple-touch-icon.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d]));
   writeFileSync(join(tmpdir(), "cp-secret.txt"), "secret");
   const app = express();
   serveDist(app, dir, { csp: { header: "Content-Security-Policy-Report-Only", value: "default-src 'self'" }, siteUrl: "https://example.test" });
@@ -142,6 +143,15 @@ describe("serveDist", () => {
       expect(r.status).toBe(200);
       expect(r.body.toString()).toContain("<title>Terms of Service · Control Point</title>");
       expect(r.body.toString()).toContain('content="https://example.test/terms"');
+    }
+  });
+
+  it("serves the iOS home-screen icon under every name iOS asks for", async () => {
+    for (const name of ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/apple-touch-icon-180x180.png", "/apple-touch-icon-180x180-precomposed.png"]) {
+      const r = await raw(name);
+      expect(r.status).toBe(200);
+      expect(r.headers["content-type"]).toBe("image/png");
+      expect(r.body.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d]))).toBe(true);
     }
   });
 
