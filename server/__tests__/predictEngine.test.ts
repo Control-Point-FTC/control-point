@@ -283,4 +283,13 @@ describe("Prediction Engine 2.0 in Control Point", () => {
     expect(fc.matches.filter((m) => m.played).every((m) => m.history == null)).toBe(true);
     expect((engine as unknown as { partnerships(s: number): unknown }).partnerships(2024)).toBeNull();
   });
+
+  it("names the event in a partnership fact when the stored file has its name", async () => {
+    const named = { ...fakeStore, parseEventFileNamed: (path: string) => ({ rec: hist[path], name: `League Meet ${path}` }) } as unknown as PredictStore;
+    const e = new PredictEngine(named, [2025]);
+    await e.rebuild();
+    const together = e.forecast(liveEvent({ played: 0 }), null, 200)!.matches.map((m) => m.history).filter((h) => h?.kind === "together");
+    expect(together.length).toBeGreaterThan(0);
+    for (const h of together) expect(h!.label).toMatch(/best [\d.]+ at League Meet M[12]$/);
+  });
 });

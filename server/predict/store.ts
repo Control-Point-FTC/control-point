@@ -175,7 +175,14 @@ export class PredictStore {
 
   /** Parse one stored event file (null when not an official in-person event with matches). */
   parseEventFile(path: string, season: number): EventRecord | null {
-    return parseScoutEventRecord(this.readJson(path, null), season);
+    return this.parseEventFileNamed(path, season).rec;
+  }
+
+  /** The parsed event and its display name ("Arkansas Championship"), from one read of the file. */
+  parseEventFileNamed(path: string, season: number): { rec: EventRecord | null; name: string | null } {
+    const raw = this.readJson(path, null) as any;
+    const name = raw?.data?.eventByCode?.name;
+    return { rec: parseScoutEventRecord(raw, season), name: typeof name === "string" && name ? name : null };
   }
 
   /** Parsed events of a season (official, in person, with played matches). */

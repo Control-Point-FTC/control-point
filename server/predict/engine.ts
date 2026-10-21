@@ -49,7 +49,7 @@ export class PredictEngine extends Forecaster {
   private regionByCode = new Map<string, string>();
   private regions = new Set<string>();
   /** Parsed events by season and code, re-parsed only when the file changes. */
-  private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null }>>();
+  private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null; name: string | null }>>();
   readyAt: string | null = null;
   /** Pair history (engine 2.2 partnership memory) through the newest season: earlier matches the
    *  robots played together or against each other, shown as a reason with a prediction. */
@@ -100,7 +100,11 @@ export class PredictEngine extends Forecaster {
         const f = files[i];
         seen.add(f.code);
         const hit = cache.get(f.code);
-        if (!hit || hit.mtimeMs !== f.mtimeMs) cache.set(f.code, { mtimeMs: f.mtimeMs, rec: this.store.parseEventFile(f.path, s) });
+        if (!hit || hit.mtimeMs !== f.mtimeMs) {
+          // Event names word the partnership facts ("best 131 at Arkansas Championship").
+          const parsed = this.store.parseEventFileNamed ? this.store.parseEventFileNamed(f.path, s) : { rec: this.store.parseEventFile(f.path, s), name: null };
+          cache.set(f.code, { mtimeMs: f.mtimeMs, ...parsed });
+        }
         if (i % 25 === 24) await yieldLoop();
       }
       for (const code of [...cache.keys()]) if (!seen.has(code)) cache.delete(code);
@@ -110,6 +114,7 @@ export class PredictEngine extends Forecaster {
       advancement.set(s, this.store.loadAdvancement(s));
       for (const e of evs) for (const a of e.awards) records.push({ season: s, team: a.team, time: e.startTime, type: a.type, placement: a.placement });
       book.startSeason(s);
+      for (const [code, x] of cache) if (x.name) pairs.nameEvent(s, code, x.name);
       for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) { pairs.observe(m); book.update(m); }
       books.set(s, book.clone());
       await yieldLoop();
