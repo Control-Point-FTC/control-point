@@ -14,7 +14,7 @@ import type { PredictStore } from "./store.js";
 import type { EventRecord, MatchRecord } from "./types.js";
 import { Forecaster, normType, type AdvancementRecord, type PredictModel } from "./forecast.js";
 import type { OfflinePredict } from "../../src/types/offlinePack.js";
-import { FITTED_MODEL, type BonusFlags } from "@control-scout/predict-engine";
+import { FITTED_MODEL, PartnershipBook, PartnershipTable, type BonusFlags, type PartnershipData } from "@control-scout/predict-engine";
 
 export * from "./forecast.js";
 
@@ -23,6 +23,19 @@ export * from "./forecast.js";
 const M: PredictModel = FITTED_MODEL;
 
 const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
+
+/** A pair table cut down to pairs whose both teams are in `teams` (events keep only those still referenced). */
+function packPairs(d: PartnershipData, teams: Set<number>): PartnershipData {
+  const together = d.together.filter((r) => teams.has(r[0]) && teams.has(r[1]));
+  const used = [...new Set(together.map((r) => r[11]))].sort((a, b) => a - b);
+  const index = new Map(used.map((old, i) => [old, i]));
+  return {
+    ...d,
+    together: together.map((r) => [...r.slice(0, 11), index.get(r[11])!]),
+    against: d.against.filter((r) => teams.has(r[0]) && teams.has(r[1])),
+    events: used.map((i) => d.events[i]),
+  };
+}
 
 export class PredictEngine extends Forecaster {
   protected readonly model = M;
@@ -38,6 +51,11 @@ export class PredictEngine extends Forecaster {
   /** Parsed events by season and code, re-parsed only when the file changes. */
   private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null }>>();
   readyAt: string | null = null;
+  /** Pair history (engine 2.2 partnership memory) through the newest season: earlier matches the
+   *  robots played together or against each other, shown as a reason with a prediction. */
+  private pairTable: PartnershipTable | null = null;
+  /** The same table as data, for offline packs (filtered to a pack's teams). */
+  private pairData: PartnershipData | null = null;
 
   constructor(private store: PredictStore, readonly seasons: number[]) { super(); }
 
@@ -71,6 +89,7 @@ export class PredictEngine extends Forecaster {
     const books = new Map<number, RatingBook>();
     const events = new Map<number, EventRecord[]>();
     const advancement = new Map<number, AdvancementRecord[]>();
+    const pairs = new PartnershipBook(M.rating);
     for (const s of [...this.seasons].sort((a, b) => a - b)) {
       if (!this.store.hasSeason(s)) continue;
       for (const meta of Object.values(this.store.index(s))) if (meta.region) { this.regionByCode.set(meta.code, meta.region); this.regions.add(meta.region); }
@@ -91,11 +110,18 @@ export class PredictEngine extends Forecaster {
       advancement.set(s, this.store.loadAdvancement(s));
       for (const e of evs) for (const a of e.awards) records.push({ season: s, team: a.team, time: e.startTime, type: a.type, placement: a.placement });
       book.startSeason(s);
-      for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) book.update(m);
+      for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) { pairs.observe(m); book.update(m); }
       books.set(s, book.clone());
       await yieldLoop();
     }
+    // Pairs of teams active in the newest two seasons only (the ones a call can be about).
+    const newest = Math.max(...this.seasons);
+    const active = new Set([...(books.get(newest)?.ratings.keys() ?? []), ...(books.get(newest - 1)?.ratings.keys() ?? [])]);
+    const pairData: PartnershipData | null = pairs.season != null ? { ...pairs.toData({ teams: active }), season: newest } : null;
+    const pairTable = PartnershipTable.fromData(pairData);
     // One synchronous swap (no await in between).
+    this.pairTable = pairTable;
+    this.pairData = pairData;
     this.books = books;
     this.events = events;
     this.stored = new Map([...events.values()].flat().flatMap((e) => e.matches.map((m) => [`${m.season}|${m.eventCode}|${m.level}:${m.series}:${m.number}`, m] as [string, MatchRecord])));
@@ -121,6 +147,11 @@ export class PredictEngine extends Forecaster {
       if (m.red.bonusRp || m.blue.bonusRp) out[`${m.level}:${m.series}:${m.number}`] = [m.red.bonusRp ?? null, m.blue.bonusRp ?? null];
     }
     return out;
+  }
+
+  /** Pair history, only for the season it was built through (an older season's call mustn't read later pairs). */
+  protected partnerships(season: number): PartnershipTable | null {
+    return this.pairTable && this.pairTable.season === season ? this.pairTable : null;
   }
 
   /** Ratings book for a season, with the clock set to now. */
@@ -191,6 +222,8 @@ export class PredictEngine extends Forecaster {
       played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
       // Their recorded bonus RPs: the device's live forecast keeps them as facts, like the server's.
       bonus: Object.fromEntries(codes.map((c) => [c, this.storedBonus(season, c)])),
+      // Pair history between the pack's teams, so offline calls carry the same reasons (engine 2.2).
+      ...(this.pairData && this.pairData.season === season ? { partnerships: packPairs(this.pairData, teams) } : {}),
     };
   }
 }

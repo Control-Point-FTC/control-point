@@ -2,7 +2,7 @@
 // scenarios), Field (every team, searchable) and Matches (calls + results).
 import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Crown, Gauge, Search, Swords, Trophy, Users } from 'lucide-react';
+import { Crown, Gauge, Handshake, Search, Swords, Trophy, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Badge, Input, Label, Skeleton, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
@@ -344,7 +344,22 @@ function MatchRow({ m, myTeam }: { m: NonNullable<ForecastView['matches']>[numbe
           <span className={cn('font-medium', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</span>
         ) : <span className="text-muted-foreground" title="Which two robots will play isn't known yet">No prediction</span>}
       </div>
+      {!m.played && m.history ? <PairHistory history={m.history} /> : null}
     </StaggerItem>
+  );
+}
+
+/**
+ * Earlier matches between these robots (engine 2.2 partnership memory): a real result shown as
+ * a reason. It doesn't move the odds (the engine's held-out test found no gain from blending it).
+ */
+function PairHistory({ history }: { history: NonNullable<NonNullable<ForecastView['matches']>[number]['history']> }) {
+  const tone = history.kind === 'against' ? 'bg-muted text-muted-foreground' : history.side === 'A' ? 'bg-red-500/15 text-red-500' : 'bg-blue-500/15 text-blue-500';
+  return (
+    <p className="col-start-2 flex items-start gap-1.5 text-xs text-muted-foreground sm:col-end-6">
+      <span className={cn('mt-px flex size-4 shrink-0 items-center justify-center rounded-full', tone)} aria-hidden="true"><Handshake className="size-2.5" /></span>
+      <span><span className="sr-only">Earlier matches: </span>{history.label}</span>
+    </p>
   );
 }
 

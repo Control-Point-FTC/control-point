@@ -6,7 +6,7 @@
 import type { RatingBookData } from '../../server/predict/rating';
 import type { AdvancementRecord, PredictModel } from '../../server/predict/forecast';
 import type { AwardRecord } from '../../server/predict/awards';
-import type { BonusFlags } from '@control-scout/predict-engine';
+import type { BonusFlags, PartnershipData } from '@control-scout/predict-engine';
 
 /** Bumped when the layout changes; older packs on a device are re-downloaded. */
 export const OFFLINE_PACK_FORMAT = 1;
@@ -73,6 +73,11 @@ export interface OfflinePredict {
    * sampling them. Missing in older packs: those sample, as before.
    */
   bonus?: Record<string, Record<string, [BonusFlags | null, BonusFlags | null]>>;
+  /**
+   * Pair history between the pack's teams (engine 2.2 partnership memory), so offline calls
+   * show the same "played together before" reasons as the server. Missing in older packs.
+   */
+  partnerships?: PartnershipData;
 }
 
 export interface OfflinePack {

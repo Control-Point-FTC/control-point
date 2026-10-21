@@ -5,6 +5,7 @@ import { Forecaster, normType, type AdvancementRecord, type PredictModel } from 
 import { RatingBook } from '../../server/predict/rating';
 import type { AwardRecord } from '../../server/predict/awards';
 import type { OfflinePack, OfflinePredict } from '../types/offlinePack';
+import { PartnershipTable } from '@control-scout/predict-engine';
 
 /** Fewer runs than the server (2000): the device may be a phone. */
 export const OFFLINE_RUNS = 1000;
@@ -15,6 +16,7 @@ export class OfflineForecaster extends Forecaster {
   private readonly seasonBook: RatingBook;
   private readonly regions: Map<string, string>;
   private readonly played: Map<string, Set<string>>;
+  private readonly pairTable: PartnershipTable | null;
 
   constructor(private pack: OfflinePack & { predict: OfflinePredict }) {
     super();
@@ -25,6 +27,12 @@ export class OfflineForecaster extends Forecaster {
     // Results the ratings already include; any other played result in the pack
     // is folded in on the device (Forecaster.eventBook).
     this.played = new Map(Object.entries(pack.predict.played ?? {}).map(([c, keys]) => [c, new Set(keys)]));
+    this.pairTable = PartnershipTable.fromData(pack.predict.partnerships);
+  }
+
+  /** Pair history the pack carries (engine 2.2), for its season only, as on the server. */
+  protected partnerships(season: number): PartnershipTable | null {
+    return this.pairTable && this.pairTable.season === season ? this.pairTable : null;
   }
 
   protected book(season: number): RatingBook | null {

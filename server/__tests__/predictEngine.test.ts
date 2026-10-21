@@ -265,4 +265,22 @@ describe("Prediction Engine 2.0 in Control Point", () => {
       expect(recorded.call(engine, 2025, "M1", "qual:0:1", "blue")).toBeNull();
     } finally { delete hist.M1.matches[0].red.bonusRp; }
   });
+
+  it("shows earlier matches between the robots with upcoming calls (engine 2.2), without moving the odds", () => {
+    const fc = engine.forecast(liveEvent({ played: 3 }), null, 200)!;
+    const upcoming = fc.matches.filter((m) => !m.played);
+    const withHistory = upcoming.filter((m) => m.history);
+    expect(withHistory.length).toBeGreaterThan(0);
+    for (const m of withHistory) {
+      const h = m.history!;
+      expect(h.shift).toBe(0); // reasons only in 2.2
+      expect(h.label).toMatch(h.kind === "together" ? /have played \d+ matches together/ : /earlier meetings?$/);
+      const lineup = [...m.red, ...m.blue];
+      expect(lineup).toContain(h.teams[0]);
+      expect(lineup).toContain(h.teams[1]);
+    }
+    // Played matches carry no history, and an older season reads no later pairs.
+    expect(fc.matches.filter((m) => m.played).every((m) => m.history == null)).toBe(true);
+    expect((engine as unknown as { partnerships(s: number): unknown }).partnerships(2024)).toBeNull();
+  });
 });
