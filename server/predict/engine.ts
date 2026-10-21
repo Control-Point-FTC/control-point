@@ -122,7 +122,9 @@ export class PredictEngine extends Forecaster {
     // Pairs of teams active in the newest two seasons only (the ones a call can be about).
     const newest = Math.max(...this.seasons);
     const active = new Set([...(books.get(newest)?.ratings.keys() ?? []), ...(books.get(newest - 1)?.ratings.keys() ?? [])]);
-    const pairData: PartnershipData | null = pairs.season != null ? { ...pairs.toData({ teams: active }), season: newest } : null;
+    // Weak pairs (under the shown counts) stay: an event's fresh results fold into this table (PartnershipOverlay), on
+    // the server and in offline packs, and must count a pair's one earlier match.
+    const pairData: PartnershipData | null = pairs.season != null ? { ...pairs.toData({ teams: active, keepWeak: true }), season: newest } : null;
     const pairTable = PartnershipTable.fromData(pairData);
     // One synchronous swap (no await in between).
     this.pairTable = pairTable;
