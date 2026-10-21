@@ -303,7 +303,7 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">Upcoming matches show predicted scores and win odds; played ones show the result and whether the pre-match call held.</p>
+      <p className="text-xs text-muted-foreground">Upcoming matches show predicted scores with their 80% range (±) and win odds; played ones show the result and whether the pre-match call held.</p>
       {!(fc.matches ?? []).length ? <EmptyState icon={Swords} title="No matches yet" description="The match schedule appears here once it's published." /> : !list.length ? (
         <EmptyState
           icon={Swords}
@@ -326,7 +326,7 @@ function MatchRow({ m, myTeam, season }: { m: NonNullable<ForecastView['matches'
   return (
     <StaggerItem as="li" className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,9rem)_minmax(0,1fr)_8rem]">
       <span className="text-xs font-medium text-muted-foreground">{m.label}</span>
-      <Alliance color="red" teams={m.red} myTeam={myTeam} score={m.played?.red ?? null} mean={m.redMean} />
+      <Alliance color="red" teams={m.red} myTeam={myTeam} score={m.played?.red ?? null} mean={m.redMean} band={m.redBand} />
       <div className="col-span-2 sm:col-span-1 sm:col-start-3">
         {p != null ? (
           <div className="flex h-2 overflow-hidden rounded-full" title={`Red ${pct(p)} · Blue ${pct(1 - p)}`}>
@@ -334,7 +334,7 @@ function MatchRow({ m, myTeam, season }: { m: NonNullable<ForecastView['matches'
           </div>
         ) : <div className="h-2 rounded-full bg-muted" />}
       </div>
-      <Alliance color="blue" teams={m.blue} myTeam={myTeam} score={m.played?.blue ?? null} mean={m.blueMean} className="col-start-2 sm:col-start-4" />
+      <Alliance color="blue" teams={m.blue} myTeam={myTeam} score={m.played?.blue ?? null} mean={m.blueMean} band={m.blueBand} className="col-start-2 sm:col-start-4" />
       <div className="col-start-2 text-xs sm:col-start-5 sm:text-right">
         {won ? (
           <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -359,7 +359,12 @@ function CallBadge({ pre, played }: { pre: number | null; played: { red: number;
     : <Badge className="border-amber-500/30 bg-amber-500/15 text-amber-500" variant="outline" title={`Before the match the winner had ${pct(1 - c.favP)}`}>Upset · {pct(1 - c.favP)}</Badge>;
 }
 
-function Alliance({ color, teams, myTeam, score, mean, className }: { color: 'red' | 'blue'; teams: number[]; myTeam: number | null; score: number | null; mean: number | null; className?: string }) {
+/** "±14": from the displayed (rounded) score to the range's whole-point bounds, the larger side, so
+ *  "score ± x" always reaches both ends (a range cut off at 0 is lopsided). */
+const plusMinus = (mean: number, band: { lo: number; hi: number }) => { const m = Math.round(mean); return Math.max(0, band.hi - m, m - band.lo); };
+
+function Alliance({ color, teams, myTeam, score, mean, band, className }: { color: 'red' | 'blue'; teams: number[]; myTeam: number | null; score: number | null; mean: number | null; band?: { lo: number; hi: number; level: number } | null; className?: string }) {
+  const rangeTitle = band ? `${Math.round(band.level * 100)}% range ${band.lo}–${band.hi}: about ${Math.round(band.level * 10)} in 10 real scores land inside` : undefined;
   return (
     <div className={cn('flex min-w-0 items-center gap-1.5 text-xs', color === 'blue' && 'sm:flex-row-reverse', className)}>
       <span className={cn('size-2 shrink-0 rounded-full', color === 'red' ? 'bg-red-500' : 'bg-blue-500')} aria-label={color === 'red' ? 'Red alliance' : 'Blue alliance'} />
@@ -367,7 +372,9 @@ function Alliance({ color, teams, myTeam, score, mean, className }: { color: 're
         <span key={t} className={cn('rounded-md px-1.5 py-0.5 font-medium tabular-nums', t === myTeam ? 'bg-accent text-accent-ink' : 'bg-muted text-foreground')}>{t}</span>
       ))}
       <span className={cn('tabular-nums text-muted-foreground', color === 'blue' ? 'ml-auto sm:ml-0 sm:mr-auto' : 'ml-auto')}>
-        {score != null ? <span className="font-display text-sm font-semibold text-foreground">{score}</span> : mean != null ? `~${Math.round(mean)}` : null}
+        {score != null ? <span className="font-display text-sm font-semibold text-foreground">{score}</span>
+          : mean != null && band ? <span className="whitespace-nowrap" title={rangeTitle}>{Math.round(mean)}<span aria-hidden className="text-[10px]"> ±{plusMinus(mean, band)}</span><span className="sr-only"> ({rangeTitle})</span></span>
+            : mean != null ? `~${Math.round(mean)}` : null}
       </span>
     </div>
   );
