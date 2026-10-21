@@ -6,7 +6,7 @@
 import type { RatingBookData } from '../../server/predict/rating';
 import type { AdvancementRecord, PredictModel } from '../../server/predict/forecast';
 import type { AwardRecord } from '../../server/predict/awards';
-import type { BonusFlags, BonusModelSource } from '@control-scout/predict-engine';
+import type { BonusFlags, BonusModelSource, PartnershipData } from '@control-scout/predict-engine';
 
 /** Bumped when the layout changes; older packs on a device are re-downloaded. */
 export const OFFLINE_PACK_FORMAT = 1;
@@ -80,6 +80,11 @@ export interface OfflinePredict {
    * older packs: they show no bonus odds rather than a different model's.
    */
   bonusModel?: BonusModelSource | null;
+  /**
+   * Pair history between the pack's teams (engine 2.4 partnership memory), so offline calls
+   * show the same "played together before" reasons as the server. Missing in older packs.
+   */
+  partnerships?: PartnershipData;
 }
 
 export interface OfflinePack {
