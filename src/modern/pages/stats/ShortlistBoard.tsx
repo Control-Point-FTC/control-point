@@ -15,6 +15,7 @@ import { eventAverages, partnerFit, scoutingPriorities, strengthsWeaknesses, tea
 import type { ShortlistPatch } from '../../../utils/shortlist';
 import type { FtcEventFull, ShortlistEntry, ShortlistPriority } from '../../../types/ftcScout';
 import { EmptyState } from '../../ui/page';
+import { reliabilityTitle, useReliability, type TeamReliability } from '../../../services/reliabilityApi';
 import { Stagger, StaggerItem } from '../../ui/motion';
 
 type Patch = Omit<ShortlistPatch, 'season' | 'teamNumber'>;
@@ -32,6 +33,7 @@ export function ShortlistBoard({ season, entries, confirmed, onPatch, onRemove, 
   }, [season, eventCode]);
   const priorities = ev ? scoutingPriorities(ev.field, entries, myTeam, 5) : [];
   const fit = ev && myTeam ? partnerFit(ev.field, myTeam, 3) : [];
+  const rel = useReliability(season, entries.map((e) => e.teamNumber));
   if (error && !entries.length) return <EmptyState title="Couldn't load the shortlist" description={error} />;
   return (
     <div className="space-y-5">
@@ -69,7 +71,7 @@ export function ShortlistBoard({ season, entries, confirmed, onPatch, onRemove, 
         <Stagger className="grid gap-4 xl:grid-cols-2">
           {entries.map((e) => (
             <StaggerItem key={e.teamNumber}>
-              <ShortlistCard e={e} ev={ev} season={season} confirmedNotes={confirmed.find((c) => c.teamNumber === e.teamNumber)?.notes ?? null} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} />
+              <ShortlistCard e={e} ev={ev} season={season} rel={rel.by.get(e.teamNumber) ?? null} confirmedNotes={confirmed.find((c) => c.teamNumber === e.teamNumber)?.notes ?? null} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} />
             </StaggerItem>
           ))}
         </Stagger>
@@ -84,7 +86,7 @@ const PRIORITY: Record<ShortlistPriority, string> = {
   low: '',
 };
 
-function ShortlistCard({ e, ev, season, confirmedNotes, onPatch, onRemove, onOpen }: { e: ShortlistEntry; ev: FtcEventFull | null; season: number; confirmedNotes: string | null; onPatch: (p: Patch) => void; onRemove: () => void; onOpen: () => void }) {
+function ShortlistCard({ e, ev, season, rel, confirmedNotes, onPatch, onRemove, onOpen }: { e: ShortlistEntry; ev: FtcEventFull | null; season: number; rel: TeamReliability | null; confirmedNotes: string | null; onPatch: (p: Patch) => void; onRemove: () => void; onOpen: () => void }) {
   const { notes, setNotes, save } = useShortlistNotes(season, e, onPatch, confirmedNotes);
   const [tagDraft, setTagDraft] = useState('');
   const stats = ev?.field.find((t) => t.teamNumber === e.teamNumber) || null;
@@ -103,7 +105,7 @@ function ShortlistCard({ e, ev, season, confirmedNotes, onPatch, onRemove, onOpe
       <header className="flex items-start gap-3">
         <button onClick={onOpen} className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
           <h4 id={`${id}-h`} className="break-words"><span className="font-display text-xl font-semibold tabular-nums">{e.teamNumber}</span> <span className="text-muted-foreground">{e.teamName}</span></h4>
-          <p className="mt-0.5 text-xs text-muted-foreground">{stats ? `Rank ${stats.rank ?? '—'} · OPR ${fmt(stats.opr?.totalNp ?? null)} · ${stats.wins != null ? `${stats.wins}-${stats.losses}-${stats.ties}` : 'no record'}` : 'Not at the selected event'} · updated {relTime(e.updatedAt)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{stats ? `Rank ${stats.rank ?? '—'} · OPR ${fmt(stats.opr?.totalNp ?? null)} · ${stats.wins != null ? `${stats.wins}-${stats.losses}-${stats.ties}` : 'no record'}` : 'Not at the selected event'}{rel && <span title={reliabilityTitle(rel)}> · Reliability <span className="font-medium text-emerald-600 dark:text-emerald-400">{rel.index}</span>/100 (est.)</span>} · updated {relTime(e.updatedAt)}</p>
         </button>
         <Button variant="ghost" size="icon-sm" onClick={onRemove} aria-label={`Remove ${e.teamNumber} from shortlist`} className="text-muted-foreground hover:text-destructive max-sm:size-11"><Trash2 /></Button>
       </header>

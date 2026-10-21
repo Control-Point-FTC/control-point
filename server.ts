@@ -80,7 +80,8 @@ import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, on
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
-import { createSharedAccounts, isHandoffState, isScoutVia } from "./server/sharedAccounts.js";
+import { createSharedAccounts, isHandoffState, isScoutVia, scoutOriginFrom } from "./server/sharedAccounts.js";
+import { createReliabilityClient } from "./server/scoutReliability.js";
 import { estimateTokens, fitToRequestBytes, fitToWindow, geminiInputTokens, anthropicInputTokens, providerTooLargeMessage, sanitizeBrunoAttachments } from "./server/brunoInput.js";
 import { BRUNO_REQUEST_LIMIT_BYTES, attachedMarker, splitBrunoMessage, tooLargeMessage, typedText } from "./src/utils/brunoFiles.js";
 import { currentWeather } from "./server/weather.js";
@@ -6355,6 +6356,19 @@ async function startServer() {
     } catch {
       res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
     }
+  });
+
+  // Reliability index from Control Scout (server/scoutReliability.ts): public match data only, shown next to
+  // OPR where picks are made. Signed-in users only, like the other scouting data; never an error (no number).
+  const reliability = createReliabilityClient({ origin: scoutOriginFrom(process.env) ?? "https://controlscout.org" });
+  app.get("/api/ftc/reliability", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    if (season == null) return res.status(400).json({ error: "Season data is available for 2022–2026" });
+    const teams = String(req.query.teams || "").split(",").map((x) => parseInt(x, 10)).filter((n) => n >= 1 && n <= 999999);
+    if (!teams.length || teams.length > 100) return res.status(400).json({ error: "teams: 1 to 100 team numbers, comma separated" });
+    res.json(await reliability.get(season, teams));
   });
 
   app.get("/api/ftc/scout/team", async (req, res) => {

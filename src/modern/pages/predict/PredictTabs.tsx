@@ -8,6 +8,8 @@ import { Badge, Input, Label, Skeleton, Switch, Table, TableBody, TableCell, Tab
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { pct, preMatchCall, rankRange, usePartners } from '../../../components/predict/usePredictController';
 import type { ForecastView } from '../../../services/predictApi';
+import { recentReasons } from '@control-scout/predict-engine/explain';
+import { useReliability } from '../../../services/reliabilityApi';
 import { EmptyState, Stat } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
@@ -287,6 +289,10 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
   const list = useMemo(() => (fc.matches ?? []).filter((m) =>
     (!mine || !myTeam || m.red.includes(myTeam) || m.blue.includes(myTeam))
     && (filter === 'all' || (filter === 'played') === !!m.played)), [fc.matches, mine, myTeam, filter]);
+  // The engine's recent-record reasons (no-shows, near-zero matches in the last 10) from Control Scout's
+  // reliability data, under upcoming matches. Words only: no odds or scores move.
+  const rel = useReliability(fc.season, useMemo(() => (fc.matches ?? []).filter((m) => !m.played).flatMap((m) => [...m.red, ...m.blue]), [fc.matches]));
+  const reasonsOf = (m: NonNullable<ForecastView['matches']>[number]) => (m.played ? [] : recentReasons([...m.red, ...m.blue], (t) => rel.by.get(t)?.recent ?? null));
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
@@ -311,14 +317,14 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
         />
       ) : (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
-          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} />)}
+          {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} reasons={reasonsOf(m)} />)}
         </Stagger>
       )}
     </div>
   );
 }
 
-function MatchRow({ m, myTeam }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null }) {
+function MatchRow({ m, myTeam, reasons = [] }: { m: NonNullable<ForecastView['matches']>[number]; myTeam: number | null; reasons?: string[] }) {
   const p = m.pRedWin;
   const favRed = p != null && p >= 0.5;
   const won = m.played ? (m.played.red === m.played.blue ? 'Tie' : m.played.red > m.played.blue ? 'Red won' : 'Blue won') : null;
@@ -344,6 +350,11 @@ function MatchRow({ m, myTeam }: { m: NonNullable<ForecastView['matches']>[numbe
           <span className={cn('font-medium', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</span>
         ) : <span className="text-muted-foreground" title="Which two robots will play isn't known yet">No prediction</span>}
       </div>
+      {reasons.length > 0 && (
+        <ul className="col-span-2 space-y-0.5 text-xs text-amber-600 dark:text-amber-400 sm:col-span-4 sm:col-start-2" data-testid="match-reasons">
+          {reasons.map((r) => <li key={r}>{r}</li>)}
+        </ul>
+      )}
     </StaggerItem>
   );
 }
