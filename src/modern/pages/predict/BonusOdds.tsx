@@ -29,9 +29,10 @@ export function BonusOdds({ season, bonus, className }: { season: number; bonus:
   const tier = TIER[bonus.tier];
   return (
     <details className={cn('group rounded-lg border border-border bg-muted/30', className)} data-testid="bonus-odds">
-      <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3 py-1.5 text-xs [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer select-none list-none items-center gap-2 whitespace-nowrap px-3 py-1.5 text-xs [&::-webkit-details-marker]:hidden">
         <span className="font-medium text-foreground">Bonus RPs</span>
-        <span className="text-muted-foreground">Expected RP</span>
+        {/* Phones: the short label, so the line never wraps. */}
+        <span className="text-muted-foreground"><span className="hidden sm:inline">Expected RP</span><span className="sm:hidden" aria-label="Expected RP">exp. RP</span></span>
         <span className="font-display font-semibold tabular-nums text-red-500">{bonus.expectedRpRed.toFixed(1)}</span>
         <span className="text-muted-foreground">–</span>
         <span className="font-display font-semibold tabular-nums text-blue-500">{bonus.expectedRpBlue.toFixed(1)}</span>
