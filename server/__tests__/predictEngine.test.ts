@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -267,6 +267,11 @@ describe("Prediction Engine 2.0 in Control Point", () => {
   });
 
   it("shows earlier matches between the robots with upcoming calls (engine 2.2), without moving the odds", () => {
+    // Both forecasts read the clock (fresh results set the event book to now, and ratings grow with the
+    // time since a team's last match): pin it, or a millisecond between the two calls moves the odds in
+    // the 10th decimal.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    onTestFinished(() => clock.mockRestore());
     const fc = engine.forecast(liveEvent({ played: 3 }), null, 200)!;
     const upcoming = fc.matches.filter((m) => !m.played);
     const withHistory = upcoming.filter((m) => m.history);

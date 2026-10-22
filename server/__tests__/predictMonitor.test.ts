@@ -16,7 +16,7 @@ const fm = (n: number, pRedWin: number | null, played: ForecastMatch["played"] =
 });
 const forecast = (stage: Forecast["stage"], matches: ForecastMatch[], teams: [number, number][] = [], prequalified: number[] = []): Forecast => ({
   season: 2025, event: "USXXQ1", stage, runs: 10, slots: 2, slotsSource: "official", prequalified, assumptions: [],
-  teams: teams.map(([team, pAdvance]) => ({ team, pAdvance } as any)), matchesOnly: null, matches, generatedAt: "",
+  teams: teams.map(([team, pAdvance]) => ({ team, pAdvance } as any)), matchesOnly: null, matches, bonusDraws: "model", generatedAt: "",
 });
 const side = (total: number) => ({ teams: [1, 2], auto: 0, teleop: total, endgame: 0, np: total, penCommitted: 0, total });
 const rec = (n: number, red: number, blue: number): MatchRecord => ({ season: 2025, eventCode: "USXXQ1", level: "qual", series: 0, number: n, time: n, red: side(red), blue: side(blue) });
