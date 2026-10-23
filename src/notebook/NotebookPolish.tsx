@@ -7,6 +7,9 @@ import { apiJson } from '../services/api';
 import { notify } from '../components/dialog';
 import type { NotebookSync } from './NotebookSync';
 import { RibbonButton } from './ribbon/RibbonParts';
+import { notebookCommandGlyph } from './NotebookIcons';
+
+const PolishGlyph=notebookCommandGlyph('Polish');
 
 /** Stands in for a picture, table or file the polish kept (server/notebookPolish.ts). */
 export const POLISH_KEEP='polishKeep';
@@ -55,7 +58,8 @@ function Preview({editor,nodes,label}:{editor:Editor;nodes:PMNode[];label:string
 }
 
 /** The ribbon's "Polish with Bruno": rough notes become headings, lists and checklists, previewed before anything changes. */
-export function NotebookPolish({sync,editor,disabled}:{sync:NotebookSync;editor:Editor|null;disabled:boolean}){
+/** `variant="bar"`: the labelled button in the page bar (the ribbon's compact rows drop labels). */
+export function NotebookPolish({sync,editor,disabled,variant='ribbon'}:{sync:NotebookSync;editor:Editor|null;disabled:boolean;variant?:'ribbon'|'bar'}){
   const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[result,setResult]=useState<Polished|null>(null);
   const [view,setView]=useState<'after'|'before'>('after'),[scope,setScope]=useState<'page'|'selection'>('page');
   const snapshot=useRef(''),originals=useRef<PMNode[]>([]),abort=useRef<AbortController|null>(null),selection=useRef<string[]|null>(null);
@@ -89,7 +93,9 @@ export function NotebookPolish({sync,editor,disabled}:{sync:NotebookSync;editor:
   let after:PMNode[]=[];
   if(editor&&result){try{after=polishedNodes(editor,result.content,originals.current);}catch{after=[];}}
   return <>
-    <RibbonButton label="Polish with Bruno" icon="Polish" showLabel disabled={disabled||excluded||!editor} onClick={start}/>
+    {variant==='bar'
+      ?<button type="button" className="nb-bar-btn" aria-label="Polish with Bruno" title={excluded?'Bruno can’t read admin-only pages':'Polish with Bruno: turn rough notes into headings, lists and checklists'} disabled={disabled||excluded||!editor} onMouseDown={e=>e.preventDefault()} onClick={start}>{PolishGlyph&&<PolishGlyph size={16}/>}<span>Polish</span></button>
+      :<RibbonButton label="Polish with Bruno" icon="Polish" showLabel disabled={disabled||excluded||!editor} onClick={start}/>}
     <Dialog open={open} onOpenChange={next=>{if(!next)close();}}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>

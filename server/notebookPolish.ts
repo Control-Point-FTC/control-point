@@ -94,8 +94,9 @@ const STOP = new Set("the and for are but not you all any can had her was one ou
 function words(markdown: string): Set<string> {
   // List numbers are formatting, not notes: "1." added in front of steps is not a new fact.
   const plain = markdown.replace(/\[\[keep \d+\]\]/g, " ").replace(/\]\([^)]*\)/g, "]").replace(/^\s*\d+[.)]\s/gm, " ").toLowerCase();
-  const found = plain.match(/[\p{L}\p{N}][\p{L}\p{N}'’.-]*/gu) ?? [];
-  return new Set(found.map(w => w.replace(/['’.-]+$/, "")).filter(w => (/\d/.test(w) || w.length >= 3) && !STOP.has(w)));
+  // Numbers apart from their units, so "48mm" and "48 mm" read the same.
+  const found = plain.match(/\p{N}+(?:[.,]\p{N}+)*|\p{L}[\p{L}'’-]*/gu) ?? [];
+  return new Set(found.map(w => w.replace(/['’-]+$/, "")).filter(w => (/\d/.test(w) || w.length >= 3) && !STOP.has(w)));
 }
 /** What the member should look at before applying: notes Bruno left out, and words it brought in (usually headings). */
 export function wordChanges(before: string, after: string): { dropped: string[]; added: string[] } {

@@ -60,6 +60,7 @@ describe("polish source and result", () => {
   });
 
   it("reports notes left out and words brought in, ignoring list numbering", () => {
+    expect(wordChanges("spacing 48mm, 2.5in gap", "Spacing: 48 mm; gap 2.5 in")).toEqual({ dropped: [], added: [] });
     expect(wordChanges("order 2 rollers, test nov 1, maya", "1. Order 2 rollers\n2. Test Nov 1\n## Action items")).toEqual({ dropped: ["maya"], added: ["action", "items"] });
   });
 
