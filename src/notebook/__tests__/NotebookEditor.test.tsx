@@ -116,10 +116,16 @@ describe('mounted collaborative notebook editor', () => {
     vi.stubGlobal('XMLHttpRequest',Upload);
     try{
       const content=screen.getByRole('textbox',{name:'Page content'}),shot=new File(['png'],'image.png',{type:'image/png'});
+      const ed=(content as HTMLElement&{editor:import('@tiptap/react').Editor}).editor;act(()=>{ed.commands.setTextSelection(5);});
       fireEvent.paste(content,{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['Files'],getData:()=>''}});
+      // The member keeps typing elsewhere while the upload runs.
+      act(()=>{ed.commands.insertContentAt(1,'Before: ');ed.commands.setTextSelection(ed.state.doc.content.size-1);});
       expect(request.open).toHaveBeenCalledWith('POST','/api/notebook/pages/1/files');expect(request.send.mock.calls[0][0].get('file')).toBe(shot);
       request.responseText=JSON.stringify({id:41,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
       const file=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(file).toContain('"type":"notebookFile"');expect(file).toContain('"fileId":41');expect(file).toContain('"display":"image"');
+      // It lands where it was pasted (inside "Team discoveries", split at "Team"), not at the later cursor.
+      const blocks=(yDocToProsemirrorJSON(sync.doc).content as any[]);const at=blocks.findIndex(b=>b.type==='notebookFile');
+      expect(blocks[at-1].content[0].text).toBe('Before: Team');expect(blocks[at+1].content[0].text).toBe(' discoveries');
     }finally{vi.unstubAllGlobals();}
   });
   it('pastes text, not an upload, when the clipboard also carries text',async()=>{
@@ -134,9 +140,13 @@ describe('mounted collaborative notebook editor', () => {
     await mount();
     await screen.findByText('No visible pages link here yet.');
     fireEvent.click(screen.getByRole('button',{name:'Hide links and discussions'}));
-    expect(screen.queryByText('No visible pages link here yet.')).toBeNull();expect(document.querySelector('.nb-discussions')).toBeNull();
+    expect(document.querySelector('.nb-extras')).toHaveAttribute('hidden');
     const show=screen.getByRole('button',{name:'Show links and discussions'});expect(show).toHaveAttribute('aria-expanded','false');
-    fireEvent.click(show);expect(screen.getByText('No visible pages link here yet.')).toBeTruthy();expect(document.querySelector('.nb-discussions')).toBeTruthy();
+    fireEvent.click(show);expect(document.querySelector('.nb-extras')).not.toHaveAttribute('hidden');
+    // A half-written discussion survives hiding and showing again.
+    const draft=screen.getByPlaceholderText('Share a thought with your team…');fireEvent.change(draft,{target:{value:'Check the roller spacing'}});
+    fireEvent.click(screen.getByRole('button',{name:'Hide links and discussions'}));fireEvent.click(screen.getByRole('button',{name:'Show links and discussions'}));
+    expect(screen.getByPlaceholderText('Share a thought with your team…')).toHaveValue('Check the roller spacing');
   });
   it('mounts the real CRDT editor, toolbar and carets, and saves shared titles', async () => {
     const { sync, server } = await mount();

@@ -2,6 +2,7 @@ import React,{createContext,useContext,useEffect,useRef,useState,lazy,Suspense} 
 import { NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps,type Editor } from '@tiptap/react';
 import { MAX_ALT, NotebookFile, validNotebookFile } from './fileNode';
 import type { NotebookSync } from './NotebookSync';
+import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, ySyncPluginKey } from '@tiptap/y-tiptap';
 import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
 import { notify } from '../components/dialog';
@@ -59,6 +60,15 @@ export const NotebookFileView=NotebookFile.extend({addNodeView(){return ReactNod
 /** How a chosen file goes in: as it is (images show, others are chips),
  *  as a picture, or as a PDF printout whose pages show (and take ink). */
 export type UploadAs='auto'|'image'|'pdf';
+/** Where a paste happened: its editor and a spot that follows later edits
+ *  (the member's own and teammates'), so a slow upload still lands there. */
+export type UploadAnchor={editor:Editor;position:()=>number|null};
+export function pasteAnchor(editor:Editor):UploadAnchor{
+  const at=editor.state.selection.from,ystate=ySyncPluginKey.getState(editor.state);
+  if(!ystate?.binding)return {editor,position:()=>Math.min(at,editor.state.doc.content.size)};
+  const relative=absolutePositionToRelativePosition(at,ystate.type,ystate.binding.mapping);
+  return {editor,position:()=>{const now=ySyncPluginKey.getState(editor.state);return now?.binding?relativePositionToAbsolutePosition(now.doc,now.type,relative,now.binding.mapping):null;}};
+}
 export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
 export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
   const [fileAs,setFileAs]=useState<UploadAs>('auto');
@@ -67,7 +77,7 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
   const retained=useRef<{file:File;metadata:any}|null>(null),latestEditor=useRef(editor);latestEditor.current=editor;
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;request.current?.abort();};},[sync]);
   // `announce`: a paste has no Insert panel open, so its outcome also shows as a toast.
-  const upload=(chosen:File,as:UploadAs='auto',announce=false)=>{
+  const upload=(chosen:File,as:UploadAs='auto',announce=false,anchor?:UploadAnchor)=>{
     const say=(message:string,kind:'error'|'success'='error')=>{setStatus(message);if(announce)notify(message,kind);};
     if(busy){if(announce)notify('Wait for the current upload to finish, then paste again.','error');return;}
     setFile(chosen);setFileAs(as);setProgress(0);
@@ -77,9 +87,13 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
     if(!chosen.size){say('Choose a nonempty file.');return;}
     if(!editor || editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)){say('Editing is unavailable.');return;}
     const insert=(uploaded:any)=>{
-      const target=latestEditor.current;
+      const target=anchor?.editor??latestEditor.current;
       if(!target || target.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
-      const inserted=target.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
+      const node={type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}};
+      const at=anchor?.position();
+      if(anchor && at==null)throw new Error('The picture uploaded, but the spot you pasted it into is gone. Paste it again.');
+      // A paste goes where it was pasted, without pulling focus from where the member is typing now.
+      const inserted=at!=null?target.chain().insertContentAt(at,node).run():target.chain().focus().insertContent(node).run();
       if(!inserted)throw new Error('The file uploaded, but could not be inserted here. Choose a text position and retry.');
       say(`${uploaded.name} inserted.`,'success');setFile(null);retained.current=null;
     };

@@ -39,7 +39,7 @@ import { pasteNotebookText } from './pasteText';
 import { imageFilesFrom } from '../utils/mediaFiles';
 import { createPortal } from 'react-dom';
 import { EyeOff, MessageSquare } from 'lucide-react';
-import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
+import { NotebookFileContext,NotebookFileView,pasteAnchor,useNotebookUpload,type UploadAnchor } from './NotebookAttachments';
 import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
 import { registerNotebookSelection, selectedNotebookBlocks } from './brunoScreen';
 import { NotebookHistory } from './NotebookHistory';
@@ -222,7 +222,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     if (getScreenEntity('notebookPageId') !== sync.pageId) return;
     setScreenEntity('notebookBlockIds', selectedNotebookBlocks(ed.state));
   };
-  const pasteImageRef = useRef<(file: File) => void>(() => {});
+  const pasteImageRef = useRef<(file: File, anchor: UploadAnchor) => void>(() => {});
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
@@ -232,7 +232,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       // A copied picture or screenshot (no text alongside it) uploads like Insert > Pictures.
       const images = imageFilesFrom(event.clipboardData);
       if (images.length && view.editable && !event.clipboardData?.getData('text/plain')) {
-        event.preventDefault(); pasteImageRef.current(images[0]);
+        event.preventDefault(); const target = (view.dom as HTMLElement & { editor?: Editor }).editor;
+        if (target) { if (!view.state.selection.empty) target.commands.deleteSelection(); pasteImageRef.current(images[0], pasteAnchor(target)); }
         if (images.length > 1) notify('Only the first picture was pasted. Paste the others one at a time.', 'info');
         return true;
       }
@@ -307,7 +308,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     return () => window.removeEventListener('beforeunload', unload);
   }, [sync]);
   const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
-  pasteImageRef.current = file => fileUpload.upload(file, 'image', true);
+  pasteImageRef.current = (file, anchor) => fileUpload.upload(file, 'image', true, anchor);
   return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
     {sync.storageError && <div className="nb-alert" role="alert">Offline recovery is unavailable: {sync.storageError}. Keep this page open until it saves.
       <Button variant="outline" onClick={() => downloadNotebookJSON({ title, content: yDocToProsemirrorJSON(sync.doc) }, 'notebook-unsaved-recovery.json')}>Download unsaved changes</Button>
@@ -357,8 +358,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       <NotebookReviewBar pageId={sync.pageId} teamId={sync.scope?.teamId} />
       <RecordNavigationContext.Provider value={openRecordPath}><MentionSourceContext.Provider value={mentions}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></MentionSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}{!mobile && <MentionPopup editor={activeEditor ?? editor} members={mentionMembers} selfId={selfId} onMention={sendMention} />}
       <div className="nb-extras-toggle"><button type="button" aria-expanded={showExtras} onClick={() => setExtrasHidden(showExtras)}>{showExtras ? <EyeOff size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}{showExtras ? (mobile ? 'Hide links' : 'Hide links and discussions') : (mobile ? 'Show links' : 'Show links and discussions')}</button></div>
-      {showExtras && <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>}
-      {showExtras && !mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
+      {/* Hidden, not unmounted: a half-written discussion keeps its draft. */}
+      <div className="nb-extras" hidden={!showExtras}><section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
+      {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}</div>
     </article></div>
   </div></NotebookFileContext.Provider>;
 }
