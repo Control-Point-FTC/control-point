@@ -137,8 +137,11 @@ describe('mounted collaborative notebook editor', () => {
       const paste=()=>{act(()=>{ed.commands.setTextSelection({from:1,to:5});});fireEvent.paste(content,{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['Files'],getData:()=>''}});};
       paste();act(()=>request.onerror());
       expect(JSON.stringify(yDocToProsemirrorJSON(sync.doc))).toContain('Team discoveries');
-      paste();request.responseText=JSON.stringify({id:42,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
-      const json=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(json).toContain('"fileId":42');expect(json).not.toContain('Team discoveries');expect(json).toContain(' discoveries');
+      // Text typed just before the selection while the picture uploads is kept.
+      paste();act(()=>{ed.commands.insertContentAt(1,'New ');});request.responseText=JSON.stringify({id:42,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
+      const json=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(json).toContain('"fileId":42');expect(json).not.toContain('Team discoveries');
+      const blocks=(yDocToProsemirrorJSON(sync.doc).content as any[]);const at=blocks.findIndex(b=>b.type==='notebookFile');
+      expect(blocks[at-1].content[0].text).toBe('New ');expect(blocks[at+1].content[0].text).toBe(' discoveries');
     }finally{vi.unstubAllGlobals();}
   });
   it('pastes text, not an upload, when the clipboard also carries text',async()=>{

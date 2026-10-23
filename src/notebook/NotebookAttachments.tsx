@@ -67,11 +67,16 @@ export type UploadAnchor={editor:Editor;range:()=>{from:number;to:number}|null};
 export function pasteAnchor(editor:Editor):UploadAnchor{
   const {from,to}=editor.state.selection,ystate=ySyncPluginKey.getState(editor.state);
   if(!ystate?.binding)return {editor,range:()=>{const size=editor.state.doc.content.size;return {from:Math.min(from,size),to:Math.min(to,size)};}};
-  const start=absolutePositionToRelativePosition(from,ystate.type,ystate.binding.mapping),end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
+  // Saved positions stick to the character on their left, so a selection's
+  // start is saved one step inside it (its first character) and stepped back
+  // out on use: text a teammate adds just before the selection stays out of it.
+  const inside=from<to?1:0;
+  const start=absolutePositionToRelativePosition(from+inside,ystate.type,ystate.binding.mapping),end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
   return {editor,range:()=>{
     const now=ySyncPluginKey.getState(editor.state);if(!now?.binding)return null;
     const a=relativePositionToAbsolutePosition(now.doc,now.type,start,now.binding.mapping),b=relativePositionToAbsolutePosition(now.doc,now.type,end,now.binding.mapping);
-    return a==null||b==null?null:{from:a,to:Math.max(a,b)};
+    if(a==null||b==null)return null;
+    const first=Math.max(0,a-inside);return {from:first,to:Math.max(first,b)};
   }};
 }
 export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
