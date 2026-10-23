@@ -12,6 +12,14 @@ describe('print layout capture',()=>{
     expect(measured.rect).toEqual({x:10,y:20,width:400,height:600});
     expect(measured.image).toEqual({x:13,y:96,width:360,height:480});
   });
+  it('measures a picture frame only once its image has loaded, so print waits for a placeholder',()=>{
+    const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
+    stage.insertAdjacentHTML('beforeend','<figure class="nb-attachment is-image" data-id="pic"><div class="nb-image"><div class="nb-image-frame"><img></div></div></figure>');
+    const image=stage.querySelector('img')!;
+    expect(captureNotebookPrintLayout(stage,content).attachments.pic.image).toBeUndefined();
+    Object.defineProperties(image,{complete:{value:true},naturalWidth:{value:640}});
+    expect(captureNotebookPrintLayout(stage,content).attachments.pic.image).toBeDefined();
+  });
   it('measures an enclosing quote rather than its nested attachment or table',()=>{
     const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
     content.innerHTML='<blockquote><p>Before attachment</p><figure class="nb-attachment" data-id="nested"><table></table></figure></blockquote>';

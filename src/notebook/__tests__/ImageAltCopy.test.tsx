@@ -10,8 +10,8 @@ const context: any = { sync: { pageId: 1, scope: { teamId: 2 } }, mobile: false,
 function view(alt: string | null, updateAttributes = vi.fn()) {
   const node: any = { attrs: { fileId: 5, name: 'gear.png', size: 10, mimeType: 'image/png', display: 'image', width: 640, alt, id: 'f1' } };
   const Comp = NotebookAttachment as any;
-  const utils = render(<NotebookFileContext.Provider value={context}><Comp node={node} updateAttributes={updateAttributes} /></NotebookFileContext.Provider>);
-  return { ...utils, updateAttributes, rerenderWith: (next: string | null) => utils.rerender(<NotebookFileContext.Provider value={context}><Comp node={{ attrs: { ...node.attrs, alt: next } }} updateAttributes={updateAttributes} /></NotebookFileContext.Provider>) };
+  const utils = render(<NotebookFileContext.Provider value={context}><Comp node={node} updateAttributes={updateAttributes} deleteNode={vi.fn()} selected /></NotebookFileContext.Provider>);
+  return { ...utils, updateAttributes, rerenderWith: (next: string | null) => utils.rerender(<NotebookFileContext.Provider value={context}><Comp node={{ attrs: { ...node.attrs, alt: next } }} updateAttributes={updateAttributes} deleteNode={vi.fn()} selected /></NotebookFileContext.Provider>) };
 }
 
 describe('image alt text and copy', () => {
@@ -38,7 +38,9 @@ describe('image alt text and copy', () => {
     const write = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { write }, configurable: true });
     view(null);
-    fireEvent.click(screen.getByRole('button', { name: 'Copy image' }));
+    // Copy image lives in the picture's menu (⋯ or right-click) now.
+    fireEvent.contextMenu(await screen.findByRole('img'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy image' }));
     expect(write).toHaveBeenCalledTimes(1);          // synchronously, inside the click
     expect(items[0].data['image/png']).toBeInstanceOf(Promise);
     await act(async () => { await items[0].data['image/png']; });

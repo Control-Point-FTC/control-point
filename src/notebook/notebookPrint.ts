@@ -5,11 +5,20 @@ import {notebookSchema,validatedNotebookDocument} from './editorSchema';
 import {validatedCanvas} from './canvasModel';
 import { entryMetaSummary } from './entryMeta';
 import {fileBlob} from './NotebookAttachments';
+import {parseCrop,type ImageCrop} from './fileNode';
 import {prepareAnnotatedPdf,printAnnotation,type PrintBudget} from './pdfPrint';
 import type {NotebookSync} from './NotebookSync';
 import type {NotebookPrintLayout,PrintRect} from './printLayout';
 import type {NotebookPageData} from './types';
 
+/** Only the cropped part of a picture, so the printout matches the page. */
+async function croppedDataURL(blob:Blob,crop:ImageCrop,signal:AbortSignal){
+  const bitmap=await createImageBitmap(blob);signal.throwIfAborted();
+  const canvas=document.createElement('canvas'),sx=Math.round(crop.x*bitmap.width),sy=Math.round(crop.y*bitmap.height);
+  canvas.width=Math.max(1,Math.round(crop.w*bitmap.width));canvas.height=Math.max(1,Math.round(crop.h*bitmap.height));
+  canvas.getContext('2d')?.drawImage(bitmap,sx,sy,canvas.width,canvas.height,0,0,canvas.width,canvas.height);bitmap.close();
+  return canvas.toDataURL('image/png');
+}
 function dataURL(blob:Blob,signal:AbortSignal):Promise<string>{
   return new Promise((resolve,reject)=>{
     const reader=new FileReader(),cancel=()=>reader.abort();
@@ -74,7 +83,7 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
     const targetWidth=Math.min(width,Math.max(120,Number(node.getAttribute('width'))||640));
     if(display==='image'){
       if(!['image/png','image/jpeg','image/gif','image/webp'].includes(blob.type))throw new Error(`${name} cannot be rendered as an image.`);
-      const image=document.createElement('img');image.alt=node.getAttribute('alt')||name;image.src=await dataURL(blob,signal);image.style.width=`${targetWidth}px`;image.style.maxWidth='100%';
+      const crop=parseCrop(node.getAttribute('crop'));const image=document.createElement('img');image.alt=node.getAttribute('alt')||name;image.src=crop?await croppedDataURL(blob,crop,signal):await dataURL(blob,signal);image.style.width=`${targetWidth}px`;image.style.maxWidth='100%';
       if(measured){if(!measured.image)throw new Error('Wait for the image preview to load before printing marks over it.');position(image,measured.image);image.style.height=`${measured.image.height}px`;}
       node.append(image);
     }else if(display==='pdf'){
