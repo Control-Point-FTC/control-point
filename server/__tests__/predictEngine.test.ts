@@ -252,9 +252,11 @@ describe("Prediction Engine 2.0 in Control Point", () => {
     expect(q.model).toBe("contextual");
     const pl = engine.match(2025, [100, 103], [101, 102], { level: "playoff" })!;
     expect(pl.pRedWin).not.toBe(q.pRedWin);
-    // Playoff alliances stay additive; a qualification alliance can only lose points to overlap.
+    // Playoff alliances stay additive; a qualification alliance loses points to overlap (both robots score in
+    // auto and TeleOp here), so the playoff means are strictly higher, and never lower on either side.
     expect(pl.red.mean).toBeGreaterThanOrEqual(q.red.mean);
     expect(pl.blue.mean).toBeGreaterThanOrEqual(q.blue.mean);
+    expect(pl.red.mean + pl.blue.mean - (q.red.mean + q.blue.mean)).toBeGreaterThan(0.5);
   });
 
   it("live forecasts read recorded bonus RPs from the stored FTC Scout records", async () => {
