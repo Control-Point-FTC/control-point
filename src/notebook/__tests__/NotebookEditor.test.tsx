@@ -128,6 +128,19 @@ describe('mounted collaborative notebook editor', () => {
       expect(blocks[at-1].content[0].text).toBe('Before: Team');expect(blocks[at+1].content[0].text).toBe(' discoveries');
     }finally{vi.unstubAllGlobals();}
   });
+  it('keeps selected text when a picture pasted over it fails to upload, and replaces it once one succeeds',async()=>{
+    const {sync}=await mount();let request:any;
+    class Upload{upload:any={};status=200;responseText='';onload:any;onerror:any;onabort:any;open=vi.fn();setRequestHeader=vi.fn();send=vi.fn();constructor(){request=this;}}
+    vi.stubGlobal('XMLHttpRequest',Upload);
+    try{
+      const content=screen.getByRole('textbox',{name:'Page content'}),ed=(content as HTMLElement&{editor:import('@tiptap/react').Editor}).editor,shot=new File(['png'],'image.png',{type:'image/png'});
+      const paste=()=>{act(()=>{ed.commands.setTextSelection({from:1,to:5});});fireEvent.paste(content,{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['Files'],getData:()=>''}});};
+      paste();act(()=>request.onerror());
+      expect(JSON.stringify(yDocToProsemirrorJSON(sync.doc))).toContain('Team discoveries');
+      paste();request.responseText=JSON.stringify({id:42,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
+      const json=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(json).toContain('"fileId":42');expect(json).not.toContain('Team discoveries');expect(json).toContain(' discoveries');
+    }finally{vi.unstubAllGlobals();}
+  });
   it('pastes text, not an upload, when the clipboard also carries text',async()=>{
     await mount();const Upload=vi.fn();vi.stubGlobal('XMLHttpRequest',Upload);
     try{

@@ -233,7 +233,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       const images = imageFilesFrom(event.clipboardData);
       if (images.length && view.editable && !event.clipboardData?.getData('text/plain')) {
         event.preventDefault(); const target = (view.dom as HTMLElement & { editor?: Editor }).editor;
-        if (target) { if (!view.state.selection.empty) target.commands.deleteSelection(); pasteImageRef.current(images[0], pasteAnchor(target)); }
+        if (target) pasteImageRef.current(images[0], pasteAnchor(target));
         if (images.length > 1) notify('Only the first picture was pasted. Paste the others one at a time.', 'info');
         return true;
       }

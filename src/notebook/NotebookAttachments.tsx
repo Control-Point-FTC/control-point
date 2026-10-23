@@ -60,14 +60,19 @@ export const NotebookFileView=NotebookFile.extend({addNodeView(){return ReactNod
 /** How a chosen file goes in: as it is (images show, others are chips),
  *  as a picture, or as a PDF printout whose pages show (and take ink). */
 export type UploadAs='auto'|'image'|'pdf';
-/** Where a paste happened: its editor and a spot that follows later edits
- *  (the member's own and teammates'), so a slow upload still lands there. */
-export type UploadAnchor={editor:Editor;position:()=>number|null};
+/** Where a paste happened: its editor and the selected range, which follows
+ *  later edits (the member's own and teammates') so a slow upload still
+ *  replaces it. The selection is only replaced once the picture is in. */
+export type UploadAnchor={editor:Editor;range:()=>{from:number;to:number}|null};
 export function pasteAnchor(editor:Editor):UploadAnchor{
-  const at=editor.state.selection.from,ystate=ySyncPluginKey.getState(editor.state);
-  if(!ystate?.binding)return {editor,position:()=>Math.min(at,editor.state.doc.content.size)};
-  const relative=absolutePositionToRelativePosition(at,ystate.type,ystate.binding.mapping);
-  return {editor,position:()=>{const now=ySyncPluginKey.getState(editor.state);return now?.binding?relativePositionToAbsolutePosition(now.doc,now.type,relative,now.binding.mapping):null;}};
+  const {from,to}=editor.state.selection,ystate=ySyncPluginKey.getState(editor.state);
+  if(!ystate?.binding)return {editor,range:()=>{const size=editor.state.doc.content.size;return {from:Math.min(from,size),to:Math.min(to,size)};}};
+  const start=absolutePositionToRelativePosition(from,ystate.type,ystate.binding.mapping),end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
+  return {editor,range:()=>{
+    const now=ySyncPluginKey.getState(editor.state);if(!now?.binding)return null;
+    const a=relativePositionToAbsolutePosition(now.doc,now.type,start,now.binding.mapping),b=relativePositionToAbsolutePosition(now.doc,now.type,end,now.binding.mapping);
+    return a==null||b==null?null:{from:a,to:Math.max(a,b)};
+  }};
 }
 export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
 export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
@@ -90,7 +95,7 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
       const target=anchor?.editor??latestEditor.current;
       if(!target || target.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
       const node={type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}};
-      const at=anchor?.position();
+      const at=anchor?.range();
       if(anchor && at==null)throw new Error('The picture uploaded, but the spot you pasted it into is gone. Paste it again.');
       // A paste goes where it was pasted, without pulling focus from where the member is typing now.
       const inserted=at!=null?target.chain().insertContentAt(at,node).run():target.chain().focus().insertContent(node).run();
