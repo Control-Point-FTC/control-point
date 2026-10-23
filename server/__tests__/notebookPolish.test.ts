@@ -41,13 +41,32 @@ describe("polish source and result", () => {
     expect(s.keep).toEqual(["l"]);
   });
 
-  it("turns the reply into blocks, keep lines into placeholders, unchanged text keeping its id", () => {
+  it("turns the reply into blocks, keep lines into placeholders, and unchanged text into the original block", () => {
     const s = polishSource(notes);
     const blocks = polishResult("```markdown\n## Meeting, Oct 22\n\n- Intake roller spacing 48mm works.\n- [ ] Order 2 more rollers (Maya)\n\n[[keep 0]]\n\nnext: test at scrimmage nov 1 then fix the lift\n```", s);
-    expect(blocks.map(b => b.type)).toEqual(["heading", "bulletList", "taskList", KEEP_NODE, "paragraph"]);
+    expect(blocks.map(b => b.type)).toEqual(["heading", "bulletList", "taskList", KEEP_NODE, KEEP_NODE]);
     expect(blocks[3]).toEqual({ type: KEEP_NODE, attrs: { id: "pic" } });
-    expect(blocks[4].attrs?.id).toBe("b"); // word for word: links and comments pinned to it stay
+    expect(blocks[4]).toEqual({ type: KEEP_NODE, attrs: { id: "b" } }); // word for word: the original, links and comments included
     expect(blocks[0].attrs?.id).not.toBe("a");
+  });
+
+  it("keeps an unchanged list whole, nested ids and all, and matches repeated text one block each", () => {
+    const list = { type: "bulletList", attrs: { id: "l" }, content: [{ type: "listItem", attrs: { id: "li" }, content: [para("lp", "Order belts")] }] };
+    const s = polishSource({ type: "doc", content: [para("t1", "TBD"), list, para("t2", "TBD")] });
+    expect(s.texts.get("TBD")).toEqual(["t1", "t2"]);
+    expect(polishResult("TBD\n\n- Order belts\n\nTBD", s)).toEqual([
+      { type: KEEP_NODE, attrs: { id: "t1" } }, { type: KEEP_NODE, attrs: { id: "l" } }, { type: KEEP_NODE, attrs: { id: "t2" } },
+    ]);
+  });
+
+  it("never sends formatting Markdown can't carry: those blocks stay exactly as they are", () => {
+    const sup = { type: "paragraph", attrs: { id: "s" }, content: [{ type: "text", text: "x" }, { type: "text", text: "2", marks: [{ type: "superscript" }] }] };
+    const under = { type: "paragraph", attrs: { id: "u" }, content: [{ type: "text", text: "key", marks: [{ type: "underline" }] }] };
+    const centred = { type: "heading", attrs: { id: "c", level: 2, textAlign: "center" }, content: [{ type: "text", text: "Title" }] };
+    const bold = { type: "paragraph", attrs: { id: "b" }, content: [{ type: "text", text: "strong", marks: [{ type: "bold" }] }] };
+    const s = polishSource({ type: "doc", content: [sup, under, centred, bold] });
+    expect(s.keep).toEqual(["s", "u", "c"]);
+    expect(s.markdown).toBe("[[keep 0]]\n\n[[keep 1]]\n\n[[keep 2]]\n\n**strong**");
   });
 
   it("refuses a reply that drops, repeats or reorders a kept block", () => {
@@ -57,6 +76,12 @@ describe("polish source and result", () => {
     expect(() => polishResult("One\n\n[[keep 0]]\n\n[[keep 0]]\n\n[[keep 1]]", two)).toThrow(/moved or dropped/);
     expect(() => polishResult("[[keep 0]]\n[[keep 1]]", two)).toThrow(/without any text/);
     expect(polishResult("One\n\n[[keep 0]]\n\nTwo\n\n[[keep 1]]", two)).toHaveLength(4);
+  });
+
+  it("flags a lost negation or a changed unit", () => {
+    expect(wordChanges("motor not powered", "Motor powered").dropped).toEqual(["not"]);
+    expect(wordChanges("no spare servo", "Spare servo").dropped).toEqual(["no"]);
+    expect(wordChanges("spacing 48mm", "Spacing 48 cm")).toEqual({ dropped: ["mm"], added: ["cm"] });
   });
 
   it("reports notes left out and words brought in, ignoring list numbering", () => {

@@ -17,12 +17,18 @@ const INNER_TEXT = new Set([...TEXT_BLOCKS, "listItem", "taskItem", "text", "har
 export const KEEP_NODE = "polishKeep";
 const KEEP_LINE = /^\s*\[\[keep (\d+)\]\]\s*$/;
 
-type Node = { type?: string; text?: string; attrs?: Record<string, any>; content?: Node[] };
+type Node = { type?: string; text?: string; attrs?: Record<string, any>; marks?: { type?: string }[]; content?: Node[] };
 export class PolishError extends Error { constructor(message: string, readonly status = 400) { super(message); } }
 
-const textOnly = (node: Node): boolean => !!node.type && INNER_TEXT.has(node.type) && (node.content ?? []).every(textOnly);
+/** Formatting Markdown carries both ways. A block with anything else (superscript, underline, colour,
+ *  a highlight, centred or indented text) is kept as it is: Bruno never sees it, so it can't lose it. */
+const MARKS = new Set(["bold", "italic", "strike", "code", "link"]);
+const plainAttrs = (node: Node) => (!node.attrs?.textAlign || node.attrs.textAlign === "left") && !node.attrs?.indent;
+const textOnly = (node: Node): boolean => !!node.type && INNER_TEXT.has(node.type) && plainAttrs(node)
+  && (node.marks ?? []).every(m => MARKS.has(m.type ?? "")) && (node.content ?? []).every(textOnly);
 
-export type PolishSource = { markdown: string; keep: string[]; blocks: string[]; texts: Map<string, string> };
+/** `texts`: each text block's Markdown, with the ids of the blocks that read exactly that (in page order). */
+export type PolishSource = { markdown: string; keep: string[]; blocks: string[]; texts: Map<string, string[]> };
 
 /** The page's top-level blocks (all, or the run `ids` names, which must sit
  *  together) as Markdown for Bruno, with every non-text block as a keep line. */
@@ -36,14 +42,14 @@ export function polishSource(content: unknown, ids?: string[]): PolishSource {
     if (last - first + 1 !== ids.length) throw new PolishError("Select one continuous part of the page to polish.");
     range = top.slice(first, last + 1);
   }
-  const lines: string[] = [], keep: string[] = [], blocks: string[] = [], texts = new Map<string, string>();
+  const lines: string[] = [], keep: string[] = [], blocks: string[] = [], texts = new Map<string, string[]>();
   for (const node of range) {
     const id = typeof node.attrs?.id === "string" ? node.attrs.id : "";
     if (!id) throw new PolishError("This page is still loading its block ids. Try again in a moment.", 409);
     blocks.push(id);
     if (TEXT_BLOCKS.has(node.type ?? "") && textOnly(node)) {
       const md = notebookBlockMarkdown(node).trim();
-      if (md) { lines.push(md); texts.set(md, id); }
+      if (md) { lines.push(md); texts.set(md, [...(texts.get(md) ?? []), id]); }
       continue;
     }
     lines.push(`[[keep ${keep.length}]]`);
@@ -56,23 +62,25 @@ export function polishSource(content: unknown, ids?: string[]): PolishSource {
 }
 
 /** Bruno's reply as blocks, keep lines as placeholders for the originals. A
- *  reply that loses, repeats or reorders a keep line is refused whole. Blocks
- *  that come back word for word keep their old id, so links, comments and
- *  drawings pinned to them stay put. */
+ *  reply that loses, repeats or reorders a keep line is refused whole. A block
+ *  that comes back word for word is the original too (a placeholder for it),
+ *  nested items and their ids included, so links, comments and drawings
+ *  pinned anywhere inside it stay put. */
 export function polishResult(reply: string, source: Pick<PolishSource, "keep" | "texts">): JSONContent[] {
   let text = String(reply ?? "").replace(/\r\n?/g, "\n").trim();
   const fenced = /^```(?:markdown|md)?\n([\s\S]*?)\n```$/i.exec(text);
   if (fenced) text = fenced[1].trim();
   if (!text) throw new PolishError("Bruno came back empty. Try again.", 502);
-  const out: JSONContent[] = [], seen: number[] = [], used = new Set<string>();
+  const out: JSONContent[] = [], seen: number[] = [];
+  // Repeated text (two "TBD" lines) matches its blocks one each, in order.
+  const unused = new Map([...source.texts].map(([md, ids]) => [md, [...ids]]));
   let buffer: string[] = [];
   const flush = () => {
     const segment = buffer.join("\n").trim(); buffer = [];
     if (!segment) return;
     for (const block of markdownToNotebookBlocks(segment)) {
-      const same = source.texts.get(notebookBlockMarkdown(block).trim());
-      if (same && !used.has(same)) { used.add(same); block.attrs = { ...block.attrs, id: same }; }
-      out.push(block);
+      const same = unused.get(notebookBlockMarkdown(block).trim())?.shift();
+      out.push(same ? { type: KEEP_NODE, attrs: { id: same } } : block);
     }
   };
   for (const line of text.split("\n")) {
@@ -85,18 +93,20 @@ export function polishResult(reply: string, source: Pick<PolishSource, "keep" | 
   }
   flush();
   if (seen.length !== source.keep.length || seen.some((n, i) => n !== i)) throw new PolishError("Bruno moved or dropped a picture, table or file, so its version wasn't used. Try again.", 502);
-  if (!out.some(b => b.type !== KEEP_NODE)) throw new PolishError("Bruno came back without any text. Try again.", 502);
+  if (out.length <= source.keep.length) throw new PolishError("Bruno came back without any text. Try again.", 502);
   return out;
 }
 
-const STOP = new Set("the and for are but not you all any can had her was one our out has him his how its may new now see two way who did get let put say she too use that with have this will your from they been were what when them than then into just like over such some only also very would could should there their these those which about after before where while being".split(" "));
-/** Words that matter (3+ letters or any number), lowercased, Markdown and keep lines left out. */
+// Negations ("not", "no", "never") and short units ("mm", "cm", "kg") always count: losing one changes the meaning.
+const STOP = new Set("the and for are but you all any can had her was one our out has him his how its may new now see two way who did get let put say she too use that with have this will your from they been were what when them than then into just like over such some only also very would could should there their these those which about after before where while being".split(" "));
+const STOP2 = new Set("am an as at be by do he if in is it me my of on or so to up us we".split(" "));
+/** Words that matter (any number, 2+ letters but filler), lowercased, Markdown and keep lines left out. */
 function words(markdown: string): Set<string> {
   // List numbers are formatting, not notes: "1." added in front of steps is not a new fact.
   const plain = markdown.replace(/\[\[keep \d+\]\]/g, " ").replace(/\]\([^)]*\)/g, "]").replace(/^\s*\d+[.)]\s/gm, " ").toLowerCase();
   // Numbers apart from their units, so "48mm" and "48 mm" read the same.
   const found = plain.match(/\p{N}+(?:[.,]\p{N}+)*|\p{L}[\p{L}'’-]*/gu) ?? [];
-  return new Set(found.map(w => w.replace(/['’-]+$/, "")).filter(w => (/\d/.test(w) || w.length >= 3) && !STOP.has(w)));
+  return new Set(found.map(w => w.replace(/['’-]+$/, "")).filter(w => /\d/.test(w) || (w.length >= 3 ? !STOP.has(w) : w.length === 2 && !STOP2.has(w))));
 }
 /** What the member should look at before applying: notes Bruno left out, and words it brought in (usually headings). */
 export function wordChanges(before: string, after: string): { dropped: string[]; added: string[] } {
