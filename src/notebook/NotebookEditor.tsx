@@ -177,10 +177,15 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   useEffect(() => {
     const el = paperScroll.current;
     if (!el || mobile) return;
+    // A slow pinch sends tiny deltas: carry the unrounded zoom between events (until the zoom
+    // is changed some other way), so they add up instead of each rounding back to the same percent.
+    let exact = zoomRef.current;
     const wheel = (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
-      zoomTo(zoomRef.current * Math.exp(-e.deltaY / (e.deltaMode === 1 ? 15 : 250)));
+      if (Math.round(exact) !== zoomRef.current) exact = zoomRef.current;
+      exact = Math.max(50, Math.min(300, exact * Math.exp(-e.deltaY / (e.deltaMode === 1 ? 15 : 250))));
+      zoomTo(exact);
     };
     const key = (e: KeyboardEvent) => {
       const next = zoomKey(e, zoomRef.current);

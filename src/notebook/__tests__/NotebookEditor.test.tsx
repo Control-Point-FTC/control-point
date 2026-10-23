@@ -206,6 +206,10 @@ describe('mounted collaborative notebook editor', () => {
     expect(out.defaultPrevented).toBe(true); // the browser doesn't zoom the whole app
     expect(Number(paper.style.zoom)).toBeLessThan(1);
     expect(screen.getByText(/^Zoom \d+%$/).textContent).toBe(`Zoom ${Math.round(Number(paper.style.zoom) * 100)}%`);
+    // A slow trackpad pinch: many 1px deltas still add up.
+    const start = Number(paper.style.zoom);
+    for (let i = 0; i < 30; i++) wheel(1);
+    expect(Number(paper.style.zoom)).toBeLessThan(start);
     for (let i = 0; i < 40; i++) wheel(500);
     expect(paper.style.zoom).toBe('0.5');
     const content = screen.getByRole('textbox', { name: 'Page content' });
