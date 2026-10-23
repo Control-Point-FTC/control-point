@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1",
-    "@control-scout/predict-engine": "file:vendor/control-scout-predict-engine-2.10.0.tgz",
+    "@control-scout/predict-engine": "file:vendor/control-scout-predict-engine-2.11.0.tgz",
     "@libsql/client": "^0.18.0",
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.1.14",

@@ -247,12 +247,14 @@ describe("PredictStore sync", () => {
 });
 
 describe("Prediction Engine 2.0 in Control Point", () => {
-  it("match odds use the contextual model, with the level; scores don't change", () => {
+  it("match odds use the contextual model, with the level; only quals lose alliance overlap (engine 2.11)", () => {
     const q = engine.match(2025, [100, 103], [101, 102])!;
     expect(q.model).toBe("contextual");
     const pl = engine.match(2025, [100, 103], [101, 102], { level: "playoff" })!;
     expect(pl.pRedWin).not.toBe(q.pRedWin);
-    expect(pl.red.mean).toBe(q.red.mean);
+    // Playoff alliances stay additive; a qualification alliance can only lose points to overlap.
+    expect(pl.red.mean).toBeGreaterThanOrEqual(q.red.mean);
+    expect(pl.blue.mean).toBeGreaterThanOrEqual(q.blue.mean);
   });
 
   it("live forecasts read recorded bonus RPs from the stored FTC Scout records", async () => {
