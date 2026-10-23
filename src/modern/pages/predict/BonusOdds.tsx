@@ -48,7 +48,7 @@ export function BonusOdds({ season, bonus, className }: { season: number; bonus:
           </li>
         ))}
       </ul>
-      <p className="px-3 pb-2.5 text-[11px] leading-snug text-muted-foreground">Expected RP is 3 × the win chance plus each bonus chance, from each alliance's likely score. Qualification matches only. {bonus.reason}</p>
+      <p className="px-3 pb-2.5 text-[11px] leading-snug text-muted-foreground">Expected RP is 3 for a win and 1 for a tie, weighted by their chances (a tie is about 1% in an even match), plus each bonus chance, from each alliance's likely score. Qualification matches only. {bonus.reason}</p>
     </details>
   );
 }
