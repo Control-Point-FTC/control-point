@@ -20,7 +20,7 @@ export function captureNotebookPrintLayout(stage:HTMLElement,content:HTMLElement
   };
   for(const figure of stage.querySelectorAll<HTMLElement>('figure.nb-attachment[data-id]')){
     const id=figure.dataset.id;if(!id)continue;const bounds=figure.getBoundingClientRect();
-    const image=figure.querySelector<HTMLElement>(':scope > img'),textBox=figure.closest<HTMLElement>('.nb-canvas-text');
+    const image=figure.querySelector<HTMLElement>(':scope > img,:scope > .nb-image > .nb-image-frame'),textBox=figure.closest<HTMLElement>('.nb-canvas-text');
     const relativeRect=(element:HTMLElement)=>textBox?localRect(element,figure):rect(element,bounds);
     attachments[id]={rect:textBox?localRect(figure,textBox):rect(figure),image:image?relativeRect(image):undefined,pages:Array.from(figure.querySelectorAll<HTMLElement>(':scope > .nb-pdf-printout > .nb-pdf-page > div')).map(relativeRect)};
   }

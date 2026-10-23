@@ -1,11 +1,12 @@
 import React,{createContext,useContext,useEffect,useRef,useState,lazy,Suspense} from 'react';
 import { NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps,type Editor } from '@tiptap/react';
-import { MAX_ALT, NotebookFile, validNotebookFile } from './fileNode';
+import { NotebookFile, validNotebookFile } from './fileNode';
 import type { NotebookSync } from './NotebookSync';
 import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, ySyncPluginKey } from '@tiptap/y-tiptap';
 import { createAbsolutePositionFromRelativePosition, createRelativePositionFromTypeIndex } from 'yjs';
 import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
+import { NotebookImage } from './NotebookImage';
 import { notify } from '../components/dialog';
 import './attachments.css';
 const NotebookPdf=lazy(()=>import('./NotebookPdf'));
@@ -14,20 +15,17 @@ export const notebookFileURL=(pageId:number,fileId:number)=>`/api/notebook/pages
 // Controls and nested PDF surfaces own their input; image backgrounds belong
 // to the surrounding canvas so pen/eraser gestures can begin over a preview.
 export function attachmentOwnsInput(target:EventTarget|null){
-  return target instanceof Element && !!target.closest('button,input,select,textarea,label,a,.nb-file-chip,.nb-pdf-printout');
+  return target instanceof Element && !!target.closest('button,input,select,textarea,label,a,.nb-file-chip,.nb-pdf-printout,.nb-image-handle,.nb-crop-box,.nb-image-caption');
 }
 export async function fileBlob(sync:NotebookSync,fileId:number,signal?:AbortSignal){
   const response=await apiFetch(notebookFileURL(sync.pageId,fileId),{cache:'no-store',signal,headers:sync.scope?{'X-CP-Notebook-Team':String(sync.scope.teamId)}:undefined});
   if(!response.ok)throw new Error(response.status===404?'Attachment unavailable or permission changed.':'Cannot load this attachment. Try again.');
   return response.blob();
 }
-export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
+export function NotebookAttachment({node,updateAttributes,deleteNode,selected}:NodeViewProps){
   const context=useContext(NotebookFileContext),[image,setImage]=useState(''),[error,setError]=useState('');
-  const {fileId,name,size,mimeType,display,width,alt}=node.attrs;
+  const {fileId,name,size,mimeType,display,width}=node.attrs;
   const [copied,setCopied]=useState('');
-  // The description field follows the saved alt text (undo, teammates) and
-  // only saves when the person actually edited it.
-  const [altDraft,setAltDraft]=useState<string|null>(null);
   // Copy image: as PNG, which every clipboard accepts.
   const copyImage=async()=>{
     if(!context)return;
@@ -37,7 +35,7 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
       // arrives as a promise once downloaded and converted.
       const png=fileBlob(context.sync,fileId).then(blob=>blob.type==='image/png'?blob:new Promise<Blob>((resolve,reject)=>{createImageBitmap(blob).then(bitmap=>{const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d')?.drawImage(bitmap,0,0);canvas.toBlob(b=>b?resolve(b):reject(new Error('convert')),'image/png');},reject);}));
       await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);setCopied('Image copied.');
-    }catch{setCopied('Copying images isn’t available here. Use Download original instead.');}
+    }catch{setCopied('Copying images isn’t available here. Use Save as… instead.');}
   };
   useEffect(()=>{
     setImage('');setError('');if(!context || display!=='image')return;
@@ -47,13 +45,15 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
   },[context?.sync,fileId,display]);
   const download=async()=>{if(!context)return;try{const blob=await fileBlob(context.sync,fileId);const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);setError('');}catch(e){setError((e as Error).message);}};
   const open=()=>{if(!context)return;const link=document.createElement('a');link.href=notebookFileURL(context.sync.pageId,fileId);link.target='_blank';link.rel='noopener noreferrer';link.click();};
+  if(display==='image')return <NodeViewWrapper as="figure" className="nb-attachment is-image" contentEditable={false} data-file-id={fileId} data-id={node.attrs.id} onPointerDown={(e:React.PointerEvent)=>{if(attachmentOwnsInput(e.target))e.stopPropagation();}} onKeyDown={(e:React.KeyboardEvent)=>{if(attachmentOwnsInput(e.target))e.stopPropagation();}}>
+    <NotebookImage node={node} updateAttributes={updateAttributes} deleteNode={deleteNode} selected={selected} context={context} image={image} error={error} onDownload={()=>{void download();}} onOpen={open} onCopy={()=>{void copyImage();}} copied={copied} onBroken={()=>setError('This image could not be rendered. Use Save as… to get its original file.')}/>
+    {error && <p role="alert">{error}</p>}
+  </NodeViewWrapper>;
   return <NodeViewWrapper as="figure" className="nb-attachment" contentEditable={false} data-file-id={fileId} data-id={node.attrs.id} onPointerDown={e=>{if(attachmentOwnsInput(e.target))e.stopPropagation();}} onKeyDown={e=>{if(attachmentOwnsInput(e.target))e.stopPropagation();}}>
     <div className="nb-file-chip">{context && !context.mobile && context.editable && <span className="nb-file-drag" data-drag-handle draggable title="Drag to move within this page" aria-label="Move attachment"><svg aria-hidden="true" width="12" height="20" viewBox="0 0 12 20" fill="currentColor"><circle cx="3" cy="4" r="1.3"/><circle cx="9" cy="4" r="1.3"/><circle cx="3" cy="10" r="1.3"/><circle cx="9" cy="10" r="1.3"/><circle cx="3" cy="16" r="1.3"/><circle cx="9" cy="16" r="1.3"/></svg></span>}<svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"><path d="M5 3h9l5 5v13H5V3Zm9 0v5h5M8 13h8m-8 4h6"/></svg><span><strong>{name}</strong><small>{Math.max(1,Math.ceil(size/1024)).toLocaleString()} KB</small></span><button onClick={open}>Open</button><button onClick={download}>Download original</button></div>
     {display==='pdf' && context && <Suspense fallback={<p role="status">Loading PDF tools…</p>}><NotebookPdf sync={context.sync} fileId={fileId} width={width} blockId={node.attrs.id} context={context}/></Suspense>}
     {context && !context.mobile && context.editable && mimeType==='application/pdf' && <div><button onClick={()=>updateAttributes({display:display==='pdf'?'chip':'pdf'})}>{display==='pdf'?'Show attachment only':'Insert PDF printout'}</button>{display==='pdf' && <label>Printout width <input aria-label="PDF display width" type="range" min="240" max="1200" value={width||640} onChange={e=>updateAttributes({width:Number(e.target.value)})}/></label>}</div>}
-    {display==='image' && (image?<img src={image} alt={alt||name} style={{width:Math.min(1600,width||640)}} onError={()=>setError('This image could not be rendered. Download its original file.')}/>:<p role="status">Loading image…</p>)}
-    {display==='image' && context && !context.mobile && <div className="nb-image-tools">{context.editable && <label>Description for screen readers <input aria-label="Image description (alt text)" maxLength={MAX_ALT} placeholder={name} value={altDraft??alt??''} onChange={e=>setAltDraft(e.target.value)} onBlur={()=>{if(altDraft===null)return;const value=altDraft.trim();setAltDraft(null);if((value||null)!==(alt??null))updateAttributes({alt:value||null});}}/></label>}<button onClick={()=>{void copyImage();}}>Copy image</button>{copied && <span role="status">{copied}</span>}</div>}
-    {context && !context.mobile && context.editable && mimeType.startsWith('image/') && <label>Image width <input aria-label="Image display width" type="range" min="120" max="1200" value={width||640} onChange={e=>updateAttributes({display:'image',width:Number(e.target.value)})}/></label>}
+    {context && !context.mobile && context.editable && PICTURE_TYPES.includes(mimeType) && <div><button onClick={()=>updateAttributes({display:'image'})}>Show as picture</button></div>}
     {error && <p role="alert">{error}</p>}
   </NodeViewWrapper>;
 }
