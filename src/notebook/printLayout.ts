@@ -20,7 +20,9 @@ export function captureNotebookPrintLayout(stage:HTMLElement,content:HTMLElement
   };
   for(const figure of stage.querySelectorAll<HTMLElement>('figure.nb-attachment[data-id]')){
     const id=figure.dataset.id;if(!id)continue;const bounds=figure.getBoundingClientRect();
-    const image=figure.querySelector<HTMLElement>(':scope > img,:scope > .nb-image > .nb-image-frame'),textBox=figure.closest<HTMLElement>('.nb-canvas-text');
+    const frame=figure.querySelector<HTMLElement>(':scope > .nb-image > .nb-image-frame'),shown=frame?.querySelector('img');
+    // A picture's frame counts only once its image has loaded; before that it's a placeholder's size and print waits.
+    const image=figure.querySelector<HTMLElement>(':scope > img')??(shown?.complete&&shown.naturalWidth>0?frame:null),textBox=figure.closest<HTMLElement>('.nb-canvas-text');
     const relativeRect=(element:HTMLElement)=>textBox?localRect(element,figure):rect(element,bounds);
     attachments[id]={rect:textBox?localRect(figure,textBox):rect(figure),image:image?relativeRect(image):undefined,pages:Array.from(figure.querySelectorAll<HTMLElement>(':scope > .nb-pdf-printout > .nb-pdf-page > div')).map(relativeRect)};
   }

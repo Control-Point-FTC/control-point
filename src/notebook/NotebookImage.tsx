@@ -11,12 +11,13 @@ type FileContext=NonNullable<React.ContextType<typeof NotebookFileContext>>;
 export const MIN_IMAGE_WIDTH=120,MAX_IMAGE_WIDTH=1600;
 const clampWidth=(value:number)=>Math.round(Math.max(MIN_IMAGE_WIDTH,Math.min(MAX_IMAGE_WIDTH,value)));
 const clamp01=(value:number)=>Math.max(0,Math.min(1,value));
-/** One drag of a crop edge or the whole box, in fractions of the picture. Keeps at least 5% each way. */
-export function dragCrop(start:ImageCrop,edge:string,dx:number,dy:number):ImageCrop{
-  const min=0.05;let {x,y,w,h}=start;
+/** One drag of a crop edge or the whole box, in fractions of the picture. Keeps at least 5% each way,
+ *  and at least `minW` of the width (so the cropped part never saves narrower than a picture can be). */
+export function dragCrop(start:ImageCrop,edge:string,dx:number,dy:number,minW=0.05):ImageCrop{
+  const min=0.05,minX=Math.max(min,Math.min(1,minW));let {x,y,w,h}=start;
   if(edge==='move'){x=clamp01(Math.min(1-w,x+dx));y=clamp01(Math.min(1-h,y+dy));return {x,y,w,h};}
-  if(edge.includes('w')){const left=Math.max(0,Math.min(x+w-min,x+dx));w+=x-left;x=left;}
-  if(edge.includes('e'))w=Math.max(min,Math.min(1-x,w+dx));
+  if(edge.includes('w')){const left=Math.max(0,Math.min(x+w-minX,x+dx));w+=x-left;x=left;}
+  if(edge.includes('e'))w=Math.max(minX,Math.min(1-x,w+dx));
   if(edge.includes('n')){const top=Math.max(0,Math.min(y+h-min,y+dy));h+=y-top;y=top;}
   if(edge.includes('s'))h=Math.max(min,Math.min(1-y,h+dy));
   return {x,y,w,h};
@@ -36,8 +37,11 @@ export function NotebookImage({node,updateAttributes,deleteNode,selected,context
   const [menu,setMenu]=useState<{x:number;y:number}|null>(null);
   const [focused,setFocused]=useState(false);
   const [linkCopied,setLinkCopied]=useState('');
-  const frame=useRef<HTMLDivElement>(null),altField=useRef<HTMLInputElement>(null);
+  const frame=useRef<HTMLDivElement>(null),altField=useRef<HTMLInputElement>(null),cropBox=useRef<HTMLDivElement>(null);
   useEffect(()=>{setNatural(null);},[image]);
+  // Starting a crop puts the keyboard on the crop box (Enter applies, Escape cancels).
+  const isCropping=!!cropping;
+  useEffect(()=>{if(isCropping)cropBox.current?.focus({preventScroll:true});},[isCropping]);
   const shown=draftWidth??(width||640);
   const active=selected||focused||!!cropping;
   // Client pixels per CSS pixel: the page can be zoomed.
@@ -54,7 +58,9 @@ export function NotebookImage({node,updateAttributes,deleteNode,selected,context
     if(!cropping)return;event.preventDefault();event.stopPropagation();
     const el=event.currentTarget as HTMLElement,box=frame.current?.getBoundingClientRect(),startX=event.clientX,startY=event.clientY,start=cropping;
     if(!box?.width||!box.height)return;el.setPointerCapture?.(event.pointerId);
-    const move=(e:PointerEvent)=>setCropping(dragCrop(start,edge,(e.clientX-startX)/box.width,(e.clientY-startY)/box.height));
+    // The picture at full size on the page: a crop narrower than the smallest picture width would be enlarged on Done.
+    const minW=MIN_IMAGE_WIDTH/((width||640)/crop.w);
+    const move=(e:PointerEvent)=>setCropping(dragCrop(start,edge,(e.clientX-startX)/box.width,(e.clientY-startY)/box.height,minW));
     const up=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);el.removeEventListener('pointercancel',up);};
     el.addEventListener('pointermove',move);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
   };
@@ -92,10 +98,10 @@ export function NotebookImage({node,updateAttributes,deleteNode,selected,context
   const imageStyle:React.CSSProperties=framed?{position:'absolute',width:`${100/view.w}%`,height:`${100/view.h}%`,left:`${-view.x/view.w*100}%`,top:`${-view.y/view.h*100}%`,maxWidth:'none'}:{};
   return <div className={`nb-image ${active?'is-active':''} ${cropping?'is-cropping':''}`} onFocus={()=>setFocused(true)} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setFocused(false);}}
     onContextMenu={e=>{e.preventDefault();e.stopPropagation();setMenu({x:e.clientX,y:e.clientY});}}
-    onKeyDown={e=>{if(cropping){if(e.key==='Enter'){e.preventDefault();finishCrop();}else if(e.key==='Escape'){e.preventDefault();setCropping(null);}}}}>
+    onKeyDown={e=>{if(cropping&&!(e.target instanceof HTMLButtonElement)){if(e.key==='Enter'){e.preventDefault();finishCrop();}else if(e.key==='Escape'){e.preventDefault();setCropping(null);}}}}>
     <div ref={frame} className="nb-image-frame" style={frameStyle}>
       {image?<img src={image} alt={alt||name} draggable={false} style={imageStyle} onLoad={e=>setNatural({w:e.currentTarget.naturalWidth,h:e.currentTarget.naturalHeight})} onError={()=>{setNatural(null);onBroken();}}/>:!error&&<p role="status">Loading image…</p>}
-      {cropping && <div className="nb-crop-box" style={{left:`${cropping.x*100}%`,top:`${cropping.y*100}%`,width:`${cropping.w*100}%`,height:`${cropping.h*100}%`}} onPointerDown={cropDrag('move')}>
+      {cropping && <div className="nb-crop-box" tabIndex={0} role="group" aria-label="Crop area: drag the edges or the box, Enter to apply, Escape to cancel" ref={cropBox} style={{left:`${cropping.x*100}%`,top:`${cropping.y*100}%`,width:`${cropping.w*100}%`,height:`${cropping.h*100}%`}} onPointerDown={cropDrag('move')}>
         {['n','s','e','w','nw','ne','sw','se'].map(edge=><span key={edge} className={`nb-crop-handle is-${edge}`} onPointerDown={cropDrag(edge)}/>)}
       </div>}
       {editable && active && !cropping && image && ['nw','ne','sw','se'].map(corner=><span key={corner} className={`nb-image-handle is-${corner}`} aria-hidden="true" onPointerDown={resize(corner)}/>)}

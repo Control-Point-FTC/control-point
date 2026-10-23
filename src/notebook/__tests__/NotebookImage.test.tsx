@@ -45,6 +45,9 @@ describe('picture crop format', () => {
     expect(dragCrop(full, 'se', -0.5, -0.4)).toEqual({ x: 0, y: 0, w: 0.5, h: 0.6 });
     expect(dragCrop(full, 'e', -2, 0).w).toBeCloseTo(0.05);
     expect(dragCrop({ x: 0.1, y: 0.1, w: 0.5, h: 0.5 }, 'move', 0.9, -0.9)).toEqual({ x: 0.5, y: 0, w: 0.5, h: 0.5 });
+    // A 640px picture can't crop narrower than the 120px a picture may be (120/640 of its width).
+    expect(dragCrop(full, 'e', -0.99, 0, 120 / 640).w).toBeCloseTo(120 / 640);
+    expect(dragCrop(full, 'w', 0.99, 0, 120 / 640)).toMatchObject({ w: expect.closeTo(120 / 640), x: expect.closeTo(1 - 120 / 640) });
   });
 });
 
@@ -76,6 +79,36 @@ describe('notebook picture', () => {
     fireEvent.pointerUp(right, { pointerId: 1 });
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(updateAttributes).toHaveBeenCalledWith({ display: 'image', crop: '0,0,0.5,1', width: 300 });
+  });
+
+  it('never saves a crop wider than it looks: the narrowest crop is the smallest picture width', async () => {
+    const { updateAttributes } = picture({ width: 640 });
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Crop' }));
+    (document.querySelector('.nb-image-frame') as HTMLElement).getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, width: 640, height: 320, right: 640, bottom: 320, toJSON: () => ({}) });
+    const right = document.querySelector('.nb-crop-handle.is-e')!;
+    fireEvent.pointerDown(right, { clientX: 640, clientY: 160, pointerId: 1 });
+    fireEvent.pointerMove(right, { clientX: 0, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(right, { pointerId: 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(updateAttributes).toHaveBeenCalledWith(expect.objectContaining({ width: 120 }));
+    expect(parseCrop(updateAttributes.mock.calls[0][0].crop)!.w * 640).toBeCloseTo(120, 0);
+  });
+
+  it('leaves Enter on Cancel and Reset to those buttons, and applies from the crop box', async () => {
+    const { updateAttributes } = picture({ width: 600 });
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Crop' }));
+    const box = screen.getByRole('group', { name: /Crop area/ });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Reset' }), { key: 'Enter' });
+    expect(updateAttributes).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: /Crop area/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Crop' }));
+    fireEvent.keyDown(screen.getByRole('group', { name: /Crop area/ }), { key: 'Enter' });
+    expect(updateAttributes).toHaveBeenCalledWith({ display: 'image', crop: null, width: 600 });
   });
 
   it('shows a cropped picture through a frame of the visible part', async () => {
