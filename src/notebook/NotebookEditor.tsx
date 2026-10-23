@@ -36,8 +36,10 @@ import { NotebookEntryMeta, entryMetaSettled } from './NotebookEntryMeta';
 import { NotebookReviewBar } from './NotebookReview';
 import { useNotebookMobile } from './useNotebookMobile';
 import { pasteNotebookText } from './pasteText';
+import { imageFilesFrom } from '../utils/mediaFiles';
 import { createPortal } from 'react-dom';
-import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
+import { EyeOff, MessageSquare } from 'lucide-react';
+import { NotebookFileContext,NotebookFileView,pasteAnchor,useNotebookUpload,type UploadAnchor } from './NotebookAttachments';
 import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
 import { registerNotebookSelection, selectedNotebookBlocks } from './brunoScreen';
 import { NotebookHistory } from './NotebookHistory';
@@ -60,6 +62,15 @@ export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json'
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Whether "Pages linking here" and Discussions are tucked away, remembered per member and team on this device. */
+function usePageExtrasHidden(key?: string) {
+  const read = (k?: string) => { if (!k) return false; try { return localStorage.getItem(k) === 'hidden'; } catch { return false; } };
+  const [state, setState] = useState(() => ({ key, hidden: read(key) }));
+  const hidden = state.key === key ? state.hidden : read(key);
+  const change = (next: boolean) => { setState({ key, hidden: next }); if (key) try { if (next) localStorage.setItem(key, 'hidden'); else localStorage.removeItem(key); } catch { /* Still toggles for this visit without storage. */ } };
+  return [hidden, change] as const;
 }
 
 export type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null; barHost?: HTMLElement | null; toolbarVisible?:boolean;blockTarget?:string|null;threadTarget?:number|null;onOpenOther?:(id:number,blockId?:string)=>void };
@@ -145,6 +156,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [readerPreferences,setReaderPreferences]=useNotebookReaderPreferences(sync.scope?`cp-notebook-reader:${sync.scope.memberId}:${sync.scope.teamId}`:undefined);
   const [paperView,setPaperView]=useNotebookPaperView(sync.scope?`cp-notebook-paper:${sync.scope.memberId}:${sync.scope.teamId}:${sync.pageId}`:undefined);
   const [viewError, setViewError] = useState('');
+  const [extrasHidden, setExtrasHidden] = usePageExtrasHidden(sync.scope ? `cp-notebook-page-extras:${sync.scope.memberId}:${sync.scope.teamId}` : undefined);
+  // A link to a discussion thread always shows it.
+  const showExtras = !extrasHidden || !!threadTarget || (threadTarget === undefined && params.has('thread'));
   const [drawPanel, setDrawPanel] = useState<React.ReactNode>(null);
   const [drawingScope,setDrawingScopeState]=useState<string|null>(null);
   const [requestedGroup,setRequestedGroup]=useState<{group:string;key:number}>();
@@ -208,12 +222,21 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     if (getScreenEntity('notebookPageId') !== sync.pageId) return;
     setScreenEntity('notebookBlockIds', selectedNotebookBlocks(ed.state));
   };
+  const pasteImageRef = useRef<(file: File, anchor: UploadAnchor) => void>(() => {});
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
     extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), MemberMention.configure(mentions), LinkStates.configure({ pages: () => pagesRef.current }), SlashMenu.configure({ enabled: () => !mobileRef.current }), BlockMoves, Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
+      // A copied picture or screenshot (no text alongside it) uploads like Insert > Pictures.
+      const images = imageFilesFrom(event.clipboardData);
+      if (images.length && view.editable && !event.clipboardData?.getData('text/plain')) {
+        event.preventDefault(); const target = (view.dom as HTMLElement & { editor?: Editor }).editor;
+        if (target) pasteImageRef.current(images[0], pasteAnchor(target));
+        if (images.length > 1) notify('Only the first picture was pasted. Paste the others one at a time.', 'info');
+        return true;
+      }
       if (!mobileRef.current || !view.editable) return false;
       const text = event.clipboardData?.getData('text/plain'); if (text === undefined) return true;
       event.preventDefault(); if (editor) pasteNotebookText(editor, text); return true;
@@ -285,6 +308,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     return () => window.removeEventListener('beforeunload', unload);
   }, [sync]);
   const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
+  pasteImageRef.current = (file, anchor) => fileUpload.upload(file, 'image', true, anchor);
   return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
     {sync.storageError && <div className="nb-alert" role="alert">Offline recovery is unavailable: {sync.storageError}. Keep this page open until it saves.
       <Button variant="outline" onClick={() => downloadNotebookJSON({ title, content: yDocToProsemirrorJSON(sync.doc) }, 'notebook-unsaved-recovery.json')}>Download unsaved changes</Button>
@@ -333,8 +357,10 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       <NotebookEntryMeta pageId={sync.pageId} teamId={sync.scope?.teamId} revision={sync.data?.revision} disabled={blocked} />
       <NotebookReviewBar pageId={sync.pageId} teamId={sync.scope?.teamId} />
       <RecordNavigationContext.Provider value={openRecordPath}><MentionSourceContext.Provider value={mentions}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></MentionSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}{!mobile && <MentionPopup editor={activeEditor ?? editor} members={mentionMembers} selfId={selfId} onMention={sendMention} />}
-      <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
-      {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
+      <div className="nb-extras-toggle"><button type="button" aria-expanded={showExtras} onClick={() => setExtrasHidden(showExtras)}>{showExtras ? <EyeOff size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}{showExtras ? (mobile ? 'Hide links' : 'Hide links and discussions') : (mobile ? 'Show links' : 'Show links and discussions')}</button></div>
+      {/* Hidden, not unmounted: a half-written discussion keeps its draft. */}
+      <div className="nb-extras" hidden={!showExtras}><section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
+      {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}</div>
     </article></div>
   </div></NotebookFileContext.Provider>;
 }

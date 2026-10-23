@@ -2,8 +2,11 @@ import React,{createContext,useContext,useEffect,useRef,useState,lazy,Suspense} 
 import { NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps,type Editor } from '@tiptap/react';
 import { MAX_ALT, NotebookFile, validNotebookFile } from './fileNode';
 import type { NotebookSync } from './NotebookSync';
+import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, ySyncPluginKey } from '@tiptap/y-tiptap';
+import { createAbsolutePositionFromRelativePosition, createRelativePositionFromTypeIndex } from 'yjs';
 import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
+import { notify } from '../components/dialog';
 import './attachments.css';
 const NotebookPdf=lazy(()=>import('./NotebookPdf'));
 export const NotebookFileContext=createContext<{sync:NotebookSync;mobile:boolean;editable:boolean;drawingScope:string|null;setDrawingScope:(id:string|null)=>void;onRibbon:(panel:React.ReactNode)=>void;onEditorFocus:(editor:Editor)=>void;onEditorRemoved:(editor:Editor)=>void;onSelectionChange:(id:string|null)=>void}|null>(null);
@@ -58,6 +61,27 @@ export const NotebookFileView=NotebookFile.extend({addNodeView(){return ReactNod
 /** How a chosen file goes in: as it is (images show, others are chips),
  *  as a picture, or as a PDF printout whose pages show (and take ink). */
 export type UploadAs='auto'|'image'|'pdf';
+/** Where a paste happened: its editor and the selected range, which follows
+ *  later edits (the member's own and teammates') so a slow upload still
+ *  replaces it. The selection is only replaced once the picture is in. */
+export type UploadAnchor={editor:Editor;range:()=>{from:number;to:number}|null};
+export function pasteAnchor(editor:Editor):UploadAnchor{
+  const {from,to}=editor.state.selection,ystate=ySyncPluginKey.getState(editor.state);
+  if(!ystate?.binding)return {editor,range:()=>{const size=editor.state.doc.content.size;return {from:Math.min(from,size),to:Math.min(to,size)};}};
+  // Saved positions stick to the character on their left. A selection's start
+  // is re-saved to stick right, to its first character, so text added just
+  // before the selection stays out of it, and deleting that character leaves
+  // the start where it was.
+  const end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
+  let start=absolutePositionToRelativePosition(from,ystate.type,ystate.binding.mapping);
+  const spot=from<to?createAbsolutePositionFromRelativePosition(start,ystate.doc):null;
+  if(spot)start=createRelativePositionFromTypeIndex(spot.type,spot.index,0);
+  return {editor,range:()=>{
+    const now=ySyncPluginKey.getState(editor.state);if(!now?.binding)return null;
+    const a=relativePositionToAbsolutePosition(now.doc,now.type,start,now.binding.mapping),b=relativePositionToAbsolutePosition(now.doc,now.type,end,now.binding.mapping);
+    return a==null||b==null?null:{from:a,to:Math.max(a,b)};
+  }};
+}
 export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
 export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
   const [fileAs,setFileAs]=useState<UploadAs>('auto');
@@ -65,21 +89,28 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
   const request=useRef<XMLHttpRequest|null>(null),mounted=useRef(true);
   const retained=useRef<{file:File;metadata:any}|null>(null),latestEditor=useRef(editor);latestEditor.current=editor;
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;request.current?.abort();};},[sync]);
-  const upload=(chosen:File,as:UploadAs='auto')=>{
-    if(busy)return;setFile(chosen);setFileAs(as);setProgress(0);
-    if(as==='image'&&!PICTURE_TYPES.includes(chosen.type)){setStatus('Choose a picture: PNG, JPEG, GIF or WebP.');setFile(null);return;}
-    if(as==='pdf'&&chosen.type!=='application/pdf'){setStatus('A file printout needs a PDF. Use Attach file for other files.');setFile(null);return;}
-    if(chosen.size>25*1024*1024){setStatus('Files must be 25 MB or smaller.');return;}
-    if(!chosen.size){setStatus('Choose a nonempty file.');return;}
-    if(!editor || editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)){setStatus('Editing is unavailable.');return;}
+  // `announce`: a paste has no Insert panel open, so its outcome also shows as a toast.
+  const upload=(chosen:File,as:UploadAs='auto',announce=false,anchor?:UploadAnchor)=>{
+    const say=(message:string,kind:'error'|'success'='error')=>{setStatus(message);if(announce)notify(message,kind);};
+    if(busy){if(announce)notify('Wait for the current upload to finish, then paste again.','error');return;}
+    setFile(chosen);setFileAs(as);setProgress(0);
+    if(as==='image'&&!PICTURE_TYPES.includes(chosen.type)){say('Choose a picture: PNG, JPEG, GIF or WebP.');setFile(null);return;}
+    if(as==='pdf'&&chosen.type!=='application/pdf'){say('A file printout needs a PDF. Use Attach file for other files.');setFile(null);return;}
+    if(chosen.size>25*1024*1024){say('Files must be 25 MB or smaller.');return;}
+    if(!chosen.size){say('Choose a nonempty file.');return;}
+    if(!editor || editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)){say('Editing is unavailable.');return;}
     const insert=(uploaded:any)=>{
-      const target=latestEditor.current;
+      const target=anchor?.editor??latestEditor.current;
       if(!target || target.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
-      const inserted=target.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
+      const node={type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}};
+      const at=anchor?.range();
+      if(anchor && at==null)throw new Error('The picture uploaded, but the spot you pasted it into is gone. Paste it again.');
+      // A paste goes where it was pasted, without pulling focus from where the member is typing now.
+      const inserted=at!=null?target.chain().insertContentAt(at,node).run():target.chain().focus().insertContent(node).run();
       if(!inserted)throw new Error('The file uploaded, but could not be inserted here. Choose a text position and retry.');
-      setStatus(`${uploaded.name} inserted.`);setFile(null);retained.current=null;
+      say(`${uploaded.name} inserted.`,'success');setFile(null);retained.current=null;
     };
-    if(retained.current?.file===chosen){try{insert(retained.current.metadata);}catch(e){setStatus((e as Error).message);}return;}
+    if(retained.current?.file===chosen){try{insert(retained.current.metadata);}catch(e){say((e as Error).message);}return;}
     retained.current=null;
     const xhr=new XMLHttpRequest();request.current=xhr;setBusy(true);setStatus(`Uploading ${chosen.name}…`);
     xhr.open('POST',`/api/notebook/pages/${sync.pageId}/files`);xhr.withCredentials=true;xhr.setRequestHeader('X-CP-Client','1');
@@ -89,9 +120,9 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
       const uploaded=JSON.parse(xhr.responseText);if(xhr.status<200 || xhr.status>=300)throw new Error(uploaded.error||'Upload failed. Retry this file.');
       if(!validNotebookFile({fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:'chip',width:640}))throw new Error('Invalid upload response. Retry this file.');
       retained.current={file:chosen,metadata:uploaded};insert(uploaded);
-    }catch(e){setStatus((e as Error).message);}};
-    xhr.onerror=()=>{if(mounted.current){setBusy(false);setStatus('Upload failed. Check your connection and retry.');}};
-    xhr.onabort=()=>{if(mounted.current){setBusy(false);setStatus('Upload cancelled.');}};
+    }catch(e){say((e as Error).message);}};
+    xhr.onerror=()=>{if(mounted.current){setBusy(false);say('Upload failed. Check your connection and retry.');}};
+    xhr.onabort=()=>{if(mounted.current){setBusy(false);say('Upload cancelled.');}};
     const form=new FormData();form.append('file',chosen);xhr.send(form);
   };
   const blocked=busy || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status);
