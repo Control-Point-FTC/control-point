@@ -74,6 +74,19 @@ function usePageExtrasHidden(key?: string) {
   return [hidden, change] as const;
 }
 
+/** Page zoom runs 50–300%, in whole percents. */
+export const clampZoom = (value: number) => Math.max(50, Math.min(300, Math.round(value)));
+/** Ctrl/Cmd + minus, plus (or =) and 0: the page's next zoom, or null for any other key. */
+export function zoomKey(e: { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }, current: number): number | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  // The key, or the physical key on layouts where minus and plus sit elsewhere.
+  const k = e.key || ({ Minus: '-', NumpadSubtract: '-', Equal: '=', NumpadAdd: '+', Digit0: '0', Numpad0: '0' } as Record<string, string>)[e.code ?? ''] || '';
+  if (k === '-' || k === '_') return clampZoom(Math.ceil(current / 10) * 10 - 10);
+  if (k === '=' || k === '+') return clampZoom(Math.floor(current / 10) * 10 + 10);
+  if (k === '0') return 100;
+  return null;
+}
+
 export type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null; barHost?: HTMLElement | null; toolbarVisible?:boolean;blockTarget?:string|null;threadTarget?:number|null;onOpenOther?:(id:number,blockId?:string)=>void };
 export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost, barHost,...paneProps }: EditorProps) {
   const [, redraw] = useState(0);
@@ -154,6 +167,29 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
   const [zoom, setZoom] = useState(100);
+  // Ctrl/Cmd + scroll (a trackpad pinch arrives as one) and Ctrl/Cmd + minus, plus or 0 zoom the
+  // page, not the whole app, the way OneNote does; a readout shows the new size for a moment.
+  const zoomRef = useRef(zoom); zoomRef.current = zoom;
+  const paperScroll = useRef<HTMLDivElement>(null);
+  const [zoomShown, setZoomShown] = useState(0);
+  const zoomTo = useCallback((next: number) => { setZoom(clampZoom(next)); setZoomShown(n => n + 1); }, []);
+  useEffect(() => { if (!zoomShown) return; const t = setTimeout(() => setZoomShown(0), 1200); return () => clearTimeout(t); }, [zoomShown]);
+  useEffect(() => {
+    const el = paperScroll.current;
+    if (!el || mobile) return;
+    const wheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      zoomTo(zoomRef.current * Math.exp(-e.deltaY / (e.deltaMode === 1 ? 15 : 250)));
+    };
+    const key = (e: KeyboardEvent) => {
+      const next = zoomKey(e, zoomRef.current);
+      if (next === null) return;
+      e.preventDefault(); zoomTo(next);
+    };
+    el.addEventListener('wheel', wheel, { passive: false }); el.addEventListener('keydown', key);
+    return () => { el.removeEventListener('wheel', wheel); el.removeEventListener('keydown', key); };
+  }, [mobile, zoomTo]);
   const [readerPreferences,setReaderPreferences]=useNotebookReaderPreferences(sync.scope?`cp-notebook-reader:${sync.scope.memberId}:${sync.scope.teamId}`:undefined);
   const [paperView,setPaperView]=useNotebookPaperView(sync.scope?`cp-notebook-paper:${sync.scope.memberId}:${sync.scope.teamId}:${sync.pageId}`:undefined);
   const [viewError, setViewError] = useState('');
@@ -348,7 +384,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
     {viewError && <div className="nb-alert" role="alert">{viewError}<button aria-label="Dismiss view error" onClick={() => setViewError('')}>×</button></div>}
-    <div className="nb-paper-scroll" onClick={e => {
+    {zoomShown > 0 && <div className="nb-zoom-readout" role="status">Zoom {zoom}%</div>}
+    <div ref={paperScroll} className="nb-paper-scroll" onClick={e => {
       // Clicking the empty paper margins focuses the editor at the end (linear-document click-anywhere).
       const t = e.target as HTMLElement;
       if (t.closest('.nb-prose, button, a, input, select, textarea, [role="dialog"], .nb-discussions, .nb-canvas-stage')) return;

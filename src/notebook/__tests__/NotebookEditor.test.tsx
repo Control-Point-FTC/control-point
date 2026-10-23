@@ -6,7 +6,7 @@ import * as Y from 'yjs';
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { notebookSchema } from '../editorSchema';
 import { NotebookSync, decodeBytes, encodeBytes } from '../NotebookSync';
-import { NotebookEditor } from '../NotebookEditor';
+import { NotebookEditor, zoomKey } from '../NotebookEditor';
 import { apiJson, ApiError } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 const uploadState=vi.hoisted(()=>({busy:false}));
@@ -195,6 +195,37 @@ describe('mounted collaborative notebook editor', () => {
     expect(screen.queryByRole('textbox', { name: 'Page content' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Page title' })).toBeNull();
     expect(screen.getByRole('alert').textContent).toContain('cannot be opened');
+  });
+  it('zooms the page out and in with Ctrl+scroll (or a pinch) and Ctrl+minus/plus, below 100% too', async () => {
+    await mount();
+    const scroll = document.querySelector('.nb-paper-scroll')!, paper = document.querySelector<HTMLElement>('.nb-paper')!;
+    const wheel = (deltaY: number, ctrlKey = true) => { const e = new WheelEvent('wheel', { deltaY, ctrlKey, bubbles: true, cancelable: true }); act(() => { scroll.dispatchEvent(e); }); return e; };
+    const plain = wheel(120, false);
+    expect(plain.defaultPrevented).toBe(false); expect(paper.style.zoom).toBe('1'); // ordinary scrolling is left alone
+    const out = wheel(120);
+    expect(out.defaultPrevented).toBe(true); // the browser doesn't zoom the whole app
+    expect(Number(paper.style.zoom)).toBeLessThan(1);
+    expect(screen.getByText(/^Zoom \d+%$/).textContent).toBe(`Zoom ${Math.round(Number(paper.style.zoom) * 100)}%`);
+    for (let i = 0; i < 40; i++) wheel(500);
+    expect(paper.style.zoom).toBe('0.5');
+    const content = screen.getByRole('textbox', { name: 'Page content' });
+    fireEvent.keyDown(content, { key: '0', ctrlKey: true });
+    expect(paper.style.zoom).toBe('1');
+    const minus = new KeyboardEvent('keydown', { key: '-', ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => { content.dispatchEvent(minus); });
+    expect(minus.defaultPrevented).toBe(true); expect(paper.style.zoom).toBe('0.9');
+    fireEvent.keyDown(content, { key: '=', metaKey: true });
+    expect(paper.style.zoom).toBe('1');
+  });
+  it('steps keyboard zoom by tens and leaves other keys alone', () => {
+    const k = (key: string, current: number, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; altKey: boolean }> = { ctrlKey: true }) => zoomKey({ key, ctrlKey: false, metaKey: false, altKey: false, ...mods }, current);
+    expect(k('-', 100)).toBe(90); expect(k('-', 87)).toBe(80); expect(k('-', 50)).toBe(50);
+    expect(k('=', 100)).toBe(110); expect(k('+', 87)).toBe(90); expect(k('=', 300)).toBe(300);
+    expect(k('0', 175)).toBe(100);
+    // No key name (some layouts and tools): the physical key decides.
+    expect(zoomKey({ key: '', code: 'Minus', ctrlKey: true, metaKey: false, altKey: false }, 100)).toBe(90);
+    expect(zoomKey({ key: '', code: 'NumpadAdd', ctrlKey: true, metaKey: false, altKey: false }, 100)).toBe(110);
+    expect(k('-', 100, {})).toBeNull(); expect(k('b', 100)).toBeNull(); expect(k('-', 100, { ctrlKey: true, altKey: true })).toBeNull();
   });
   it('changes desktop viewing controls without changing the saved document', async () => {
     const { sync, server } = await mount(); const before = yDocToProsemirrorJSON(server);
