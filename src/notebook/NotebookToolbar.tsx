@@ -79,7 +79,7 @@ function ShareGlyph() { const Glyph = notebookCommandGlyph('Share'); return Glyp
 /** The page bar's right end for the open page: save status, the app's
  *  controls (clock, sticky notes, Search, Bruno), Share, a menu for less
  *  frequent page actions, and the button that hides the toolbar. */
-function PageBarActions({ pageId, onNotice, status, collapsed, onToggleCollapsed }: { pageId?: number; onNotice?: (message: string) => void; status?: React.ReactNode; collapsed: boolean; onToggleCollapsed?: () => void }) {
+function PageBarActions({ pageId, onNotice, status, collapsed, onToggleCollapsed, polish }: { pageId?: number; onNotice?: (message: string) => void; status?: React.ReactNode; collapsed: boolean; onToggleCollapsed?: () => void; polish?: React.ReactNode }) {
   const mobile = useNotebookMobile();
   const workspace = useNotebookWorkspace();
   // Claim the shared controls while this is the visible toolbar (split view
@@ -111,6 +111,7 @@ function PageBarActions({ pageId, onNotice, status, collapsed, onToggleCollapsed
     <span className="nb-bar-actions">
       {/* The app's clock and weather, sticky notes, Search and Bruno render here (the app top bar is hidden in the notebook). */}
       {!mobile && <span ref={slotEl} className="nb-shell-actions" />}
+      {!mobile && polish}
       {!mobile && canShare && <button type="button" className="nb-bar-btn" aria-label="Share" title="Copy a link to this page" onClick={() => { void share(); }}><ShareGlyph /><span>Share</span></button>}
       {menu.length > 0 && <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild><button type="button" className="nb-bar-icon" aria-label="More page actions" title="More page actions"><MoreHorizontal size={18} /></button></DropdownMenuTrigger>
@@ -244,7 +245,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
 
   const content: Record<Tab, React.ReactNode> = {
     file: pagePanel('file'),
-    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} onCreateTask={() => setTaskOpen(true)} />,
+    home: <><HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} onCreateTask={() => setTaskOpen(true)} />{panels.bruno && <RibbonGroup label="Bruno">{panels.bruno}</RibbonGroup>}</>,
     insert: <>
       <RibbonGroup label="Tables"><RibbonMenu label="Table" showLabel disabled={disabled} open={tableMenu} onOpenChange={setTableMenu}><TableGrid onPick={(rows, cols) => { setTableMenu(false); chain().insertTable({ rows, cols, withHeaderRow: true }).run(); }} /></RibbonMenu></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}
@@ -264,6 +265,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     history: <HistoryTab versions={pagePanel('history')} pageId={pageId} notify={setNotice} />,
     review: <>
       <RibbonGroup label="Proofing"><RibbonButton label="Thesaurus" showLabel shortcut="Shift+F7" active={thesaurus} onClick={() => setThesaurus(v => !v)} /><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /><RibbonButton label="Auto-capitalize" showLabel active={capitalize} onClick={() => { const next = !capitalize; setCapitalize(next); setAutoCapitalize(next); setNotice(next ? 'New lines start with a capital letter. Press Backspace right after to undo one.' : 'Auto-capitalize off.'); }} /></RibbonGroup>
+      {panels.bruno && <RibbonGroup label="Bruno">{panels.bruno}</RibbonGroup>}
       <RibbonGroup label="Find"><RibbonButton label="Find in page" icon="Find" showLabel shortcut="Ctrl+F" active={finding} onClick={() => setFinding(v => !v)} /></RibbonGroup>
       <RibbonGroup label="Comments">
         <RibbonButton label="Discussions" icon="Discussion" showLabel onClick={() => { const input = document.getElementById(`nb-comment-input-${pageId}`); input?.scrollIntoView({ block: 'center', behavior: 'smooth' }); input?.focus(); }} />
@@ -278,7 +280,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   };
 
   return <RibbonDensityContext.Provider value={density}><div ref={bar} className="nb-command-bar" data-collapsed={collapsed} data-density={density}>
-    {active && <PageBarSlot host={barHost}><PageBarActions pageId={pageId} onNotice={setNotice} status={status} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} /></PageBarSlot>}
+    {active && <PageBarSlot host={barHost}><PageBarActions pageId={pageId} onNotice={setNotice} status={status} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} polish={panels.brunoBar} /></PageBarSlot>}
     <div className="nb-tool-row">
       <TabPicker tabs={tabs} group={shown} onSelect={select} />
       <RibbonTabs tabs={tabs} group={shown} onSelect={select} />
