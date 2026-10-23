@@ -110,6 +110,34 @@ describe('mounted collaborative notebook editor', () => {
     expect(screen.getByText('Wait for the attachment upload to finish before printing.')).toBeTruthy();
     expect(vi.mocked(apiJson).mock.calls).toHaveLength(calls);
   });
+  it('uploads a pasted screenshot and inserts it as a picture at the cursor',async()=>{
+    const {sync}=await mount();let request:any;
+    class Upload{upload:any={};status=200;responseText='';onload:any;onerror:any;onabort:any;open=vi.fn();setRequestHeader=vi.fn();send=vi.fn();constructor(){request=this;}}
+    vi.stubGlobal('XMLHttpRequest',Upload);
+    try{
+      const content=screen.getByRole('textbox',{name:'Page content'}),shot=new File(['png'],'image.png',{type:'image/png'});
+      fireEvent.paste(content,{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['Files'],getData:()=>''}});
+      expect(request.open).toHaveBeenCalledWith('POST','/api/notebook/pages/1/files');expect(request.send.mock.calls[0][0].get('file')).toBe(shot);
+      request.responseText=JSON.stringify({id:41,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
+      const file=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(file).toContain('"type":"notebookFile"');expect(file).toContain('"fileId":41');expect(file).toContain('"display":"image"');
+    }finally{vi.unstubAllGlobals();}
+  });
+  it('pastes text, not an upload, when the clipboard also carries text',async()=>{
+    await mount();const Upload=vi.fn();vi.stubGlobal('XMLHttpRequest',Upload);
+    try{
+      const shot=new File(['png'],'cells.png',{type:'image/png'});
+      fireEvent.paste(screen.getByRole('textbox',{name:'Page content'}),{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['text/plain','Files'],getData:(type:string)=>type==='text/plain'?'A1 B1':''}});
+      expect(Upload).not.toHaveBeenCalled();
+    }finally{vi.unstubAllGlobals();}
+  });
+  it('hides and shows backlinks and discussions from the toggle beside them',async()=>{
+    await mount();
+    await screen.findByText('No visible pages link here yet.');
+    fireEvent.click(screen.getByRole('button',{name:'Hide links and discussions'}));
+    expect(screen.queryByText('No visible pages link here yet.')).toBeNull();expect(document.querySelector('.nb-discussions')).toBeNull();
+    const show=screen.getByRole('button',{name:'Show links and discussions'});expect(show).toHaveAttribute('aria-expanded','false');
+    fireEvent.click(show);expect(screen.getByText('No visible pages link here yet.')).toBeTruthy();expect(document.querySelector('.nb-discussions')).toBeTruthy();
+  });
   it('mounts the real CRDT editor, toolbar and carets, and saves shared titles', async () => {
     const { sync, server } = await mount();
     fireEvent.click(screen.getByRole('tab', { name: 'Home' }));
