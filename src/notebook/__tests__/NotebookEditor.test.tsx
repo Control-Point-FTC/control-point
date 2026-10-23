@@ -142,6 +142,12 @@ describe('mounted collaborative notebook editor', () => {
       const json=JSON.stringify(yDocToProsemirrorJSON(sync.doc));expect(json).toContain('"fileId":42');expect(json).not.toContain('Team discoveries');
       const blocks=(yDocToProsemirrorJSON(sync.doc).content as any[]);const at=blocks.findIndex(b=>b.type==='notebookFile');
       expect(blocks[at-1].content[0].text).toBe('New ');expect(blocks[at+1].content[0].text).toBe(' discoveries');
+      // Deleting the first selected character mid-upload keeps the text before it ("ABCD", select "BC", delete "B": "A" stays).
+      act(()=>{ed.commands.insertContentAt(ed.state.doc.content.size,'<p>ABCD</p>');});const p=ed.state.doc.content.size-5;
+      act(()=>{ed.commands.setTextSelection({from:p+1,to:p+3});});fireEvent.paste(content,{clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>shot}],files:[shot],types:['Files'],getData:()=>''}});
+      act(()=>{ed.commands.deleteRange({from:p+1,to:p+2});});request.responseText=JSON.stringify({id:43,name:'image.png',mimeType:'image/png',size:3});act(()=>request.onload());
+      const after=(yDocToProsemirrorJSON(sync.doc).content as any[]);const pic=after.findIndex(b=>b.attrs?.fileId===43);
+      expect(after[pic-1].content[0].text).toBe('A');expect(after[pic+1].content[0].text).toBe('D');
     }finally{vi.unstubAllGlobals();}
   });
   it('pastes text, not an upload, when the clipboard also carries text',async()=>{

@@ -3,6 +3,7 @@ import { NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps,type Editor } 
 import { MAX_ALT, NotebookFile, validNotebookFile } from './fileNode';
 import type { NotebookSync } from './NotebookSync';
 import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, ySyncPluginKey } from '@tiptap/y-tiptap';
+import { createAbsolutePositionFromRelativePosition, createRelativePositionFromTypeIndex } from 'yjs';
 import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
 import { notify } from '../components/dialog';
@@ -67,16 +68,18 @@ export type UploadAnchor={editor:Editor;range:()=>{from:number;to:number}|null};
 export function pasteAnchor(editor:Editor):UploadAnchor{
   const {from,to}=editor.state.selection,ystate=ySyncPluginKey.getState(editor.state);
   if(!ystate?.binding)return {editor,range:()=>{const size=editor.state.doc.content.size;return {from:Math.min(from,size),to:Math.min(to,size)};}};
-  // Saved positions stick to the character on their left, so a selection's
-  // start is saved one step inside it (its first character) and stepped back
-  // out on use: text a teammate adds just before the selection stays out of it.
-  const inside=from<to?1:0;
-  const start=absolutePositionToRelativePosition(from+inside,ystate.type,ystate.binding.mapping),end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
+  // Saved positions stick to the character on their left. A selection's start
+  // is re-saved to stick right, to its first character, so text added just
+  // before the selection stays out of it, and deleting that character leaves
+  // the start where it was.
+  const end=absolutePositionToRelativePosition(to,ystate.type,ystate.binding.mapping);
+  let start=absolutePositionToRelativePosition(from,ystate.type,ystate.binding.mapping);
+  const spot=from<to?createAbsolutePositionFromRelativePosition(start,ystate.doc):null;
+  if(spot)start=createRelativePositionFromTypeIndex(spot.type,spot.index,0);
   return {editor,range:()=>{
     const now=ySyncPluginKey.getState(editor.state);if(!now?.binding)return null;
     const a=relativePositionToAbsolutePosition(now.doc,now.type,start,now.binding.mapping),b=relativePositionToAbsolutePosition(now.doc,now.type,end,now.binding.mapping);
-    if(a==null||b==null)return null;
-    const first=Math.max(0,a-inside);return {from:first,to:Math.max(first,b)};
+    return a==null||b==null?null:{from:a,to:Math.max(a,b)};
   }};
 }
 export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
