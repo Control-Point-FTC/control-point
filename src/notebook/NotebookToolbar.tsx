@@ -244,7 +244,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
 
   const content: Record<Tab, React.ReactNode> = {
     file: pagePanel('file'),
-    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} onCreateTask={() => setTaskOpen(true)} />,
+    home: <><HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} onCreateTask={() => setTaskOpen(true)} />{panels.bruno && <RibbonGroup label="Bruno">{panels.bruno}</RibbonGroup>}</>,
     insert: <>
       <RibbonGroup label="Tables"><RibbonMenu label="Table" showLabel disabled={disabled} open={tableMenu} onOpenChange={setTableMenu}><TableGrid onPick={(rows, cols) => { setTableMenu(false); chain().insertTable({ rows, cols, withHeaderRow: true }).run(); }} /></RibbonMenu></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}
@@ -264,6 +264,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     history: <HistoryTab versions={pagePanel('history')} pageId={pageId} notify={setNotice} />,
     review: <>
       <RibbonGroup label="Proofing"><RibbonButton label="Thesaurus" showLabel shortcut="Shift+F7" active={thesaurus} onClick={() => setThesaurus(v => !v)} /><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /><RibbonButton label="Auto-capitalize" showLabel active={capitalize} onClick={() => { const next = !capitalize; setCapitalize(next); setAutoCapitalize(next); setNotice(next ? 'New lines start with a capital letter. Press Backspace right after to undo one.' : 'Auto-capitalize off.'); }} /></RibbonGroup>
+      {panels.bruno && <RibbonGroup label="Bruno">{panels.bruno}</RibbonGroup>}
       <RibbonGroup label="Find"><RibbonButton label="Find in page" icon="Find" showLabel shortcut="Ctrl+F" active={finding} onClick={() => setFinding(v => !v)} /></RibbonGroup>
       <RibbonGroup label="Comments">
         <RibbonButton label="Discussions" icon="Discussion" showLabel onClick={() => { const input = document.getElementById(`nb-comment-input-${pageId}`); input?.scrollIntoView({ block: 'center', behavior: 'smooth' }); input?.focus(); }} />

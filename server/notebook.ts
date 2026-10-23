@@ -380,6 +380,8 @@ export class NotebookStore {
     return ids.map(a => ({ id: a, name: names.get(a) ?? "Former team member", pages: counts.get(a)!.size })).sort((a, b) => a.name.localeCompare(b.name));
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
+  /** Whether this member may edit notebook pages (what a page's `editable` reports). */
+  canEdit(ctx: NotebookContext) { return this.session(ctx, async s => s.can('edit_notebook')); }
   threads(ctx: NotebookContext, pageId: number, before?: unknown, focus?: unknown) { return this.session(ctx, s => notebookThreads(s, pageId, before, focus)); }
   threadComments(ctx: NotebookContext, pageId: number, threadId: number, before?: unknown, limit?: unknown) { return this.session(ctx, s => notebookThreadComments(s, pageId, threadId, before, limit)); }
   comment(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookComment(s, pageId, body)); }

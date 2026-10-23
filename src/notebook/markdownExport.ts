@@ -114,6 +114,9 @@ function block(node: PMNode): string[] {
   }
 }
 
+/** One block as Markdown, e.g. for Bruno's Polish. */
+export const notebookBlockMarkdown = (node: unknown): string => block(node as PMNode).join('\n');
+
 /** The canvas (drawings, shapes, images, text boxes) as text: text boxes kept, the rest named. */
 function canvasBlocks(canvas: unknown): string[][] {
   const objects: any[] = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects : [];
