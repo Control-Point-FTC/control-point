@@ -32,6 +32,7 @@ const CODE_LANGUAGES = ['javascript','typescript','python','java','cpp','json','
 const SHORTCUTS: [string, string][] = [
   ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'], ['Undo / redo', 'Ctrl+Z / Ctrl+Y'], ['Find in page', 'Ctrl+F'], ['Thesaurus', 'Shift+F7'],
   ['Indent / outdent a list item', 'Tab / Shift+Tab'], ['Paste as plain text', 'Ctrl+Shift+V'],
+  ['Zoom the page out / in', 'Ctrl+− / Ctrl+= or Ctrl+scroll'], ['Page zoom back to 100%', 'Ctrl+0'],
   ['Rename the selected page or section', 'F2'], ['Move to trash', 'Delete'], ['Reorder in the sidebar', 'Alt+Shift+↑ / ↓'],
   ['Drawing: back to typing', 'Esc'], ['Drawing: nudge the selection', 'Arrow keys'],
 ];
